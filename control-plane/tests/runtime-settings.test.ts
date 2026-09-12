@@ -57,12 +57,18 @@ describe("sandbox-manager settings", () => {
     return { manager, settings, standard };
   }
 
-  /** Poll until the probe passes, so watcher-settled changes are stable. */
+  /**
+   * Poll until the probe passes, so watcher-settled changes are stable.
+   * `attempts` of 20ms each is the budget; a watcher-driven test needs a
+   * longer one, because the first external write can land while the provider
+   * is still scanning and a slow agent can take seconds to report it.
+   */
   async function until(
     probe: () => Promise<boolean>,
     what: string,
+    attempts = 100,
   ): Promise<void> {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (await probe()) {
         return;
       }
@@ -161,25 +167,31 @@ describe("sandbox-manager settings", () => {
     const settingsFile = join(directory, "settings.yaml");
     const { manager } = await managerOver(settingsFile);
     await manager.getSessionProfile("session-one");
-    await writeFile(
-      settingsFile,
-      [
-        "sandbox-manager:",
-        "  profiles:",
-        "    standard:",
-        "      backend: docker",
-        "    large:",
-        "      backend: docker",
-        "      image: dsh-runner:dev",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
+    const content = [
+      "sandbox-manager:",
+      "  profiles:",
+      "    standard:",
+      "      backend: docker",
+      "    large:",
+      "      backend: docker",
+      "      image: dsh-runner:dev",
+      "",
+    ].join("\n");
+    // The first write can land while the provider's watcher is still scanning,
+    // and `ignoreInitial` drops whatever that scan itself sees. Rewriting is
+    // what recovers it: a file the watcher already knows always reports a
+    // change. Each attempt waits past the provider's 100ms write-stability
+    // threshold, so a rewrite cannot keep resetting it.
     await until(
-      async () => (await names(manager, "session-one")).includes("large"),
+      async () => {
+        await writeFile(settingsFile, content, "utf8");
+        await sleep(250);
+        return (await names(manager, "session-one")).includes("large");
+      },
       "the externally edited profile appears",
+      40,
     );
-  });
+  }, 20_000);
 });
 
 describe("ProfileRegistry.update", () => {

@@ -3,6 +3,8 @@ import type { TypertRemoteContribution } from "@deepseek-ai/dsh-typert-protocol"
 
 import type { SandboxInstructionsRemote } from "./instructions-remote.js";
 import { sandboxInstructionsDescriptors } from "./instructions-remote.js";
+import type { SandboxMcpRemote } from "./mcp-remote.js";
+import { sandboxMcpDescriptors } from "./mcp-remote.js";
 import type { RepositoryWorkspaceRemote } from "./repository-workspace-remote.js";
 import { repositoryWorkspaceDescriptors } from "./repository-workspace-remote.js";
 import type { SandboxStatusRemote } from "./sandbox-status-remote.js";
@@ -16,6 +18,7 @@ import { sessionProfileDescriptors } from "./session-profile-remote.js";
 type SandboxManagerRemote = RepositoryWorkspaceRemote &
   SandboxSecretsRemote &
   SandboxInstructionsRemote &
+  SandboxMcpRemote &
   SessionProfileRemote &
   SandboxStatusRemote;
 
@@ -29,6 +32,11 @@ declare module "@deepseek-ai/dsh-typert-protocol" {
     "sandboxManager/listSecrets": SandboxManagerRemote["listSecrets"];
     "sandboxManager/setSecret": SandboxManagerRemote["setSecret"];
     "sandboxManager/deleteSecret": SandboxManagerRemote["deleteSecret"];
+    "sandboxManager/listMcpServers": SandboxManagerRemote["listMcpServers"];
+    "sandboxManager/setMcpServer": SandboxManagerRemote["setMcpServer"];
+    "sandboxManager/deleteMcpServer": SandboxManagerRemote["deleteMcpServer"];
+    "sandboxManager/retryMcpServer": SandboxManagerRemote["retryMcpServer"];
+    "sandboxManager/testMcpServer": SandboxManagerRemote["testMcpServer"];
     "sandboxManager/getInstructions": SandboxManagerRemote["getInstructions"];
     "sandboxManager/setGlobalInstructions": SandboxManagerRemote["setGlobalInstructions"];
     "sandboxManager/setWorkspaceInstructions": SandboxManagerRemote["setWorkspaceInstructions"];
@@ -45,6 +53,7 @@ const descriptors = [
   ...repositoryWorkspaceDescriptors,
   ...sandboxSecretsDescriptors,
   ...sandboxInstructionsDescriptors,
+  ...sandboxMcpDescriptors,
   ...sessionProfileDescriptors,
   ...sandboxStatusDescriptors,
 ];
