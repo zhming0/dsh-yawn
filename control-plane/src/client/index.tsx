@@ -9,8 +9,10 @@ import type {} from "@deepseek-ai/dsh-client-ui-renderer/client";
 import type { RemoteResult } from "@deepseek-ai/dsh-typert-protocol";
 import type { JsonValue } from "@deepseek-ai/dsh-util-values";
 
+import type { McpServerEntry } from "../mcp-store.js";
 import { yawnRemote } from "../remote-contributions.js";
 import { InstructionsSettings } from "./instructions.js";
+import { McpSettings } from "./mcp.js";
 import { NotificationsSettings } from "./notification-settings.js";
 import {
   installTurnNotifications,
@@ -31,8 +33,8 @@ import { SecretsSettings } from "./secrets.js";
 export const inject = ["remote", "slots"];
 
 /** Mount the Remote endpoints, replace folder picking with repository entry,
- * add the Instructions, Secrets, Sandboxes, and Notifications sections to the
- * Settings page, and show a browser notification when a turn finishes. */
+ * add the Instructions, Secrets, Sandboxes, MCP, and Notifications sections to
+ * the Settings page, and show a browser notification when a turn finishes. */
 export async function apply(ctx: Context) {
   const disposeRemote = await ctx.remote.$mount(yawnRemote);
 
@@ -70,6 +72,22 @@ export async function apply(ctx: Context) {
           ),
         ),
     });
+    const injectedMcp = () => ({
+      listMcpServers: async () =>
+        unwrap(await remoteCtx.remote.sandboxManager.listMcpServers()),
+      setMcpServer: async (entry: McpServerEntry) =>
+        unwrap(await remoteCtx.remote.sandboxManager.setMcpServer(entry)),
+      deleteMcpServer: async (serverName: string) =>
+        unwrap(
+          await remoteCtx.remote.sandboxManager.deleteMcpServer(serverName),
+        ),
+      retryMcpServer: async (serverName: string) =>
+        unwrap(
+          await remoteCtx.remote.sandboxManager.retryMcpServer(serverName),
+        ),
+      testMcpServer: async (entry: McpServerEntry) =>
+        unwrap(await remoteCtx.remote.sandboxManager.testMcpServer(entry)),
+    });
     remoteCtx.slots.inject(
       "settings.section",
       function* registerSettingsSections() {
@@ -92,6 +110,16 @@ export async function apply(ctx: Context) {
             inject: injected,
           },
           SecretsSettings,
+        );
+        yield remoteCtx.slots.register(
+          {
+            name: "settings.section",
+            id: "dsh-yawn.mcp",
+            order: 34,
+            label: "MCP",
+            inject: injectedMcp,
+          },
+          McpSettings,
         );
       },
     );
