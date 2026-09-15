@@ -4,6 +4,7 @@ import {
   BuildkiteBackend,
   testing as buildkiteTesting,
 } from "../src/backends/buildkite.js";
+import { resolveBuildkiteToken } from "../src/buildkite-token.js";
 import { resolveConfig } from "../src/config.js";
 import { testing as managerTesting } from "../src/manager/profile-registry.js";
 import { DEFAULT_RUNNER_IMAGE } from "../src/runner-image.js";
@@ -55,7 +56,7 @@ function backendWith(api: { fetch: typeof fetch }): BuildkiteBackend {
       image: "ghcr.io/zhming0/dsh-yawn-runner:test",
       controlPlaneUrl: "wss://dsh.example.com/tunnel",
       readyTimeoutMs: 60_000,
-      token: "bkua_test",
+      token: async () => "bkua_test",
     },
     api.fetch,
   );
@@ -164,7 +165,7 @@ describe("Buildkite backend", () => {
         image: "ghcr.io/zhming0/dsh-yawn-runner:test",
         controlPlaneUrl: "wss://dsh.example.com/tunnel",
         readyTimeoutMs: 2_000,
-        token: "bkua_test",
+        token: async () => "bkua_test",
       },
       api.fetch,
     );
@@ -240,7 +241,7 @@ describe("Buildkite backend", () => {
     ).toThrow("invalid Buildkite sandbox reference");
   });
 
-  it("resolves a Buildkite profile and requires its token at boot", () => {
+  it("resolves a Buildkite profile and requires its token per request", async () => {
     const config = resolveConfig({
       profiles: {
         hosted: {
@@ -270,14 +271,19 @@ describe("Buildkite backend", () => {
       throw new Error("expected a Buildkite profile");
     }
     const profile = { ...hosted, tokenEnv: "DSH_YAWN_TEST_BUILDKITE_TOKEN" };
-    expect(() =>
-      managerTesting.createBackend(profile, "registration-token"),
-    ).toThrow("needs a Buildkite API token in DSH_YAWN_TEST_BUILDKITE_TOKEN");
-
-    vi.stubEnv("DSH_YAWN_TEST_BUILDKITE_TOKEN", "bkua_test");
+    // Resolution happens per request, not at construction: the backend is
+    // built without a token, and a call fails with the setting to fix.
     const backend = managerTesting.createBackend(profile, "registration-token");
     expect(backend).toBeInstanceOf(BuildkiteBackend);
     expect(backend.capabilities).toEqual({ supportsHibernate: false });
+    await expect(resolveBuildkiteToken(profile, undefined)).rejects.toThrow(
+      "needs a Buildkite API token in DSH_YAWN_TEST_BUILDKITE_TOKEN",
+    );
+
+    vi.stubEnv("DSH_YAWN_TEST_BUILDKITE_TOKEN", "bkua_test");
+    await expect(resolveBuildkiteToken(profile, undefined)).resolves.toBe(
+      "bkua_test",
+    );
     vi.unstubAllEnvs();
   });
 });
