@@ -10,6 +10,12 @@ import type {
 
 const API_URL = "https://api.buildkite.com/v2";
 const SESSION_METADATA_KEY = "dsh-session";
+/**
+ * Branch every sandbox build is created on. Buildkite requires a branch, but
+ * the step skips checkout and the pipeline's repository is unrelated, so it is
+ * only a label; all builds share it to keep the pipeline's build list readable.
+ */
+const BUILD_BRANCH = "main";
 
 /** Build states after which no job of the build will run again. */
 const FINISHED_STATES = new Set([
@@ -69,13 +75,12 @@ export class BuildkiteBackend implements SandboxBackend {
     let sandboxId = build?.env?.DSH_YAWN_SANDBOX_ID;
     if (build === undefined || sandboxId === undefined) {
       sandboxId = sandboxName(spec.sessionId);
-      // The pipeline's repository is unrelated to the sandbox, so the branch
-      // is only a label. Buildkite does not check that it exists. One branch
-      // per sandbox keeps the pipeline's per-branch settings (skip queued or
-      // cancel running intermediate builds) from touching another sandbox.
+      // Every sandbox shares BUILD_BRANCH, so the pipeline must not enable its
+      // intermediate-build settings: those would skip or cancel another live
+      // sandbox's build.
       build = await this.request<Build>("POST", "/builds", {
         commit: "HEAD",
-        branch: sandboxId,
+        branch: BUILD_BRANCH,
         message: `dsh sandbox ${sandboxId}`,
         env: {
           DSH_YAWN_SANDBOX_ID: sandboxId,

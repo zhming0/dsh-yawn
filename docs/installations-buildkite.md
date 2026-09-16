@@ -32,7 +32,7 @@ steps:
     checkout:
       skip: true
     secrets:
-      DSH_YAWN_REGISTRATION_TOKEN: dsh_registration_token
+      DSH_YAWN_REGISTRATION_TOKEN: dsh_yawn_registration_token
     timeout_in_minutes: 240
     agents:
       queue: hosted-amd64-small
@@ -57,7 +57,7 @@ steps:
     checkout:
       skip: true
     secrets:
-      DSH_YAWN_REGISTRATION_TOKEN: dsh_registration_token
+      DSH_YAWN_REGISTRATION_TOKEN: dsh_yawn_registration_token
     timeout_in_minutes: 240
     agents:
       queue: self-hosted
@@ -67,9 +67,16 @@ steps:
   environment the control plane sets, so the pipeline never pins a runner image and
   cannot drift from the control plane.
 - `secrets` maps a [Buildkite secret](https://buildkite.com/docs/pipelines/security/secrets/buildkite-secrets)
-  into the job environment. Create `dsh_registration_token` with the same value
-  the control plane holds — the `dsh-yawn-registration-token` Secret in the cluster — so the
-  runner can register on the tunnel. This needs agent 3.106.0 or later.
+  into the job environment: the key on the left is the variable the runner
+  reads, and the value on the right is the secret's key in Buildkite, which may
+  contain only letters, numbers, and underscores. Create
+  `dsh_yawn_registration_token` with the same value the control plane holds —
+  the `dsh-yawn-registration-token` Secret in the cluster — so the runner can
+  register on the tunnel. This needs agent 3.106.0 or later.
+- Turn off **Skip intermediate builds** and **Cancel intermediate builds** in
+  the pipeline's **Settings → Builds**. Every sandbox build lands on the same
+  branch (`main`), so either setting would skip or cancel another live
+  sandbox's build. Both are off by default.
 - `agents.queue` selects your fleet. Keep it explicit in the pipeline; the
   hosted `image` behavior does not imply that other step attributes resolve
   arbitrary build variables. To offer two fleets, create two pipelines and
@@ -102,6 +109,9 @@ controlPlane:
           key: token
 ```
 
+The control plane creates every build on `main`. The branch is only a label
+because the step skips checkout; if the pipeline limits its build branches,
+that list has to include `main`.
 Put the token in that Secret first, as
 [control-plane credentials](installations-control-plane.md#credentials)
 describes, then upgrade:

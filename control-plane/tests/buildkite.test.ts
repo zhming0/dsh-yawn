@@ -106,7 +106,7 @@ describe("Buildkite backend", () => {
     expect(create?.headers.authorization).toBe("Bearer bkua_test");
     expect(create?.body).toEqual({
       commit: "HEAD",
-      branch: handle.sandboxId,
+      branch: "main",
       message: `dsh sandbox ${handle.sandboxId}`,
       env: {
         DSH_YAWN_SANDBOX_ID: handle.sandboxId,
