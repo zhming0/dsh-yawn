@@ -37,6 +37,11 @@ export interface BuildkiteProfile {
   organization: string;
   /** Pipeline whose single job runs the runner; one build is one sandbox. */
   pipeline: string;
+  /**
+   * Branch every sandbox build is created on. The step skips checkout and the
+   * repository is unrelated, so this is only the branch Buildkite records.
+   */
+  branch: string;
   /** Runner image the job should run; passed to the build as DSH_YAWN_RUNNER_IMAGE. */
   image: string;
   /** The tunnel endpoint runners dial; Buildkite agents are never local. */

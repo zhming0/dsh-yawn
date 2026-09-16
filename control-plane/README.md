@@ -344,6 +344,7 @@ name that namespace.
 | `kubeconfig`      | `kas`                 | normal client lookup   | Optional kubeconfig path                                          |
 | `organization`    | `buildkite`           | required               | Buildkite organization slug                                       |
 | `pipeline`        | `buildkite`           | required               | Pipeline slug whose job runs the runner                           |
+| `branch`          | `buildkite`           | `main`                 | Branch every sandbox build is created on                          |
 | `controlPlaneUrl` | `buildkite`           | required               | `DSH_YAWN_CONTROL_PLANE_URL` runners dial; agents are never local |
 | `readyTimeoutMs`  | `buildkite`           | 10 minutes             | How long a build may wait for an agent                            |
 

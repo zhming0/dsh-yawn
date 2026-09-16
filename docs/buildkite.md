@@ -30,8 +30,8 @@ For each new session the control plane:
 
 1. looks for a live build tagged with the session (`meta_data[dsh-session]`),
    in case the control plane stopped after creating one and before saving its record;
-2. otherwise creates a build with `commit: HEAD` on a branch named after the
-   sandbox, build env `DSH_YAWN_SANDBOX_ID`, `DSH_YAWN_CONTROL_PLANE_URL`, and `DSH_YAWN_RUNNER_IMAGE`, and
+2. otherwise creates a build with `commit: HEAD` on the profile's `branch`,
+   build env `DSH_YAWN_SANDBOX_ID`, `DSH_YAWN_CONTROL_PLANE_URL`, and `DSH_YAWN_RUNNER_IMAGE`, and
    that session tag;
 3. polls the build until its state is `running`, giving up and cancelling the
    build after `readyTimeoutMs` (default 10 minutes); this covers queue wait and
@@ -40,11 +40,12 @@ For each new session the control plane:
 `DSH_YAWN_SANDBOX_ID` is `dsh-<16 hex chars of the session hash>-<6 random hex chars>`.
 The random suffix changes on every build, so a runner from a cancelled job
 that is still redialing cannot be mistaken for the new one. The build's branch
-is the same string. Buildkite does not check that a branch exists, and the
-pipeline's repository has nothing to do with the sandbox, so the branch is
-only a label; giving every sandbox its own keeps the pipeline's per-branch
-settings ("skip queued intermediate builds", "cancel running intermediate
-builds") from ever acting on another session's sandbox.
+is not that id: it is the profile's `branch` (default `main`). The pipeline's
+repository has nothing to do with the sandbox and the step skips checkout, so
+the branch is only a label. Because every sandbox shares it, the pipeline's
+intermediate-build settings ("skip queued intermediate builds", "cancel
+running intermediate builds") must stay off, or a new sandbox would skip or
+cancel a live one.
 
 ## Idle: checkpoint, cancel, restore
 
@@ -89,6 +90,7 @@ gets a replacement build under the same profile.
         backend: buildkite
         organization: acme
         pipeline: dsh-yawn
+        branch: main
         controlPlaneUrl: wss://dsh.example.com/tunnel
 ```
 
@@ -96,6 +98,7 @@ gets a replacement build under the same profile.
 | ---------------- | --------------------- | ------------------------------------------------------------------------ |
 | `organization`   | required              | Organization slug, as in `buildkite.com/<organization>`                  |
 | `pipeline`       | required              | Pipeline slug                                                            |
+| `branch`         | `main`                | Branch every build is created on; set it to the pipeline's default branch |
 | `controlPlaneUrl`        | required              | Tunnel endpoint the runner dials, `wss://host/tunnel` or `ws://host:port/tunnel` |
 | `image`          | matching release tag  | Runner image the job runs, sent to the build as `DSH_YAWN_RUNNER_IMAGE`       |
 | `readyTimeoutMs` | `600000`              | How long a build may sit `scheduled` before the control plane cancels it      |
@@ -145,6 +148,10 @@ has the YAML and the setup steps. What matters to the backend:
   `/workspace/repository` inside the container, with credentials the control plane
   pushes over the tunnel. The pipeline's repository setting is irrelevant to
   the sandbox; point it at any repository the agent may read, or an empty one.
+- Every build uses the profile's `branch` (default `main`), because Buildkite
+  requires one. Keep the pipeline's **Skip intermediate builds** and **Cancel
+  intermediate builds** settings off: they act on everything sharing a branch,
+  so a new sandbox would skip or cancel a live one. Both are off by default.
 - `timeout_in_minutes` bounds a sandbox's life even if the control plane never cancels
   it, so it is a backstop. Buildkite applies its own ceiling on top: the
   Personal plan caps a job at 4 hours, hosted agents at 8 hours unless

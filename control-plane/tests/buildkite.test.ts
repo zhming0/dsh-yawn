@@ -53,6 +53,7 @@ function backendWith(api: { fetch: typeof fetch }): BuildkiteBackend {
     {
       organization: "acme",
       pipeline: "dsh-yawn",
+      branch: "main",
       image: "ghcr.io/zhming0/dsh-yawn-runner:test",
       controlPlaneUrl: "wss://dsh.example.com/tunnel",
       readyTimeoutMs: 60_000,
@@ -106,7 +107,7 @@ describe("Buildkite backend", () => {
     expect(create?.headers.authorization).toBe("Bearer bkua_test");
     expect(create?.body).toEqual({
       commit: "HEAD",
-      branch: handle.sandboxId,
+      branch: "main",
       message: `dsh sandbox ${handle.sandboxId}`,
       env: {
         DSH_YAWN_SANDBOX_ID: handle.sandboxId,
@@ -162,6 +163,7 @@ describe("Buildkite backend", () => {
       {
         organization: "acme",
         pipeline: "dsh-yawn",
+        branch: "main",
         image: "ghcr.io/zhming0/dsh-yawn-runner:test",
         controlPlaneUrl: "wss://dsh.example.com/tunnel",
         readyTimeoutMs: 2_000,
@@ -258,11 +260,25 @@ describe("Buildkite backend", () => {
         backend: "buildkite",
         organization: "acme",
         pipeline: "dsh-yawn",
+        branch: "main",
         image: DEFAULT_RUNNER_IMAGE,
         controlPlaneUrl: "wss://dsh.example.com/tunnel",
         readyTimeoutMs: 600_000,
       },
     });
+
+    const custom = resolveConfig({
+      profiles: {
+        hosted: {
+          backend: "buildkite",
+          organization: "acme",
+          pipeline: "dsh-yawn",
+          branch: "trunk",
+          controlPlaneUrl: "wss://dsh.example.com/tunnel",
+        },
+      },
+    });
+    expect(custom.profiles.hosted).toMatchObject({ branch: "trunk" });
 
     vi.stubEnv("BUILDKITE_API_TOKEN", "");
     const hosted = config.profiles.hosted;

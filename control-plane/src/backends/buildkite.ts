@@ -37,6 +37,8 @@ interface Build {
 export interface BuildkiteBackendOptions {
   organization: string;
   pipeline: string;
+  /** Branch every build is created on; the step skips checkout, so it is a label. */
+  branch: string;
   /** Runner image, handed to the job so it matches the host's release. */
   image: string;
   /** The tunnel endpoint runners dial, such as wss://dsh.example.com/tunnel. */
@@ -69,13 +71,13 @@ export class BuildkiteBackend implements SandboxBackend {
     let sandboxId = build?.env?.DSH_YAWN_SANDBOX_ID;
     if (build === undefined || sandboxId === undefined) {
       sandboxId = sandboxName(spec.sessionId);
-      // The pipeline's repository is unrelated to the sandbox, so the branch
-      // is only a label. Buildkite does not check that it exists. One branch
-      // per sandbox keeps the pipeline's per-branch settings (skip queued or
-      // cancel running intermediate builds) from touching another sandbox.
+      // The pipeline's repository is unrelated to the sandbox and the step
+      // skips checkout, so the branch is only a label. Every sandbox shares
+      // one branch, so the pipeline must not enable its intermediate-build
+      // settings: those would skip or cancel another live sandbox's build.
       build = await this.request<Build>("POST", "/builds", {
         commit: "HEAD",
-        branch: sandboxId,
+        branch: this.options.branch,
         message: `dsh sandbox ${sandboxId}`,
         env: {
           DSH_YAWN_SANDBOX_ID: sandboxId,

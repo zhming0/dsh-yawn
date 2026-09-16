@@ -12,6 +12,10 @@ import type { SandboxProfile } from "./types.js";
 // self-hosted one may be busy.
 export const DEFAULT_BUILDKITE_READY_TIMEOUT_MS = 10 * 60_000;
 
+// Most pipelines default to main, and Buildkite requires a branch on every
+// build. The step skips checkout, so the branch is only a label.
+export const DEFAULT_BUILDKITE_BRANCH = "main";
+
 /** A profile as written in the settings file: a backend plus its settings. */
 export type ProfileConfig =
   | {
@@ -31,6 +35,7 @@ export type ProfileConfig =
       backend: "buildkite";
       organization: string;
       pipeline: string;
+      branch?: string;
       controlPlaneUrl: string;
       image?: string;
       readyTimeoutMs?: number;
@@ -124,6 +129,7 @@ const runtimeFields = () => ({
           backend: z.const("buildkite").required(),
           organization: z.string().required(),
           pipeline: z.string().required(),
+          branch: z.string().default(DEFAULT_BUILDKITE_BRANCH),
           controlPlaneUrl: z.string().required(),
           image: z.string().default(DEFAULT_RUNNER_IMAGE),
           readyTimeoutMs: z
@@ -272,6 +278,7 @@ function resolveProfile(
       backend: "buildkite",
       organization: profile.organization,
       pipeline: profile.pipeline,
+      branch: profile.branch ?? DEFAULT_BUILDKITE_BRANCH,
       image: profile.image ?? DEFAULT_RUNNER_IMAGE,
       controlPlaneUrl: checkControlPlaneUrl(name, profile.controlPlaneUrl),
       readyTimeoutMs:
