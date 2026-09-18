@@ -35,6 +35,7 @@ function makeContext(entries: FakeTreeEntry[]) {
     workspace: "/workspace/repository",
     ensureRunning: async () => client,
     hibernatedFileIndex: async () => undefined,
+    hasSandbox: async () => true,
     indexFilesOnHibernate: () => {},
   };
   const agents = {
@@ -186,6 +187,7 @@ describe("SandboxFileReferenceService", () => {
           },
         }) as unknown as RunnerClient,
       hibernatedFileIndex: async () => undefined,
+      hasSandbox: async () => true,
       indexFilesOnHibernate: () => {},
     };
     const agents = {
@@ -236,6 +238,7 @@ describe("SandboxFileReferenceService", () => {
         ],
         truncated: false,
       }),
+      hasSandbox: async () => true,
       indexFilesOnHibernate: () => {},
     };
     ctx.provide("sandboxManager", sandboxManager);
@@ -256,6 +259,69 @@ describe("SandboxFileReferenceService", () => {
     expect(wakes).toBe(0);
   });
 
+  it("offers no files for a session with no sandbox, and starts none", async () => {
+    const ctx = new Context();
+    const agent = makeAgent(HOST_CWD);
+    let provisions = 0;
+    ctx.provide("sandboxManager", {
+      workspace: "/workspace/repository",
+      ensureRunning: async () => {
+        provisions += 1;
+        throw new Error("@ must not create a sandbox");
+      },
+      hibernatedFileIndex: async () => undefined,
+      hasSandbox: async () => false,
+      indexFilesOnHibernate: () => {},
+    });
+    ctx.provide("agents", { list: () => [], get: () => undefined });
+    const service = new SandboxFileReferenceService(ctx);
+
+    const root = await service.list(agent, "", new AbortController().signal);
+    expect(root).toEqual([]);
+    const nested = await service.list(
+      agent,
+      "src/",
+      new AbortController().signal,
+    );
+    expect(nested).toEqual([]);
+    expect(provisions).toBe(0);
+  });
+
+  it("lists files once the session has a sandbox, without caching the empty answer", async () => {
+    const ctx = new Context();
+    const agent = makeAgent(HOST_CWD);
+    let exists = false;
+    let treeCalls = 0;
+    ctx.provide("sandboxManager", {
+      workspace: "/workspace/repository",
+      ensureRunning: async () =>
+        ({
+          tree: async () => {
+            treeCalls += 1;
+            return {
+              entries: [{ relativePath: "README.md", type: FileType.REGULAR }],
+              truncated: false,
+            };
+          },
+        }) as unknown as RunnerClient,
+      hibernatedFileIndex: async () => undefined,
+      hasSandbox: async () => exists,
+      indexFilesOnHibernate: () => {},
+    });
+    ctx.provide("agents", { list: () => [], get: () => undefined });
+    const service = new SandboxFileReferenceService(ctx);
+
+    const cold = await service.list(agent, "", new AbortController().signal);
+    expect(cold).toEqual([]);
+    expect(treeCalls).toBe(0);
+
+    // A tool call created the sandbox; the next "@" sees its files.
+    exists = true;
+    const listed = await service.list(agent, "", new AbortController().signal);
+    expect(listed.map((candidate) => candidate.path)).toEqual(["README.md"]);
+    expect(treeCalls).toBe(1);
+  });
+
   it("hands its exclusions and entry cap to the manager for hibernation", () => {
     const ctx = new Context();
     let received: unknown;
@@ -263,6 +329,7 @@ describe("SandboxFileReferenceService", () => {
       workspace: "/workspace/repository",
       ensureRunning: async () => undefined,
       hibernatedFileIndex: async () => undefined,
+      hasSandbox: async () => true,
       indexFilesOnHibernate: (options: unknown) => {
         received = options;
       },

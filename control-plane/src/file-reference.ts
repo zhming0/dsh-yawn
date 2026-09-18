@@ -66,7 +66,8 @@ interface Snapshot {
 /**
  * Per-agent snapshots of the sandbox workspace tree. A running sandbox is
  * walked through its runner; a hibernated one answers from the index the
- * manager saved as it suspended, so typing "@" never wakes a sandbox.
+ * manager saved as it suspended, so typing "@" never wakes or creates a
+ * sandbox.
  */
 export class SandboxFileReferenceService extends FileReferenceService {
   static inject = ["sandboxManager", "agents"];
@@ -265,6 +266,11 @@ export class SandboxFileReferenceService extends FileReferenceService {
         if (this.disposed) {
           return { entries: [], startedAt };
         }
+        if (index === undefined) {
+          // No sandbox to index: answer empty without caching, so the action
+          // that creates one is visible to the next "@".
+          return { entries: [], startedAt };
+        }
         if (index.truncated && !this.truncationWarned.has(agent)) {
           this.truncationWarned.add(agent);
           this.ctx.logger.warn(
@@ -286,14 +292,20 @@ export class SandboxFileReferenceService extends FileReferenceService {
 
   /**
    * A hibernated session answers from the index saved as it suspended, so
-   * typing "@" does not pay for a wake. Otherwise (running, still
-   * provisioning, or hibernated without an index) the runner walks the tree.
+   * typing "@" does not pay for a wake. A session that never had a sandbox
+   * answers nothing: the completion menu asks for files whether or not the
+   * user wants one, and it must not create a session's first sandbox. Every
+   * other case (running, or a sandbox whose index is missing) walks the tree
+   * through the runner.
    */
-  private async fetch(agent: Agent): Promise<FileIndex> {
+  private async fetch(agent: Agent): Promise<FileIndex | undefined> {
     const manager = this.ctx.sandboxManager;
     const saved = await manager.hibernatedFileIndex(agent);
     if (saved !== undefined) {
       return saved;
+    }
+    if (!(await manager.hasSandbox(agent))) {
+      return undefined;
     }
     const client = await manager.ensureRunning(agent);
     return captureFileIndex(client, manager.workspace, {

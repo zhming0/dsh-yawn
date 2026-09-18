@@ -85,14 +85,18 @@ refresh), and returns the same workspace-relative candidates with the same
 exclusions and ranking as the stock provider. The listing is cached per
 session and refreshed after the next tool result.
 
-Typing `@` does not wake a hibernated sandbox. As a sandbox hibernates, the
-manager walks its workspace once and saves the listing under
+Typing `@` neither wakes a hibernated sandbox nor creates a session's first
+one. The completion menu asks for file candidates on every keystroke whether
+or not the user wants a file, so file discovery never starts a machine: a
+session with no sandbox record answers an empty file list, and the next `@`
+after the first prompt sees the files. As a sandbox hibernates, the manager
+walks its workspace once and saves the listing under
 `<stateDir>/file-index/<session>.json`; a hibernated workspace cannot change,
 because every write goes through a tool call that first wakes the sandbox, so
 that saved listing is exact until the next wake. `@` on a hibernated session
 reads it, and the file is removed with the session record. If no index exists
-(the host restarted while the sandbox was running, or the walk failed), `@`
-falls back to waking the sandbox.
+for a session that has a sandbox (the host restarted while the sandbox was
+running, or the walk failed), `@` falls back to waking the sandbox.
 
 The Web profile also gains a **Settings → Secrets** page. It edits the
 control plane's broker store: the browser sends names and values in and receives

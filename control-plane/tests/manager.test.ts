@@ -497,6 +497,32 @@ describe("sandbox lifecycle", () => {
     expect(store.get("session-one")?.state).toBe("hibernated");
   });
 
+  it("reports whether a session has a sandbox without provisioning one", async () => {
+    const backend = new FakeBackend();
+    const ctx = new Context();
+    const manager = new SandboxManager(
+      ctx,
+      {
+        profiles: { standard: { backend: "docker" } },
+        stateDir: directory,
+        repository: "https://github.com/example/public.git",
+      },
+      { backends: { standard: backend }, gateway: gatewayFor(backend) },
+    );
+    const agent = {
+      id: "session-one",
+      session: { header: {} },
+    } as unknown as Agent;
+
+    expect(await manager.hasSandbox(agent)).toBe(false);
+    expect(backend.provisions).toBe(0);
+    expect(backend.wakes).toBe(0);
+
+    await manager.ensureRunning(agent);
+    expect(await manager.hasSandbox(agent)).toBe(true);
+    expect(backend.provisions).toBe(1);
+  });
+
   it("tells the model its workspace was restored from a checkpoint, once", async () => {
     const backend = new FakeBackend();
     backend.capabilities.supportsHibernate = false;
