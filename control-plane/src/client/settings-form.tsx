@@ -35,6 +35,7 @@ const BACKEND_FIELDS: Record<
   buildkite: [
     { key: "organization", label: "Organization" },
     { key: "pipeline", label: "Pipeline" },
+    { key: "branch", label: "Branch" },
     { key: "controlPlaneUrl", label: "Control plane URL" },
     { key: "image", label: "Runner image (optional)" },
     { key: "readyTimeoutMs", label: "Ready timeout (ms)", kind: "number" },
