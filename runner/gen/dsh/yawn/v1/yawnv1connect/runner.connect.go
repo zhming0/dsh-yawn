@@ -69,6 +69,8 @@ const (
 	RunnerServiceSetGitCredentialsProcedure = "/dsh.yawn.v1.RunnerService/SetGitCredentials"
 	// RunnerServiceSetupProcedure is the fully-qualified name of the RunnerService's Setup RPC.
 	RunnerServiceSetupProcedure = "/dsh.yawn.v1.RunnerService/Setup"
+	// RunnerServiceHttpProxyProcedure is the fully-qualified name of the RunnerService's HttpProxy RPC.
+	RunnerServiceHttpProxyProcedure = "/dsh.yawn.v1.RunnerService/HttpProxy"
 )
 
 // RunnerServiceClient is a client for the dsh.yawn.v1.RunnerService service.
@@ -88,6 +90,9 @@ type RunnerServiceClient interface {
 	SetSecrets(context.Context, *connect.Request[v1.SetSecretsRequest]) (*connect.Response[v1.SetSecretsResponse], error)
 	SetGitCredentials(context.Context, *connect.Request[v1.SetGitCredentialsRequest]) (*connect.Response[v1.SetGitCredentialsResponse], error)
 	Setup(context.Context, *connect.Request[v1.SetupRequest]) (*connect.Response[v1.SetupResponse], error)
+	// One browser request relayed to a server inside the sandbox. Each side
+	// sends its head message first, then body chunks; see the message docs.
+	HttpProxy(context.Context) *connect.BidiStreamForClient[v1.HttpProxyRequest, v1.HttpProxyResponse]
 }
 
 // NewRunnerServiceClient constructs a client for the dsh.yawn.v1.RunnerService service. By default,
@@ -191,6 +196,12 @@ func NewRunnerServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(runnerServiceMethods.ByName("Setup")),
 			connect.WithClientOptions(opts...),
 		),
+		httpProxy: connect.NewClient[v1.HttpProxyRequest, v1.HttpProxyResponse](
+			httpClient,
+			baseURL+RunnerServiceHttpProxyProcedure,
+			connect.WithSchema(runnerServiceMethods.ByName("HttpProxy")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -211,6 +222,7 @@ type runnerServiceClient struct {
 	setSecrets        *connect.Client[v1.SetSecretsRequest, v1.SetSecretsResponse]
 	setGitCredentials *connect.Client[v1.SetGitCredentialsRequest, v1.SetGitCredentialsResponse]
 	setup             *connect.Client[v1.SetupRequest, v1.SetupResponse]
+	httpProxy         *connect.Client[v1.HttpProxyRequest, v1.HttpProxyResponse]
 }
 
 // Health calls dsh.yawn.v1.RunnerService.Health.
@@ -288,6 +300,11 @@ func (c *runnerServiceClient) Setup(ctx context.Context, req *connect.Request[v1
 	return c.setup.CallUnary(ctx, req)
 }
 
+// HttpProxy calls dsh.yawn.v1.RunnerService.HttpProxy.
+func (c *runnerServiceClient) HttpProxy(ctx context.Context) *connect.BidiStreamForClient[v1.HttpProxyRequest, v1.HttpProxyResponse] {
+	return c.httpProxy.CallBidiStream(ctx)
+}
+
 // RunnerServiceHandler is an implementation of the dsh.yawn.v1.RunnerService service.
 type RunnerServiceHandler interface {
 	Health(context.Context, *connect.Request[v1.HealthRequest]) (*connect.Response[v1.HealthResponse], error)
@@ -305,6 +322,9 @@ type RunnerServiceHandler interface {
 	SetSecrets(context.Context, *connect.Request[v1.SetSecretsRequest]) (*connect.Response[v1.SetSecretsResponse], error)
 	SetGitCredentials(context.Context, *connect.Request[v1.SetGitCredentialsRequest]) (*connect.Response[v1.SetGitCredentialsResponse], error)
 	Setup(context.Context, *connect.Request[v1.SetupRequest]) (*connect.Response[v1.SetupResponse], error)
+	// One browser request relayed to a server inside the sandbox. Each side
+	// sends its head message first, then body chunks; see the message docs.
+	HttpProxy(context.Context, *connect.BidiStream[v1.HttpProxyRequest, v1.HttpProxyResponse]) error
 }
 
 // NewRunnerServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -404,6 +424,12 @@ func NewRunnerServiceHandler(svc RunnerServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(runnerServiceMethods.ByName("Setup")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runnerServiceHttpProxyHandler := connect.NewBidiStreamHandler(
+		RunnerServiceHttpProxyProcedure,
+		svc.HttpProxy,
+		connect.WithSchema(runnerServiceMethods.ByName("HttpProxy")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/dsh.yawn.v1.RunnerService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case RunnerServiceHealthProcedure:
@@ -436,6 +462,8 @@ func NewRunnerServiceHandler(svc RunnerServiceHandler, opts ...connect.HandlerOp
 			runnerServiceSetGitCredentialsHandler.ServeHTTP(w, r)
 		case RunnerServiceSetupProcedure:
 			runnerServiceSetupHandler.ServeHTTP(w, r)
+		case RunnerServiceHttpProxyProcedure:
+			runnerServiceHttpProxyHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -503,4 +531,8 @@ func (UnimplementedRunnerServiceHandler) SetGitCredentials(context.Context, *con
 
 func (UnimplementedRunnerServiceHandler) Setup(context.Context, *connect.Request[v1.SetupRequest]) (*connect.Response[v1.SetupResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("dsh.yawn.v1.RunnerService.Setup is not implemented"))
+}
+
+func (UnimplementedRunnerServiceHandler) HttpProxy(context.Context, *connect.BidiStream[v1.HttpProxyRequest, v1.HttpProxyResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("dsh.yawn.v1.RunnerService.HttpProxy is not implemented"))
 }

@@ -20,6 +20,9 @@ service RunnerService {
   rpc SetSecrets(SetSecretsRequest) returns (SetSecretsResponse);
   rpc SetGitCredentials(SetGitCredentialsRequest) returns (SetGitCredentialsResponse);
   rpc Setup(SetupRequest) returns (SetupResponse);
+  // One browser request relayed to a server inside the sandbox. Each side
+  // sends its head message first, then body chunks; see the message docs.
+  rpc HttpProxy(stream HttpProxyRequest) returns (stream HttpProxyResponse);
 }
 
 message HealthRequest {}
@@ -54,6 +57,11 @@ message SandboxStatusResponse {
   // Seconds since the runner process started, which is when the sandbox began
   // serving this session.
   int64 uptime_seconds = 12;
+  // TCP ports with a listening socket in the sandbox's network namespace,
+  // ascending. The runner's own health listener is not one of them. A server
+  // the session started shows up here, which is how a preview finds its port
+  // without anyone being told it.
+  repeated int32 listening_ports = 13;
 }
 
 message ExecRequest {
@@ -238,4 +246,43 @@ message SetupRequest {
 
 message SetupResponse {
   bool ran = 1;
+}
+
+// One request the control plane relays from a browser to a server listening
+// on the sandbox's loopback. The first message on the stream must be the
+// head; every later message is body bytes. Headers are plain pairs so
+// repeatable ones (Set-Cookie) survive; both sides strip hop-by-hop headers
+// and the Host header, because the loopback address is the runner's business.
+message HttpProxyRequest {
+  oneof part {
+    HttpProxyRequestHead head = 1;
+    bytes body = 2;
+  }
+}
+
+message HttpProxyRequestHead {
+  string method = 1;
+  // The request target as the browser sent it: path and query only. A
+  // target without a leading slash is rejected.
+  string target = 2;
+  // The loopback port the sandbox server listens on.
+  int32 port = 3;
+  repeated HttpProxyHeader headers = 4;
+}
+
+message HttpProxyHeader {
+  string name = 1;
+  string value = 2;
+}
+
+message HttpProxyResponse {
+  oneof part {
+    HttpProxyResponseHead head = 1;
+    bytes body = 2;
+  }
+}
+
+message HttpProxyResponseHead {
+  int32 status = 1;
+  repeated HttpProxyHeader headers = 2;
 }
