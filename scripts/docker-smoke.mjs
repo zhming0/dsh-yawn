@@ -2,12 +2,17 @@
 
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 
 import { DockerBackend } from "../control-plane/dist/backends/docker.js";
+import { previewHost } from "../control-plane/dist/preview.js";
+import { PreviewServer } from "../control-plane/dist/preview-server.js";
 import { TunnelServer } from "../control-plane/dist/tunnel.js";
 
 const image = process.env.DSH_YAWN_RUNNER_IMAGE ?? "dsh-yawn-runner:dev";
 const workspace = "/workspace/repository";
+/** The preview domain the smoke's listener serves; resolution never happens. */
+const PREVIEW_DOMAIN = "sandbox.localhost";
 const registrationToken = randomBytes(32).toString("hex");
 const tunnel = new TunnelServer({
   port: 0,
@@ -21,6 +26,7 @@ const backend = new DockerBackend({
   registrationToken,
 });
 let handle;
+let previewServer;
 
 try {
   handle = await backend.provision({
@@ -175,10 +181,106 @@ try {
     throw new Error("mise-managed tools did not survive hibernation");
   }
 
+  // The preview listener: a server started by a session command, reached by
+  // host name. setsid detaches it from the exec process group so it outlives
+  // the command that started it.
+  previewServer = new PreviewServer({
+    domain: PREVIEW_DOMAIN,
+    port: 0,
+    bind: "127.0.0.1",
+    gateway: tunnel,
+    log: (message) => process.stdout.write(`${message}\n`),
+  });
+  await previewServer.listen();
+  await client.writeFile({
+    path: "/workspace/preview-marker.txt",
+    content: new TextEncoder().encode("preview live"),
+    guard: { case: "createIfAbsent", value: true },
+  });
+  await client.writeFile({
+    path: "/tmp/preview-server.py",
+    content: new TextEncoder().encode(
+      readFileSync(new URL("./preview-server.py", import.meta.url), "utf8"),
+    ),
+    guard: { case: "createIfAbsent", value: true },
+  });
+  await run(client, [
+    "/bin/bash",
+    "-lc",
+    "setsid python3 /tmp/preview-server.py >/tmp/http.log 2>&1 &",
+  ]);
+  // The command above returns before Python binds its socket. Wait for the
+  // sandbox's own listener first, so the assertion below tests the relay
+  // rather than how fast Python starts on a loaded machine.
+  await run(client, [
+    "/bin/bash",
+    "-c",
+    "for _ in $(seq 1 150); do (exec 3<>/dev/tcp/127.0.0.1/3123) 2>/dev/null && exit 0; sleep 0.1; done; echo 'the preview server never listened on 3123:' >&2; cat /tmp/http.log >&2; exit 1",
+  ]);
+  const preview = await requestByHost(
+    previewServer.port(),
+    previewHost(PREVIEW_DOMAIN, handle.sandboxId, 3123),
+    "/preview-marker.txt",
+  );
+  if (preview.status !== 200 || preview.body !== "preview live") {
+    throw new Error(
+      `preview listener answered ${preview.status} with ${JSON.stringify(preview.body)}`,
+    );
+  }
+  // A preview is its own origin, so the sandbox server's cookie and policy
+  // are its own and must arrive untouched.
+  if (preview.headers["set-cookie"]?.join(", ") !== "sandbox=1") {
+    throw new Error(
+      `preview listener lost the sandbox's cookie: ${preview.headers["set-cookie"]}`,
+    );
+  }
+  if (preview.headers["content-security-policy"] !== "default-src 'none'") {
+    throw new Error(
+      `preview listener touched the sandbox's policy: ${preview.headers["content-security-policy"]}`,
+    );
+  }
+  // A host outside the preview domain is an unknown host, not a dial.
+  const foreign = await requestByHost(
+    previewServer.port(),
+    "other.example.com",
+    "/",
+  );
+  if (foreign.status !== 404) {
+    throw new Error(
+      `preview listener answered a foreign host: ${foreign.status}`,
+    );
+  }
+
   process.stdout.write("PASS: Docker runner registration, tools, setup, and hibernate/wake\n");
 } finally {
   if (handle !== undefined) await backend.destroy(handle.reference).catch(() => {});
+  if (previewServer !== undefined) await previewServer.close().catch(() => {});
   await tunnel.close();
+}
+
+/**
+ * One HTTP request naming a host the listener never resolves. fetch refuses a
+ * custom Host header (it is a forbidden header name), so this is plain http.
+ */
+function requestByHost(port, host, path) {
+  return new Promise((resolve, reject) => {
+    const outgoing = httpRequest(
+      { host: "127.0.0.1", port, path, headers: { host } },
+      (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () =>
+          resolve({
+            status: response.statusCode ?? 0,
+            headers: response.headers,
+            body: Buffer.concat(chunks).toString(),
+          }),
+        );
+      },
+    );
+    outgoing.on("error", reject);
+    outgoing.end();
+  });
 }
 
 async function waitForRunner(tunnel, sandboxId) {

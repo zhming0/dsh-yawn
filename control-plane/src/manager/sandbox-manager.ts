@@ -37,6 +37,8 @@ import { InstructionStore } from "../instruction-store.js";
 import type { InstructionSettingsView } from "../instructions-remote.js";
 import { ManagedInstructions } from "../managed-instructions.js";
 import { yawnHost } from "../remote-contributions.js";
+import { PLACEHOLDER_PREVIEW_PORT, previewHost } from "../preview.js";
+import { PreviewServer } from "../preview-server.js";
 import type { RunnerClient } from "../runner-client.js";
 import type { SandboxStatusView } from "../sandbox-status-remote.js";
 import type { SessionProfileView } from "../session-profile-remote.js";
@@ -105,6 +107,8 @@ export class SandboxManager extends TypertRemoteService {
   private readonly runtime: RuntimeSettings;
   private readonly broker: CredentialBroker;
   private readonly ownedTunnel: TunnelServer | undefined;
+  /** Started only when a preview domain is configured; see ResolvedConfig. */
+  private readonly ownedPreview: PreviewServer | undefined;
   private readonly instructions: ManagedInstructions;
   private readonly workspaceRegistry: WorkspaceRegistryLike | undefined;
   private readonly engine: SandboxLifecycle;
@@ -174,6 +178,19 @@ export class SandboxManager extends TypertRemoteService {
     } else {
       this.gateway = dependencies.gateway;
     }
+    // Previews are configured by domain; without one there is no listener and
+    // the Preview tab explains what is missing. The listener is deliberately
+    // not the tunnel port: sandboxes can reach that one by design.
+    if (this.config.preview.domain !== undefined) {
+      this.ownedPreview = new PreviewServer({
+        domain: this.config.preview.domain,
+        port: this.config.preview.port,
+        bind: this.config.preview.bind,
+        gateway: this.gateway,
+        log: (message) => this.ctx.logger("sandbox").info(message),
+        onPreviewHit: (sandboxId) => this.markPreviewed(sandboxId),
+      });
+    }
     this.workspaceRegistry = dependencies.workspaceRegistry;
     this.credentialsOverride = dependencies.credentials;
     this.runtime = new RuntimeSettings({
@@ -193,10 +210,18 @@ export class SandboxManager extends TypertRemoteService {
     this.attachment = attachment;
     // The status read gets the store, the profile map, and a runner lookup —
     // deliberately not the engine, so it cannot provision or wake.
+    const previewDomain = this.config.preview.domain;
     this.status = new SandboxStatus({
       store,
       profiles: () => this.runtime.profiles,
       runnerFor: (sessionId) => attachment.clientFor(sessionId),
+      ...(previewDomain === undefined
+        ? {}
+        : {
+            previewDomain,
+            previewHost: (sandboxId: string) =>
+              previewHost(previewDomain, sandboxId, PLACEHOLDER_PREVIEW_PORT),
+          }),
     });
     this.registry = new ProfileRegistry(
       this.config.profiles,
@@ -360,6 +385,7 @@ export class SandboxManager extends TypertRemoteService {
     ctx.effect(() => () => {
       this.idle.dispose();
       void this.ownedTunnel?.close();
+      void this.ownedPreview?.close();
     });
   }
 
@@ -368,6 +394,7 @@ export class SandboxManager extends TypertRemoteService {
     await Promise.all([
       this.broker.initialize(),
       this.ownedTunnel?.listen(),
+      this.ownedPreview?.listen(),
       this.instructions.initialize(),
     ]);
     await this.engine.initialize();
@@ -554,6 +581,34 @@ export class SandboxManager extends TypertRemoteService {
   async getSandboxStatus(sessionId: string): Promise<SandboxStatusView> {
     await this.ready;
     return this.status.view(sessionId);
+  }
+
+  /**
+   * The preview listener's bound port, or undefined when previews are not
+   * configured. The listener binds port 0 in tests, so this is how they reach
+   * it; operations get the same number for a health check.
+   */
+  previewPort(): number | undefined {
+    return this.ownedPreview?.port();
+  }
+
+  /**
+   * A previewed sandbox is being looked at, which is activity: an armed idle
+   * countdown is cancelled and re-armed, so a sandbox does not hibernate
+   * under its viewer.
+   */
+  private markPreviewed(sandboxId: string): void {
+    for (const record of this.engine.records()) {
+      if (
+        record.state === "running" &&
+        "sandboxId" in record &&
+        record.sandboxId === sandboxId
+      ) {
+        this.idle.markActive(record.sessionId);
+        this.idle.schedule(record.sessionId);
+        return;
+      }
+    }
   }
 
   /**

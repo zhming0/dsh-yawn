@@ -235,6 +235,37 @@ profiles that differ only by name, for example `standard` and `large` both with
    picked profile on the session, with no entry left in `pendingProfiles`.
 4. Confirm the chip is now disabled and keeps showing the picked profile.
 
+### Verify sandbox web previews
+
+Run this scenario for changes to the preview listener, the relay, or the
+Web Preview tab. It works against a Docker host: give the `sandbox-manager` row a
+`preview.domain` (any name — nothing resolves it, the listener routes by the
+`Host` header alone) and read the preview port from the host's port bindings
+(the `preview.port` setting, default 8082).
+
+1. Start a session and ask the model to start a web server in the sandbox on
+   a fixed port, detached. The Sandbox tab must list the port under
+   "Listening ports" once it is up.
+2. The Web Preview tab must offer the port as a chip and load the page. Typing a
+   path the page does not link (plus a query string) and pressing Enter must
+   load it; the port and path survive leaving and re-entering the tab.
+3. The page must be functional as a real origin: absolute-path assets load,
+   and `localStorage` works from the page's own console.
+4. **Open** must load the page in its own tab, served from the same origin as
+   the frame.
+5. From the host, `curl -H "Host: <sandboxId>-p<port>.<preview.domain>"
+   http://127.0.0.1:<preview.port>/` must return the same page;
+   `curl -H "Host: other.example.com" …` must return 404, and a sandbox with
+   no runner (hibernate it) must answer 503 with the wake hint.
+6. With `preview.domain` removed from the row, the Web Preview tab must say
+   previews are not configured instead of disappearing.
+7. Leave the Web Preview tab open past the idle delay: the sandbox must not
+   hibernate while the preview is being viewed.
+
+In a browser, `<anything>.localhost` resolves to loopback in Chrome and
+Firefox, so a `preview.domain` of `preview.localhost` gives the frame a real
+host name with no DNS or certificate on a development host.
+
 For UI changes, record the browser state or capture a screenshot when useful,
 but also exercise the interaction and verify the resulting state. A screenshot
 alone does not prove persistence or model-context injection.

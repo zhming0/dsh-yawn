@@ -23,6 +23,14 @@ export interface SandboxStatusDependencies {
    * a read: the caller supplies a lookup that cannot provision or wake.
    */
   runnerFor: (sessionId: string) => RunnerClient | undefined;
+  /** The configured preview domain; undefined when previews are disabled. */
+  previewDomain?: string;
+  /**
+   * The host name serving one sandbox's previews, or undefined when previews
+   * are disabled. The port segment is the placeholder the tab swaps for the
+   * server's real port.
+   */
+  previewHost?: (sandboxId: string) => string | undefined;
 }
 
 /**
@@ -39,11 +47,20 @@ export class SandboxStatus {
   constructor(private readonly deps: SandboxStatusDependencies) {}
 
   async view(sessionId: string): Promise<SandboxStatusView> {
+    // The preview domain is a fact about the host, not the sandbox: the tab
+    // needs it to explain what is missing even before anything exists.
+    const previewDomain =
+      this.deps.previewDomain === undefined
+        ? {}
+        : { previewDomain: this.deps.previewDomain };
     const record = this.deps.store.get(sessionId);
     if (record === undefined) {
-      return {};
+      return previewDomain;
     }
-    const view: SandboxStatusView = { sandbox: this.hostFacts(record) };
+    const view: SandboxStatusView = {
+      ...previewDomain,
+      sandbox: this.hostFacts(record),
+    };
     // Only a running sandbox has a runner attached, and only an attached
     // runner can answer for the machine. The attachment is keyed by session.
     if (record.state === "running") {
@@ -78,6 +95,14 @@ export class SandboxStatus {
     if (record.state !== "running") {
       facts.expiresAt = record.expiresAt;
     }
+    if (facts.sandboxId !== undefined) {
+      // The host name stays valid across a hibernate and wake, so offer it
+      // for every sandbox that still exists; the tab's caption covers the rest.
+      const preview = this.deps.previewHost?.(facts.sandboxId);
+      if (preview !== undefined) {
+        facts.previewHost = preview;
+      }
+    }
     return facts;
   }
 
@@ -105,6 +130,7 @@ export class SandboxStatus {
         filesystemDiskUsedBytes: Number(status.filesystemDiskUsedBytes),
         filesystemDiskTotalBytes: Number(status.filesystemDiskTotalBytes),
         uptimeSeconds: Number(status.uptimeSeconds),
+        listeningPorts: status.listeningPorts.map(Number),
       };
     } catch {
       // A runner that stopped answering is not an error to report here: the
