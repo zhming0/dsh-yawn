@@ -331,6 +331,9 @@ starting, so the settings can still be corrected.
 | `registrationToken` | boot | see below               | Token(s) runners must present, comma-separated                   |
 | `tunnel.port`       | boot | `8081`                  | Port the host listens on for runner tunnels (see Tunnel)         |
 | `tunnel.bind`       | boot | `0.0.0.0`               | Address the tunnel listener binds to                             |
+| `preview.domain`    | boot | none                    | Domain serving previews (see Previews); unset disables them      |
+| `preview.port`      | boot | `8082`                  | Port the preview listener binds to                               |
+| `preview.bind`      | boot | `0.0.0.0`               | Address the preview listener binds to                            |
 
 Each profile carries the settings of its own backend. Profiles do not share
 settings with each other, so two Kubernetes profiles in one namespace both
@@ -592,6 +595,34 @@ host's HTTP/2 pings every 30 seconds, but a maximum connection lifetime is
 not: when the proxy cuts the tunnel, the RPC in flight fails and the runner
 redials within seconds. Raise such limits to hours where the proxy has them.
 
+## Previews
+
+A server started inside a sandbox — a dev server, a docs build — is reachable
+from the browser at its own origin when `preview.domain` names a domain the
+control plane's preview listener answers for:
+
+```
+<sandboxId>-p<port>.<preview.domain>
+```
+
+One DNS label per sandbox and port, so one wildcard certificate covers every
+preview of an install, and each preview is a real origin: absolute-path
+assets, storage, cookies, and service workers all work, and nothing the page
+does can reach the Web UI's origin around it. The listener is deliberately
+not the tunnel port (sandboxes can reach that one) and not the Web UI's
+server (dsh's web server matches routes by path, so a subdomain request would
+land in the SPA fallback); it is a third listener, fronted by whatever fronts
+the UI. Requests are relayed over each runner's registered tunnel — the
+runner dials `127.0.0.1:<port>` and never learns the public host name — and a
+preview hit counts as session activity, so a sandbox does not hibernate under
+its viewer.
+
+The Web Preview tab beside the chat follows the sandbox's listening ports (the
+runner reports them), lets you pick a port and an entry path, and can open the
+page in its own tab. Without a `preview.domain` the tab says previews are not
+configured instead of vanishing. Design and follow-ups (WebSocket upgrades
+for HMR, supervised services): `docs/plans/sandbox-preview.md`.
+
 ## Registration token
 
 A runner authenticates its tunnel with a shared registration token, presented
@@ -636,4 +667,6 @@ see
   the machine's totals, which overstates a container that is limited below
   them. A session restored from a checkpoint reports the fresh sandbox's start
   time, not the one it replaced.
-- There is no service exposure or portal support yet.
+- Previews relay plain HTTP request/response exchanges; WebSocket upgrades
+  through a preview are not implemented yet, so dev-server hot reload does
+  not connect. See Previews above.

@@ -155,6 +155,19 @@ function SandboxFacts({
             {new Date(sandbox.expiresAt).toLocaleString()}
           </Row>
         )}
+        {sandbox.previewHost !== undefined && (
+          <Row label="Web preview">
+            <span>
+              {`${location.protocol}//${sandbox.previewHost}`}
+              <br />
+              <span style={{ fontSize: 12, color: captionColor }}>
+                Serves a port inside this sandbox, shown live in the Web Preview
+                tab beside the chat. Pick the port there; the host keeps working
+                across a hibernate and wake.
+              </span>
+            </span>
+          </Row>
+        )}
       </Section>
 
       <Section title="Machine">
@@ -167,6 +180,16 @@ function SandboxFacts({
         ) : (
           <>
             <Row label="Hostname">{live.hostname}</Row>
+            <Row label="Listening ports">
+              {live.listeningPorts.length === 0
+                ? "none"
+                : live.listeningPorts.join(", ")}
+              <br />
+              <span style={{ fontSize: 12, color: captionColor }}>
+                Servers the session started. The Web Preview tab offers these
+                ports.
+              </span>
+            </Row>
             <Row label="System">
               {[live.osName, live.kernelVersion, live.architecture]
                 .filter((part) => part !== "")
