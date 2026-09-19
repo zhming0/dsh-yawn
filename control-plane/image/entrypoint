@@ -3,6 +3,28 @@
 # so a manifest can add flags such as --trusted-host.
 set -eu
 
+# The image starts as root so this script can put dsh in the mounted Docker
+# socket's group. A socket's group id only means something inside the container
+# it is mounted into — under rootless or userns-remapped Docker the host-side
+# value is not even mapped — so the run command cannot compute it and the
+# lookup has to happen here. Root is given up before anything else runs:
+# dsh-yawn-seed and dsh below are the image's normal user, uid 1000. A run that
+# sets its own user (Kubernetes runAsUser) skips this block.
+if [ "$(id -u)" = 0 ]; then
+  socket_gid=1000
+  if [ -S /var/run/docker.sock ]; then
+    socket_gid=$(stat -c %g /var/run/docker.sock)
+  fi
+  exec setpriv --reuid=1000 --regid=1000 --groups 1000,"$socket_gid" \
+    /usr/local/bin/dsh-yawn-entrypoint "$@"
+fi
+
+# Reached only when the run overrode the image user, which skips the group join
+# above; say what is wrong instead of failing later inside the Docker backend.
+if [ -S /var/run/docker.sock ] && [ ! -w /var/run/docker.sock ]; then
+  echo "dsh-yawn: /var/run/docker.sock is not writable by uid $(id -u), so the Docker backend cannot start sandboxes." >&2
+fi
+
 dsh-yawn-seed
 
 set -- --port "${DSH_YAWN_WEB_PORT:-3000}" --no-open "$@"
@@ -11,5 +33,10 @@ set -- --port "${DSH_YAWN_WEB_PORT:-3000}" --no-open "$@"
 # the web app's arguments.
 if [ "${DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE:-0}" = 1 ]; then
   set -- --patch /opt/dsh-yawn/launch-token.patch.yml "$@"
+fi
+# DSH_YAWN_BIND_ALL=1 lets a published port reach the UI; see
+# bind-all.patch.yml.
+if [ "${DSH_YAWN_BIND_ALL:-0}" = 1 ]; then
+  set -- --patch /opt/dsh-yawn/bind-all.patch.yml "$@"
 fi
 exec dsh --profile web "$@"

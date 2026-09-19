@@ -230,6 +230,18 @@ injection grants no access: `/api` keeps the same Host/Origin fence and the
 same authentication. `tests/ui-owns-host.test.ts` pins the two dsh-internal
 seams this rides on, so a dsh bump that moves either fails CI.
 
+The image runs dsh as its own uid 1000 user. Its entrypoint starts as root only
+long enough to read the mounted Docker socket's group and join it, then drops
+root before seeding the profile or starting anything. A socket's group id only
+means something inside the container it is mounted into — rootless or
+userns-remapped Docker does not map the host-side value at all — so the lookup
+belongs in the image and the run command needs no `--group-add`. A pod that sets
+`runAsUser`, as the Helm chart does, skips the drop and never starts as root.
+
+`DSH_YAWN_BIND_ALL=1` applies `bind-all.patch.yml`, which binds the Web UI to
+`0.0.0.0` so a published port reaches it. Kubernetes leaves it unset and keeps
+dsh on pod loopback behind oauth2-proxy.
+
 The default backend uses Docker on the same machine as dsh. The Kubernetes
 backend uses Kubernetes SIG agent-sandbox. The Buildkite backend runs each
 sandbox as one build on a pipeline you create. Runners connect out to the host's

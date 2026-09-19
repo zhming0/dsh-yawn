@@ -70,7 +70,7 @@ RUN DSH_HOME=/opt/dsh-yawn/seed dsh plugin --profile web add /opt/dsh-yawn/dsh-y
     && rm -rf /opt/dsh-yawn/seed \
     && cp /opt/dsh-yawn/meta/version /opt/dsh-yawn/version
 
-COPY control-plane/image/settings.patch.yml control-plane/image/launch-token.patch.yml /opt/dsh-yawn/
+COPY control-plane/image/settings.patch.yml control-plane/image/launch-token.patch.yml control-plane/image/bind-all.patch.yml /opt/dsh-yawn/
 COPY control-plane/image/seed /usr/local/bin/dsh-yawn-seed
 COPY control-plane/image/entrypoint /usr/local/bin/dsh-yawn-entrypoint
 
@@ -80,7 +80,11 @@ RUN userdel -r node \
     && useradd --uid 1000 --create-home --home-dir /data dsh \
     && chown -R dsh:dsh /opt/dsh-yawn
 
-USER dsh
+# The entrypoint starts as root only to join the mounted Docker socket's group
+# and then drops to uid 1000 before running anything; see
+# control-plane/image/entrypoint. A pod that sets runAsUser (the Helm chart
+# does) skips the drop and never runs as root.
+USER root
 ENV HOME=/data
 WORKDIR /data
 EXPOSE 3000

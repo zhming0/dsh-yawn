@@ -47,40 +47,34 @@ session run, not a supported deployment — for that, read
 ```sh
 docker run -d --name dsh-yawn \
   -p 127.0.0.1:3000:3000 -p 8081:8081 \
-  -e DSH_YAWN_WEB_PORT=13000 \
+  -e DSH_YAWN_BIND_ALL=1 \
   -e DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1 \
-  --group-add "$(stat -c %g /var/run/docker.sock 2>/dev/null || echo 0)" \
   -v dsh-yawn-data:/data \
   -v /var/run/docker.sock:/var/run/docker.sock \
   ghcr.io/zhming0/dsh-yawn-control-plane
-
-# dsh serves its UI on loopback only, so a sidecar publishes it. This is the
-# same shape as the oauth2-proxy sidecar in the Kubernetes install.
-docker run -d --name dsh-yawn-ui --network container:dsh-yawn --restart unless-stopped \
-  alpine/socat TCP-LISTEN:3000,fork,reuseaddr TCP4:127.0.0.1:13000
-
-# Tell the control plane to use the Docker backend in Settings → Sandboxes
-# (open the URL below, then Settings → Sandboxes → New profile):
-#   name: standard, backend: docker
-# It applies without a restart. The settings document lives at
-# /data/.dsh/settings.yaml inside the container if you would rather edit it
-# directly.
 ```
 
 What the pieces do:
 
 - The Docker socket mount lets the control plane start sibling sandbox
-  containers; `--group-add` grants the socket's group (0 on Docker Desktop,
-  the `docker` group on Linux).
+  containers. The image's entrypoint joins the socket's group and drops root
+  before dsh starts, so the command needs no `--group-add` and no host-side
+  group lookup.
+- `DSH_YAWN_BIND_ALL=1` lets the published port reach the Web UI. Kubernetes
+  leaves it unset and keeps dsh on pod loopback behind oauth2-proxy.
 - The sandbox profile needs only `backend: docker`: the runner image defaults
   to the tag matching the control plane, and runners dial back through
   `host.docker.internal` on the published tunnel port 8081.
 
-Then open <http://localhost:3000/launch-token>, choose **New session**, use
+Then add that profile in the Web UI — **Settings → Sandboxes → New profile**
+with `name: standard` and `backend: docker`; it applies without a restart. Open
+<http://localhost:3000/launch-token>, choose **New session**, use
 **Add workspace…** with a repository URL, and send a message. The first message
-needs a model credential; add one in the Web UI settings.
+needs a model credential; add one in the Web UI settings. The settings document
+lives at `/data/.dsh/settings.yaml` inside the container if you would rather
+edit it directly.
 
-To clean up: `docker rm -f dsh-yawn dsh-yawn-ui`.
+To clean up: `docker rm -f dsh-yawn`.
 
 ## FAQ
 
