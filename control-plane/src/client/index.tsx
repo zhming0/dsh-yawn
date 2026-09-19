@@ -1,8 +1,9 @@
 import type { Context } from "@deepseek-ai/cordis";
-// These type-only imports load the declaration merges that put `remote`
-// and `slots` on the browser Context, the settings wire types, and the
-// `remote.settings` namespace itself.
+// These type-only imports load the declaration merges that put `remote`,
+// `sessions`, and `slots` on the browser Context, the settings wire types, and
+// the `remote.settings` namespace itself.
 import type { SettingsPathOpView } from "@deepseek-ai/dsh-api-remotes/client";
+import type {} from "@deepseek-ai/dsh-api-session-controller/client";
 import type {} from "@deepseek-ai/dsh-api-settings-controller/remote";
 import type {} from "@deepseek-ai/dsh-client-ui-renderer/client";
 import type { RemoteResult } from "@deepseek-ai/dsh-typert-protocol";
@@ -10,6 +11,11 @@ import type { JsonValue } from "@deepseek-ai/dsh-util-values";
 
 import { yawnRemote } from "../remote-contributions.js";
 import { InstructionsSettings } from "./instructions.js";
+import { NotificationsSettings } from "./notification-settings.js";
+import {
+  installTurnNotifications,
+  type ClientSessions,
+} from "./notifications.js";
 import { SandboxProfileChip } from "./profile.js";
 import { RepositoryDirectoryFlow } from "./repository-directory-flow.js";
 import { SandboxStatusTab } from "./sandbox.js";
@@ -24,8 +30,8 @@ import { SecretsSettings } from "./secrets.js";
 export const inject = ["remote", "slots"];
 
 /** Mount the Remote endpoints, replace folder picking with repository entry,
- * and add the Instructions, Secrets, and Sandboxes sections to the Settings
- * page. */
+ * add the Instructions, Secrets, Sandboxes, and Notifications sections to the
+ * Settings page, and show a browser notification when a turn finishes. */
 export async function apply(ctx: Context) {
   const disposeRemote = await ctx.remote.$mount(yawnRemote);
 
@@ -228,6 +234,35 @@ export async function apply(ctx: Context) {
       },
     );
   });
+
+  // Turn notifications read the browser's own session list feed, so they run
+  // from any page and need no host round-trip. The `sessions` service comes
+  // from the stock session controller, not from a row of this bundle.
+  //
+  // The host package (`dsh-session`) declares the same `Context.sessions` key
+  // for its own in-process store, and this package type-checks the host and
+  // the browser in one program, so the merged property resolves to the host
+  // type. The browser bundle mounts only the client controller, so the cast
+  // names what is actually there at runtime.
+  ctx.inject(["sessions"], (sessionCtx) => {
+    const sessions = sessionCtx.sessions as unknown as ClientSessions;
+    sessionCtx.effect(() => installTurnNotifications(sessions));
+  });
+
+  ctx.slots.inject(
+    "settings.section",
+    function* registerNotificationsSection() {
+      yield ctx.slots.register(
+        {
+          name: "settings.section",
+          id: "dsh-yawn.notifications",
+          order: 33,
+          label: "Notifications",
+        },
+        NotificationsSettings,
+      );
+    },
+  );
 
   return () => {
     void disposeRemote();
