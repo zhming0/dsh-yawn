@@ -109,6 +109,14 @@ The **Settings → Instructions** page manages AGENTS.md-style guidance at two
 scopes: one global layer and one layer for each repository Workspace. These
 layers live in host state rather than in repository checkouts.
 
+The **Settings → Notifications** page turns on a browser notification when a
+turn finishes while the page is in another tab or window; clicking the
+notification opens that session. The browser already receives one running/idle
+bit per session on the session list feed, so this needs no host round-trip and
+no new endpoint, and the on/off choice is stored in the browser rather than on
+the control plane. It needs the page to stay open: a fully closed browser
+receives nothing.
+
 The conversation gains a third view beside **Chat** and **Trajectory**: a
 read-only **Sandbox** tab describing the session's environment. It reports the
 backend, profile, runner image, sandbox ID, lifecycle state, start time, and
@@ -649,3 +657,7 @@ see
   them. A session restored from a checkpoint reports the fresh sandbox's start
   time, not the one it replaced.
 - There is no service exposure or portal support yet.
+- Turn notifications are a page feature: the page must stay open (a background
+  tab is fine), the browser exposes the Notifications API only in a secure
+  context (https, or localhost), and a frozen background tab can delay a
+  notification until the browser wakes it.
