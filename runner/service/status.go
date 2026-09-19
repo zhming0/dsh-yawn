@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"math"
+	"net"
 	"os"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -34,7 +36,79 @@ func (s *Service) SandboxStatus(_ context.Context, _ *connect.Request[v1.Sandbox
 		FilesystemDiskUsedBytes:  filesystemUsed,
 		FilesystemDiskTotalBytes: filesystemTotal,
 		UptimeSeconds:            int64(time.Since(s.startedAt).Seconds()),
+		ListeningPorts:           listeningPorts(),
 	}), nil
+}
+
+// Ports the sandbox has a listening TCP socket on, which is where a server the
+// session started shows up. The runner's own health listener answers from the
+// same namespace; it is infrastructure, not a preview candidate, so it is
+// left out.
+func listeningPorts() []int32 {
+	var sources [][]byte
+	for _, path := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		if raw, err := os.ReadFile(path); err == nil {
+			sources = append(sources, raw)
+		}
+	}
+	return withoutPort(parseListeningPorts(sources...), healthPort())
+}
+
+// The parse is a fact; dropping the runner's own listener is a policy the
+// caller decides, which is what makes it testable without a real /proc.
+func withoutPort(ports []int32, excluded int) []int32 {
+	kept := make([]int32, 0, len(ports))
+	for _, port := range ports {
+		if int(port) != excluded {
+			kept = append(kept, port)
+		}
+	}
+	return kept
+}
+
+// The port the health listener binds, from the same ADDR the process reads.
+func healthPort() int {
+	address := os.Getenv("ADDR")
+	if address == "" {
+		address = ":8080"
+	}
+	_, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return 0
+	}
+	value, err := strconv.Atoi(port)
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
+// Parse the LISTEN rows of /proc/net/tcp and /proc/net/tcp6, ascending and
+// deduplicated. Any machine that does not answer with the expected shape
+// contributes nothing rather than an error: this is a hint for the Preview
+// tab, not a fact the session depends on.
+func parseListeningPorts(sources ...[]byte) []int32 {
+	var ports []int32
+	for _, raw := range sources {
+		for line := range strings.SplitSeq(string(raw), "\n") {
+			fields := strings.Fields(line)
+			// sl local_address rem_address st ...
+			if len(fields) < 4 || fields[3] != "0A" {
+				continue
+			}
+			_, portHex, ok := strings.Cut(fields[1], ":")
+			if !ok {
+				continue
+			}
+			port, err := strconv.ParseInt(portHex, 16, 32)
+			if err != nil || port < 1 || port > 65535 {
+				continue
+			}
+			ports = append(ports, int32(port))
+		}
+	}
+	slices.Sort(ports)
+	return slices.Compact(ports)
 }
 
 func hostname() string {

@@ -21,6 +21,12 @@ import {
 type GeneratedClient = Client<typeof RunnerService>;
 type CallOptions = { signal?: AbortSignal; timeoutMs?: number };
 
+/** One message of a proxied request stream, in the shape the client accepts. */
+export type HttpProxyRequestMessage =
+  Parameters<GeneratedClient["httpProxy"]>[0] extends AsyncIterable<infer M>
+    ? M
+    : never;
+
 /** A small facade keeps generated RPC details out of dsh capability adapters. */
 export class RunnerClient {
   constructor(private readonly client: GeneratedClient) {}
@@ -97,6 +103,18 @@ export class RunnerClient {
 
   setup(request: Omit<SetupRequest, "$typeName">) {
     return this.client.setup(request);
+  }
+
+  /**
+   * Relay one browser request to the sandbox's loopback. The request iterable
+   * yields the head message and then body chunks; the response iterable yields
+   * the response head and then body chunks.
+   */
+  httpProxy(
+    request: AsyncIterable<HttpProxyRequestMessage>,
+    options?: CallOptions,
+  ) {
+    return this.client.httpProxy(request, options);
   }
 }
 

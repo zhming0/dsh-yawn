@@ -224,8 +224,13 @@ type SandboxStatusResponse struct {
 	// Seconds since the runner process started, which is when the sandbox began
 	// serving this session.
 	UptimeSeconds int64 `protobuf:"varint,12,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// TCP ports with a listening socket in the sandbox's network namespace,
+	// ascending. The runner's own health listener is not one of them. A server
+	// the session started shows up here, which is how a preview finds its port
+	// without anyone being told it.
+	ListeningPorts []int32 `protobuf:"varint,13,rep,packed,name=listening_ports,json=listeningPorts,proto3" json:"listening_ports,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *SandboxStatusResponse) Reset() {
@@ -340,6 +345,13 @@ func (x *SandboxStatusResponse) GetUptimeSeconds() int64 {
 		return x.UptimeSeconds
 	}
 	return 0
+}
+
+func (x *SandboxStatusResponse) GetListeningPorts() []int32 {
+	if x != nil {
+		return x.ListeningPorts
+	}
+	return nil
 }
 
 type ExecRequest struct {
@@ -2105,6 +2117,350 @@ func (x *SetupResponse) GetRan() bool {
 	return false
 }
 
+// One request the control plane relays from a browser to a server listening
+// on the sandbox's loopback. The first message on the stream must be the
+// head; every later message is body bytes. Headers are plain pairs so
+// repeatable ones (Set-Cookie) survive; both sides strip hop-by-hop headers
+// and the Host header, because the loopback address is the runner's business.
+type HttpProxyRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Part:
+	//
+	//	*HttpProxyRequest_Head
+	//	*HttpProxyRequest_Body
+	Part          isHttpProxyRequest_Part `protobuf_oneof:"part"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HttpProxyRequest) Reset() {
+	*x = HttpProxyRequest{}
+	mi := &file_dsh_yawn_v1_runner_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HttpProxyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HttpProxyRequest) ProtoMessage() {}
+
+func (x *HttpProxyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_dsh_yawn_v1_runner_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HttpProxyRequest.ProtoReflect.Descriptor instead.
+func (*HttpProxyRequest) Descriptor() ([]byte, []int) {
+	return file_dsh_yawn_v1_runner_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *HttpProxyRequest) GetPart() isHttpProxyRequest_Part {
+	if x != nil {
+		return x.Part
+	}
+	return nil
+}
+
+func (x *HttpProxyRequest) GetHead() *HttpProxyRequestHead {
+	if x != nil {
+		if x, ok := x.Part.(*HttpProxyRequest_Head); ok {
+			return x.Head
+		}
+	}
+	return nil
+}
+
+func (x *HttpProxyRequest) GetBody() []byte {
+	if x != nil {
+		if x, ok := x.Part.(*HttpProxyRequest_Body); ok {
+			return x.Body
+		}
+	}
+	return nil
+}
+
+type isHttpProxyRequest_Part interface {
+	isHttpProxyRequest_Part()
+}
+
+type HttpProxyRequest_Head struct {
+	Head *HttpProxyRequestHead `protobuf:"bytes,1,opt,name=head,proto3,oneof"`
+}
+
+type HttpProxyRequest_Body struct {
+	Body []byte `protobuf:"bytes,2,opt,name=body,proto3,oneof"`
+}
+
+func (*HttpProxyRequest_Head) isHttpProxyRequest_Part() {}
+
+func (*HttpProxyRequest_Body) isHttpProxyRequest_Part() {}
+
+type HttpProxyRequestHead struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Method string                 `protobuf:"bytes,1,opt,name=method,proto3" json:"method,omitempty"`
+	// The request target as the browser sent it: path and query only. A
+	// target without a leading slash is rejected.
+	Target string `protobuf:"bytes,2,opt,name=target,proto3" json:"target,omitempty"`
+	// The loopback port the sandbox server listens on.
+	Port          int32              `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`
+	Headers       []*HttpProxyHeader `protobuf:"bytes,4,rep,name=headers,proto3" json:"headers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HttpProxyRequestHead) Reset() {
+	*x = HttpProxyRequestHead{}
+	mi := &file_dsh_yawn_v1_runner_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HttpProxyRequestHead) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HttpProxyRequestHead) ProtoMessage() {}
+
+func (x *HttpProxyRequestHead) ProtoReflect() protoreflect.Message {
+	mi := &file_dsh_yawn_v1_runner_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HttpProxyRequestHead.ProtoReflect.Descriptor instead.
+func (*HttpProxyRequestHead) Descriptor() ([]byte, []int) {
+	return file_dsh_yawn_v1_runner_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *HttpProxyRequestHead) GetMethod() string {
+	if x != nil {
+		return x.Method
+	}
+	return ""
+}
+
+func (x *HttpProxyRequestHead) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
+}
+
+func (x *HttpProxyRequestHead) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+func (x *HttpProxyRequestHead) GetHeaders() []*HttpProxyHeader {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+type HttpProxyHeader struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HttpProxyHeader) Reset() {
+	*x = HttpProxyHeader{}
+	mi := &file_dsh_yawn_v1_runner_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HttpProxyHeader) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HttpProxyHeader) ProtoMessage() {}
+
+func (x *HttpProxyHeader) ProtoReflect() protoreflect.Message {
+	mi := &file_dsh_yawn_v1_runner_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HttpProxyHeader.ProtoReflect.Descriptor instead.
+func (*HttpProxyHeader) Descriptor() ([]byte, []int) {
+	return file_dsh_yawn_v1_runner_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *HttpProxyHeader) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *HttpProxyHeader) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+type HttpProxyResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Part:
+	//
+	//	*HttpProxyResponse_Head
+	//	*HttpProxyResponse_Body
+	Part          isHttpProxyResponse_Part `protobuf_oneof:"part"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HttpProxyResponse) Reset() {
+	*x = HttpProxyResponse{}
+	mi := &file_dsh_yawn_v1_runner_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HttpProxyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HttpProxyResponse) ProtoMessage() {}
+
+func (x *HttpProxyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_dsh_yawn_v1_runner_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HttpProxyResponse.ProtoReflect.Descriptor instead.
+func (*HttpProxyResponse) Descriptor() ([]byte, []int) {
+	return file_dsh_yawn_v1_runner_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *HttpProxyResponse) GetPart() isHttpProxyResponse_Part {
+	if x != nil {
+		return x.Part
+	}
+	return nil
+}
+
+func (x *HttpProxyResponse) GetHead() *HttpProxyResponseHead {
+	if x != nil {
+		if x, ok := x.Part.(*HttpProxyResponse_Head); ok {
+			return x.Head
+		}
+	}
+	return nil
+}
+
+func (x *HttpProxyResponse) GetBody() []byte {
+	if x != nil {
+		if x, ok := x.Part.(*HttpProxyResponse_Body); ok {
+			return x.Body
+		}
+	}
+	return nil
+}
+
+type isHttpProxyResponse_Part interface {
+	isHttpProxyResponse_Part()
+}
+
+type HttpProxyResponse_Head struct {
+	Head *HttpProxyResponseHead `protobuf:"bytes,1,opt,name=head,proto3,oneof"`
+}
+
+type HttpProxyResponse_Body struct {
+	Body []byte `protobuf:"bytes,2,opt,name=body,proto3,oneof"`
+}
+
+func (*HttpProxyResponse_Head) isHttpProxyResponse_Part() {}
+
+func (*HttpProxyResponse_Body) isHttpProxyResponse_Part() {}
+
+type HttpProxyResponseHead struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Status        int32                  `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"`
+	Headers       []*HttpProxyHeader     `protobuf:"bytes,2,rep,name=headers,proto3" json:"headers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HttpProxyResponseHead) Reset() {
+	*x = HttpProxyResponseHead{}
+	mi := &file_dsh_yawn_v1_runner_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HttpProxyResponseHead) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HttpProxyResponseHead) ProtoMessage() {}
+
+func (x *HttpProxyResponseHead) ProtoReflect() protoreflect.Message {
+	mi := &file_dsh_yawn_v1_runner_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HttpProxyResponseHead.ProtoReflect.Descriptor instead.
+func (*HttpProxyResponseHead) Descriptor() ([]byte, []int) {
+	return file_dsh_yawn_v1_runner_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *HttpProxyResponseHead) GetStatus() int32 {
+	if x != nil {
+		return x.Status
+	}
+	return 0
+}
+
+func (x *HttpProxyResponseHead) GetHeaders() []*HttpProxyHeader {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
 var File_dsh_yawn_v1_runner_proto protoreflect.FileDescriptor
 
 const file_dsh_yawn_v1_runner_proto_rawDesc = "" +
@@ -2115,7 +2471,7 @@ const file_dsh_yawn_v1_runner_proto_rawDesc = "" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12%\n" +
 	"\x0esetup_complete\x18\x02 \x01(\bR\rsetupComplete\"\x16\n" +
-	"\x14SandboxStatusRequest\"\x9c\x04\n" +
+	"\x14SandboxStatusRequest\"\xc5\x04\n" +
 	"\x15SandboxStatusResponse\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1a\n" +
@@ -2130,7 +2486,8 @@ const file_dsh_yawn_v1_runner_proto_rawDesc = "" +
 	"\x1afilesystem_disk_used_bytes\x18\n" +
 	" \x01(\x03R\x17filesystemDiskUsedBytes\x12=\n" +
 	"\x1bfilesystem_disk_total_bytes\x18\v \x01(\x03R\x18filesystemDiskTotalBytes\x12%\n" +
-	"\x0euptime_seconds\x18\f \x01(\x03R\ruptimeSeconds\"\xb6\x01\n" +
+	"\x0euptime_seconds\x18\f \x01(\x03R\ruptimeSeconds\x12'\n" +
+	"\x0flistening_ports\x18\r \x03(\x05R\x0elisteningPorts\"\xb6\x01\n" +
 	"\vExecRequest\x12\x12\n" +
 	"\x04argv\x18\x01 \x03(\tR\x04argv\x12\x10\n" +
 	"\x03cwd\x18\x02 \x01(\tR\x03cwd\x123\n" +
@@ -2248,13 +2605,32 @@ const file_dsh_yawn_v1_runner_proto_rawDesc = "" +
 	"\brevision\x18\x02 \x01(\tR\brevision\x12\x1c\n" +
 	"\tworkspace\x18\x03 \x01(\tR\tworkspace\"!\n" +
 	"\rSetupResponse\x12\x10\n" +
-	"\x03ran\x18\x01 \x01(\bR\x03ran*\x81\x01\n" +
+	"\x03ran\x18\x01 \x01(\bR\x03ran\"i\n" +
+	"\x10HttpProxyRequest\x127\n" +
+	"\x04head\x18\x01 \x01(\v2!.dsh.yawn.v1.HttpProxyRequestHeadH\x00R\x04head\x12\x14\n" +
+	"\x04body\x18\x02 \x01(\fH\x00R\x04bodyB\x06\n" +
+	"\x04part\"\x92\x01\n" +
+	"\x14HttpProxyRequestHead\x12\x16\n" +
+	"\x06method\x18\x01 \x01(\tR\x06method\x12\x16\n" +
+	"\x06target\x18\x02 \x01(\tR\x06target\x12\x12\n" +
+	"\x04port\x18\x03 \x01(\x05R\x04port\x126\n" +
+	"\aheaders\x18\x04 \x03(\v2\x1c.dsh.yawn.v1.HttpProxyHeaderR\aheaders\";\n" +
+	"\x0fHttpProxyHeader\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"k\n" +
+	"\x11HttpProxyResponse\x128\n" +
+	"\x04head\x18\x01 \x01(\v2\".dsh.yawn.v1.HttpProxyResponseHeadH\x00R\x04head\x12\x14\n" +
+	"\x04body\x18\x02 \x01(\fH\x00R\x04bodyB\x06\n" +
+	"\x04part\"g\n" +
+	"\x15HttpProxyResponseHead\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\x126\n" +
+	"\aheaders\x18\x02 \x03(\v2\x1c.dsh.yawn.v1.HttpProxyHeaderR\aheaders*\x81\x01\n" +
 	"\bFileType\x12\x19\n" +
 	"\x15FILE_TYPE_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11FILE_TYPE_REGULAR\x10\x01\x12\x17\n" +
 	"\x13FILE_TYPE_DIRECTORY\x10\x02\x12\x15\n" +
 	"\x11FILE_TYPE_SYMLINK\x10\x03\x12\x13\n" +
-	"\x0fFILE_TYPE_OTHER\x10\x042\xff\b\n" +
+	"\x0fFILE_TYPE_OTHER\x10\x042\xcf\t\n" +
 	"\rRunnerService\x12A\n" +
 	"\x06Health\x12\x1a.dsh.yawn.v1.HealthRequest\x1a\x1b.dsh.yawn.v1.HealthResponse\x12V\n" +
 	"\rSandboxStatus\x12!.dsh.yawn.v1.SandboxStatusRequest\x1a\".dsh.yawn.v1.SandboxStatusResponse\x12=\n" +
@@ -2271,7 +2647,8 @@ const file_dsh_yawn_v1_runner_proto_rawDesc = "" +
 	"\n" +
 	"SetSecrets\x12\x1e.dsh.yawn.v1.SetSecretsRequest\x1a\x1f.dsh.yawn.v1.SetSecretsResponse\x12b\n" +
 	"\x11SetGitCredentials\x12%.dsh.yawn.v1.SetGitCredentialsRequest\x1a&.dsh.yawn.v1.SetGitCredentialsResponse\x12>\n" +
-	"\x05Setup\x12\x19.dsh.yawn.v1.SetupRequest\x1a\x1a.dsh.yawn.v1.SetupResponseB;Z9github.com/zhming0/dsh-yawn/runner/gen/dsh/yawn/v1;yawnv1b\x06proto3"
+	"\x05Setup\x12\x19.dsh.yawn.v1.SetupRequest\x1a\x1a.dsh.yawn.v1.SetupResponse\x12N\n" +
+	"\tHttpProxy\x12\x1d.dsh.yawn.v1.HttpProxyRequest\x1a\x1e.dsh.yawn.v1.HttpProxyResponse(\x010\x01B;Z9github.com/zhming0/dsh-yawn/runner/gen/dsh/yawn/v1;yawnv1b\x06proto3"
 
 var (
 	file_dsh_yawn_v1_runner_proto_rawDescOnce sync.Once
@@ -2286,7 +2663,7 @@ func file_dsh_yawn_v1_runner_proto_rawDescGZIP() []byte {
 }
 
 var file_dsh_yawn_v1_runner_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_dsh_yawn_v1_runner_proto_msgTypes = make([]protoimpl.MessageInfo, 38)
+var file_dsh_yawn_v1_runner_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
 var file_dsh_yawn_v1_runner_proto_goTypes = []any{
 	(FileType)(0),                     // 0: dsh.yawn.v1.FileType
 	(*HealthRequest)(nil),             // 1: dsh.yawn.v1.HealthRequest
@@ -2324,57 +2701,68 @@ var file_dsh_yawn_v1_runner_proto_goTypes = []any{
 	(*SetGitCredentialsResponse)(nil), // 33: dsh.yawn.v1.SetGitCredentialsResponse
 	(*SetupRequest)(nil),              // 34: dsh.yawn.v1.SetupRequest
 	(*SetupResponse)(nil),             // 35: dsh.yawn.v1.SetupResponse
-	nil,                               // 36: dsh.yawn.v1.ExecRequest.EnvEntry
-	nil,                               // 37: dsh.yawn.v1.ResolveExecutableRequest.EnvEntry
-	nil,                               // 38: dsh.yawn.v1.SetSecretsRequest.SecretsEntry
+	(*HttpProxyRequest)(nil),          // 36: dsh.yawn.v1.HttpProxyRequest
+	(*HttpProxyRequestHead)(nil),      // 37: dsh.yawn.v1.HttpProxyRequestHead
+	(*HttpProxyHeader)(nil),           // 38: dsh.yawn.v1.HttpProxyHeader
+	(*HttpProxyResponse)(nil),         // 39: dsh.yawn.v1.HttpProxyResponse
+	(*HttpProxyResponseHead)(nil),     // 40: dsh.yawn.v1.HttpProxyResponseHead
+	nil,                               // 41: dsh.yawn.v1.ExecRequest.EnvEntry
+	nil,                               // 42: dsh.yawn.v1.ResolveExecutableRequest.EnvEntry
+	nil,                               // 43: dsh.yawn.v1.SetSecretsRequest.SecretsEntry
 }
 var file_dsh_yawn_v1_runner_proto_depIdxs = []int32{
-	36, // 0: dsh.yawn.v1.ExecRequest.env:type_name -> dsh.yawn.v1.ExecRequest.EnvEntry
+	41, // 0: dsh.yawn.v1.ExecRequest.env:type_name -> dsh.yawn.v1.ExecRequest.EnvEntry
 	7,  // 1: dsh.yawn.v1.ExecResponse.started:type_name -> dsh.yawn.v1.ExecStarted
 	8,  // 2: dsh.yawn.v1.ExecResponse.exited:type_name -> dsh.yawn.v1.ExecExited
-	37, // 3: dsh.yawn.v1.ResolveExecutableRequest.env:type_name -> dsh.yawn.v1.ResolveExecutableRequest.EnvEntry
+	42, // 3: dsh.yawn.v1.ResolveExecutableRequest.env:type_name -> dsh.yawn.v1.ResolveExecutableRequest.EnvEntry
 	0,  // 4: dsh.yawn.v1.StatResponse.type:type_name -> dsh.yawn.v1.FileType
 	0,  // 5: dsh.yawn.v1.ListEntry.type:type_name -> dsh.yawn.v1.FileType
 	24, // 6: dsh.yawn.v1.ListResponse.entries:type_name -> dsh.yawn.v1.ListEntry
 	0,  // 7: dsh.yawn.v1.TreeEntry.type:type_name -> dsh.yawn.v1.FileType
 	27, // 8: dsh.yawn.v1.TreeResponse.entries:type_name -> dsh.yawn.v1.TreeEntry
-	38, // 9: dsh.yawn.v1.SetSecretsRequest.secrets:type_name -> dsh.yawn.v1.SetSecretsRequest.SecretsEntry
+	43, // 9: dsh.yawn.v1.SetSecretsRequest.secrets:type_name -> dsh.yawn.v1.SetSecretsRequest.SecretsEntry
 	31, // 10: dsh.yawn.v1.SetGitCredentialsRequest.credentials:type_name -> dsh.yawn.v1.GitCredential
-	1,  // 11: dsh.yawn.v1.RunnerService.Health:input_type -> dsh.yawn.v1.HealthRequest
-	3,  // 12: dsh.yawn.v1.RunnerService.SandboxStatus:input_type -> dsh.yawn.v1.SandboxStatusRequest
-	5,  // 13: dsh.yawn.v1.RunnerService.Exec:input_type -> dsh.yawn.v1.ExecRequest
-	9,  // 14: dsh.yawn.v1.RunnerService.ResolveExecutable:input_type -> dsh.yawn.v1.ResolveExecutableRequest
-	11, // 15: dsh.yawn.v1.RunnerService.ResolvePath:input_type -> dsh.yawn.v1.ResolvePathRequest
-	13, // 16: dsh.yawn.v1.RunnerService.ReadFile:input_type -> dsh.yawn.v1.ReadFileRequest
-	15, // 17: dsh.yawn.v1.RunnerService.ReadFileRange:input_type -> dsh.yawn.v1.ReadFileRangeRequest
-	17, // 18: dsh.yawn.v1.RunnerService.WriteFile:input_type -> dsh.yawn.v1.WriteFileRequest
-	19, // 19: dsh.yawn.v1.RunnerService.EditFile:input_type -> dsh.yawn.v1.EditFileRequest
-	21, // 20: dsh.yawn.v1.RunnerService.Stat:input_type -> dsh.yawn.v1.StatRequest
-	23, // 21: dsh.yawn.v1.RunnerService.List:input_type -> dsh.yawn.v1.ListRequest
-	26, // 22: dsh.yawn.v1.RunnerService.Tree:input_type -> dsh.yawn.v1.TreeRequest
-	29, // 23: dsh.yawn.v1.RunnerService.SetSecrets:input_type -> dsh.yawn.v1.SetSecretsRequest
-	32, // 24: dsh.yawn.v1.RunnerService.SetGitCredentials:input_type -> dsh.yawn.v1.SetGitCredentialsRequest
-	34, // 25: dsh.yawn.v1.RunnerService.Setup:input_type -> dsh.yawn.v1.SetupRequest
-	2,  // 26: dsh.yawn.v1.RunnerService.Health:output_type -> dsh.yawn.v1.HealthResponse
-	4,  // 27: dsh.yawn.v1.RunnerService.SandboxStatus:output_type -> dsh.yawn.v1.SandboxStatusResponse
-	6,  // 28: dsh.yawn.v1.RunnerService.Exec:output_type -> dsh.yawn.v1.ExecResponse
-	10, // 29: dsh.yawn.v1.RunnerService.ResolveExecutable:output_type -> dsh.yawn.v1.ResolveExecutableResponse
-	12, // 30: dsh.yawn.v1.RunnerService.ResolvePath:output_type -> dsh.yawn.v1.ResolvePathResponse
-	14, // 31: dsh.yawn.v1.RunnerService.ReadFile:output_type -> dsh.yawn.v1.ReadFileResponse
-	16, // 32: dsh.yawn.v1.RunnerService.ReadFileRange:output_type -> dsh.yawn.v1.ReadFileRangeResponse
-	18, // 33: dsh.yawn.v1.RunnerService.WriteFile:output_type -> dsh.yawn.v1.WriteFileResponse
-	20, // 34: dsh.yawn.v1.RunnerService.EditFile:output_type -> dsh.yawn.v1.EditFileResponse
-	22, // 35: dsh.yawn.v1.RunnerService.Stat:output_type -> dsh.yawn.v1.StatResponse
-	25, // 36: dsh.yawn.v1.RunnerService.List:output_type -> dsh.yawn.v1.ListResponse
-	28, // 37: dsh.yawn.v1.RunnerService.Tree:output_type -> dsh.yawn.v1.TreeResponse
-	30, // 38: dsh.yawn.v1.RunnerService.SetSecrets:output_type -> dsh.yawn.v1.SetSecretsResponse
-	33, // 39: dsh.yawn.v1.RunnerService.SetGitCredentials:output_type -> dsh.yawn.v1.SetGitCredentialsResponse
-	35, // 40: dsh.yawn.v1.RunnerService.Setup:output_type -> dsh.yawn.v1.SetupResponse
-	26, // [26:41] is the sub-list for method output_type
-	11, // [11:26] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	37, // 11: dsh.yawn.v1.HttpProxyRequest.head:type_name -> dsh.yawn.v1.HttpProxyRequestHead
+	38, // 12: dsh.yawn.v1.HttpProxyRequestHead.headers:type_name -> dsh.yawn.v1.HttpProxyHeader
+	40, // 13: dsh.yawn.v1.HttpProxyResponse.head:type_name -> dsh.yawn.v1.HttpProxyResponseHead
+	38, // 14: dsh.yawn.v1.HttpProxyResponseHead.headers:type_name -> dsh.yawn.v1.HttpProxyHeader
+	1,  // 15: dsh.yawn.v1.RunnerService.Health:input_type -> dsh.yawn.v1.HealthRequest
+	3,  // 16: dsh.yawn.v1.RunnerService.SandboxStatus:input_type -> dsh.yawn.v1.SandboxStatusRequest
+	5,  // 17: dsh.yawn.v1.RunnerService.Exec:input_type -> dsh.yawn.v1.ExecRequest
+	9,  // 18: dsh.yawn.v1.RunnerService.ResolveExecutable:input_type -> dsh.yawn.v1.ResolveExecutableRequest
+	11, // 19: dsh.yawn.v1.RunnerService.ResolvePath:input_type -> dsh.yawn.v1.ResolvePathRequest
+	13, // 20: dsh.yawn.v1.RunnerService.ReadFile:input_type -> dsh.yawn.v1.ReadFileRequest
+	15, // 21: dsh.yawn.v1.RunnerService.ReadFileRange:input_type -> dsh.yawn.v1.ReadFileRangeRequest
+	17, // 22: dsh.yawn.v1.RunnerService.WriteFile:input_type -> dsh.yawn.v1.WriteFileRequest
+	19, // 23: dsh.yawn.v1.RunnerService.EditFile:input_type -> dsh.yawn.v1.EditFileRequest
+	21, // 24: dsh.yawn.v1.RunnerService.Stat:input_type -> dsh.yawn.v1.StatRequest
+	23, // 25: dsh.yawn.v1.RunnerService.List:input_type -> dsh.yawn.v1.ListRequest
+	26, // 26: dsh.yawn.v1.RunnerService.Tree:input_type -> dsh.yawn.v1.TreeRequest
+	29, // 27: dsh.yawn.v1.RunnerService.SetSecrets:input_type -> dsh.yawn.v1.SetSecretsRequest
+	32, // 28: dsh.yawn.v1.RunnerService.SetGitCredentials:input_type -> dsh.yawn.v1.SetGitCredentialsRequest
+	34, // 29: dsh.yawn.v1.RunnerService.Setup:input_type -> dsh.yawn.v1.SetupRequest
+	36, // 30: dsh.yawn.v1.RunnerService.HttpProxy:input_type -> dsh.yawn.v1.HttpProxyRequest
+	2,  // 31: dsh.yawn.v1.RunnerService.Health:output_type -> dsh.yawn.v1.HealthResponse
+	4,  // 32: dsh.yawn.v1.RunnerService.SandboxStatus:output_type -> dsh.yawn.v1.SandboxStatusResponse
+	6,  // 33: dsh.yawn.v1.RunnerService.Exec:output_type -> dsh.yawn.v1.ExecResponse
+	10, // 34: dsh.yawn.v1.RunnerService.ResolveExecutable:output_type -> dsh.yawn.v1.ResolveExecutableResponse
+	12, // 35: dsh.yawn.v1.RunnerService.ResolvePath:output_type -> dsh.yawn.v1.ResolvePathResponse
+	14, // 36: dsh.yawn.v1.RunnerService.ReadFile:output_type -> dsh.yawn.v1.ReadFileResponse
+	16, // 37: dsh.yawn.v1.RunnerService.ReadFileRange:output_type -> dsh.yawn.v1.ReadFileRangeResponse
+	18, // 38: dsh.yawn.v1.RunnerService.WriteFile:output_type -> dsh.yawn.v1.WriteFileResponse
+	20, // 39: dsh.yawn.v1.RunnerService.EditFile:output_type -> dsh.yawn.v1.EditFileResponse
+	22, // 40: dsh.yawn.v1.RunnerService.Stat:output_type -> dsh.yawn.v1.StatResponse
+	25, // 41: dsh.yawn.v1.RunnerService.List:output_type -> dsh.yawn.v1.ListResponse
+	28, // 42: dsh.yawn.v1.RunnerService.Tree:output_type -> dsh.yawn.v1.TreeResponse
+	30, // 43: dsh.yawn.v1.RunnerService.SetSecrets:output_type -> dsh.yawn.v1.SetSecretsResponse
+	33, // 44: dsh.yawn.v1.RunnerService.SetGitCredentials:output_type -> dsh.yawn.v1.SetGitCredentialsResponse
+	35, // 45: dsh.yawn.v1.RunnerService.Setup:output_type -> dsh.yawn.v1.SetupResponse
+	39, // 46: dsh.yawn.v1.RunnerService.HttpProxy:output_type -> dsh.yawn.v1.HttpProxyResponse
+	31, // [31:47] is the sub-list for method output_type
+	15, // [15:31] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_dsh_yawn_v1_runner_proto_init() }
@@ -2392,13 +2780,21 @@ func file_dsh_yawn_v1_runner_proto_init() {
 		(*WriteFileRequest_CreateIfAbsent)(nil),
 		(*WriteFileRequest_ExpectedVersion)(nil),
 	}
+	file_dsh_yawn_v1_runner_proto_msgTypes[35].OneofWrappers = []any{
+		(*HttpProxyRequest_Head)(nil),
+		(*HttpProxyRequest_Body)(nil),
+	}
+	file_dsh_yawn_v1_runner_proto_msgTypes[38].OneofWrappers = []any{
+		(*HttpProxyResponse_Head)(nil),
+		(*HttpProxyResponse_Body)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_dsh_yawn_v1_runner_proto_rawDesc), len(file_dsh_yawn_v1_runner_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   38,
+			NumMessages:   43,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

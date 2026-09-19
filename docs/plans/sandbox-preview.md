@@ -1,0 +1,138 @@
+# Sandbox previews on their own origin
+
+## Problem
+
+A session can start an HTTP server inside its sandbox — a dev server, a docs
+build, a mock API — but nothing outside the sandbox can reach it. Sandboxes
+accept no ingress at all (that is a design rule, not a gap), so the only way
+to see the server is to read screenshots. The live feedback loop a developer
+expects — watch it render, click through it, iterate — is impossible.
+
+## Decision
+
+Serve each preview on **its own origin**: one subdomain per sandbox and port,
+`https://<sandboxId>-p<port>.<preview-domain>/`, forwarded to the sandbox over
+the runner's existing tunnel by the `HttpProxy` RPC. A real origin is the
+whole point — it is what a dev server expects — and it is why the first
+implementation, which served previews under a `/preview/...` path prefix on
+the Web UI's own origin, was replaced rather than kept:
+
+- A path-prefixed proxy breaks any page that links absolute paths
+  (`/app.js`), which is what Vite, Next, and most frameworks emit.
+- Sharing the UI's origin forces a defensive posture (CSP `sandbox`
+  injection, `Set-Cookie` stripping, no storage, no service workers) that
+  un-does half the web platform. On its own origin, isolation is structural
+  and none of that machinery is needed.
+
+The label is a single DNS name segment — `<sandboxId>-p<port>` — so one
+wildcard certificate covers every preview of an install. The `-p` marker
+makes the trailing number unambiguous, because sandbox ids already contain
+hyphens and digits. This is the same shape the hosted agents use (Amp's
+`t-<thread>-p<port>.onamp.dev`, Gitpod's port-leading hosts).
+
+Decided against, in discussion:
+
+- **Path-prefixed previews as a second mode.** Two addressing modes mean two
+  security postures and a URL whose meaning depends on configuration. The
+  path mode's compatibility advantage (no operator prerequisites) does not
+  outweigh serving broken previews for most real apps; an install without a
+  preview domain gets a Preview tab that says what is missing instead.
+- **Mounting the route on the Web UI's server.** dsh's web server matches
+  routes by path only (exact, then longest prefix, then one fallback seat),
+  so a subdomain request with path `/` lands in the SPA fallback. A host
+  needs its own listener.
+- **Mounting the route on the tunnel listener.** That port is reachable from
+  sandboxes by design; a preview route there is a cross-sandbox route on a
+  sandbox-reachable port.
+- **A token or capability URL.** One control plane is one trust domain, so a
+  per-sandbox token gates nothing while inviting the URL to be treated as
+  shareable. Previews sit behind the same proxy as the UI.
+- **A second runner→host channel for proxied bytes.** One runner-initiated
+  connection carries everything; HTTP/2 multiplexes the preview streams.
+
+## How it works
+
+**Transport (already landed).** `rpc HttpProxy(stream HttpProxyRequest)
+returns (stream HttpProxyResponse)` in `proto/dsh/yawn/v1/runner.proto`. Each
+direction sends one head message (method, request target, loopback port,
+headers), then body chunks; both sides drop hop-by-hop headers. The runner
+dials `127.0.0.1:<port>` — servers started by session commands share the
+runner's network namespace, so loopback is the sandbox and nothing else. The
+runner never learns the public URL. `SandboxStatusResponse.listening_ports`
+reports the sandbox's listening TCP sockets (the runner's own health listener
+excluded) so the UI can offer real ports.
+
+**The preview listener.** A third listener in the control plane, shaped like
+`TunnelServer`: it parses the request's `Host` against the configured preview
+domain, maps `<sandboxId>-p<port>` to a sandbox and port, and delegates to a
+`PreviewRelay`; `GET /healthz` answers 200 for load balancers; anything else
+is 404. It binds like the tunnel does so a Service can front it, and it is
+not the tunnel port (see above). The relay keeps the transport behavior —
+request buffered up to 32 MiB, response streamed in 64 KiB chunks, abort
+propagated, runner-less sandbox answered 503 with a hint to wake it — but on
+its own origin it neither injects a CSP nor touches cookies in either
+direction: the app's cookies belong to the preview's origin, not the UI's.
+
+**Host headers.** The runner keeps dialing the loopback address, so the
+sandbox server sees `Host: 127.0.0.1:<port>`. Dev servers that validate Host
+(Vite's `allowedHosts`, Django's `ALLOWED_HOSTS`) therefore pass
+unconfigured. The trade: an app that builds absolute URLs from its Host
+header sees the loopback origin, not the public one. That is accepted for
+now; the fix is a `PUBLIC_URL`-style convention that belongs with declared
+services (below), not with addressing.
+
+**Configuration.** `preview: { domain, port }` in the control plane settings,
+mirroring `tunnel: { port, bind }`. When the domain is unset the listener
+does not start and the Preview tab explains what is missing and where to
+configure it — the tab never silently vanishes.
+
+**Status and the Preview tab.** The sandbox status carries an absolute
+`previewUrl` (the `<sandboxId>-p<port>` origin with the default port) beside
+the listening ports. The Preview tab offers the detected ports as chips, a
+path field as the frame's entry point, both remembered per session, and an
+Open link — safe again, because the preview's origin is not the UI's. The
+frame keeps scripts but now also `allow-same-origin`, so storage, IndexedDB,
+and service workers work. Preview traffic counts as session activity, so a
+sandbox being previewed does not hibernate under the viewer, and opening a
+preview wakes a hibernated one.
+
+**Kubernetes and auth.** The chart gains the container port, a `ClusterIP`
+Service (a sibling of the tunnel Service), and oauth2-proxy configuration to
+authenticate the preview domain with its own cookie. Operator setup, which
+the chart documents but does not own: a wildcard DNS record, a wildcard
+certificate (cert-manager DNS-01), and an Ingress rule for
+`*.sandbox.<domain>` routed to the preview Service with the same long read
+and send timeouts the UI needs. Putting previews on a registrable domain
+separate from the UI's is recommended: it keeps the proxy's cookies off the
+UI's site entirely and removes same-site request surfaces. The sandbox
+NetworkPolicy needs no change — egress to the control plane pod is allowed
+on the tunnel port only, so sandboxes cannot reach the preview listener
+directly.
+
+## Limits
+
+- No WebSocket upgrades through the preview yet, so HMR does not connect.
+  Both ends already speak WebSocket; the extension is its own change.
+- Requests are buffered up to 32 MiB, like every other host↔sandbox
+  transfer.
+- Previews need operator prerequisites (wildcard DNS and certificate). An
+  install without them has no previews, by the one-mode decision above.
+- The app sees a loopback Host, not its public hostname.
+
+## Steps
+
+1. **Preview feature PR** (on top of the transport): the preview listener
+   with host parsing, `preview: { domain, port }` settings, the relay
+   mounted on the listener, `previewUrl` in the status, the Preview tab
+   (port chips, path field, Open link, unset-domain message), the chart's
+   port/Service/proxy values, the operator documentation, and tests: host
+   parsing, relay round trip through the listener, status URL shape, and a
+   browser acceptance workflow — in development `<sandbox>-p<port>.localhost`
+   resolves to loopback in Chrome and Firefox, so no DNS or certificate is
+   needed to exercise it.
+2. **WebSocket upgrades through `HttpProxy`** so dev-server HMR connects
+   (`wss://` terminated at the Ingress like every other preview byte).
+3. **Declared services** (optional, later): a per-repository manifest of
+   long-running services the control plane supervises across wakes — the
+   successor to `setsid`-started servers, which every wake kills — with
+   `PORT`/`PUBLIC_URL` injection for apps that need their public origin.

@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file dsh/yawn/v1/runner.proto.
  */
 export const file_dsh_yawn_v1_runner: GenFile = /*@__PURE__*/
-  fileDesc("Chhkc2gveWF3bi92MS9ydW5uZXIucHJvdG8SC2RzaC55YXduLnYxIg8KDUhlYWx0aFJlcXVlc3QiPAoOSGVhbHRoUmVzcG9uc2USEgoKc2FuZGJveF9pZBgBIAEoCRIWCg5zZXR1cF9jb21wbGV0ZRgCIAEoCCIWChRTYW5kYm94U3RhdHVzUmVxdWVzdCLTAgoVU2FuZGJveFN0YXR1c1Jlc3BvbnNlEhIKCnNhbmRib3hfaWQYASABKAkSEAoIaG9zdG5hbWUYAiABKAkSDwoHb3NfbmFtZRgDIAEoCRIWCg5rZXJuZWxfdmVyc2lvbhgEIAEoCRIUCgxhcmNoaXRlY3R1cmUYBSABKAkSEQoJY3B1X2NvdW50GAYgASgFEhoKEm1lbW9yeV90b3RhbF9ieXRlcxgHIAEoAxIhChl3b3Jrc3BhY2VfZGlza191c2VkX2J5dGVzGAggASgDEiIKGndvcmtzcGFjZV9kaXNrX3RvdGFsX2J5dGVzGAkgASgDEiIKGmZpbGVzeXN0ZW1fZGlza191c2VkX2J5dGVzGAogASgDEiMKG2ZpbGVzeXN0ZW1fZGlza190b3RhbF9ieXRlcxgLIAEoAxIWCg51cHRpbWVfc2Vjb25kcxgMIAEoAyKTAQoLRXhlY1JlcXVlc3QSDAoEYXJndhgBIAMoCRILCgNjd2QYAiABKAkSLgoDZW52GAMgAygLMiEuZHNoLnlhd24udjEuRXhlY1JlcXVlc3QuRW52RW50cnkSDQoFc3RkaW4YBCABKAwaKgoIRW52RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKTAQoMRXhlY1Jlc3BvbnNlEisKB3N0YXJ0ZWQYASABKAsyGC5kc2gueWF3bi52MS5FeGVjU3RhcnRlZEgAEhAKBnN0ZG91dBgCIAEoDEgAEhAKBnN0ZGVychgDIAEoDEgAEikKBmV4aXRlZBgEIAEoCzIXLmRzaC55YXduLnYxLkV4ZWNFeGl0ZWRIAEIHCgVldmVudCIaCgtFeGVjU3RhcnRlZBILCgNwaWQYASABKAMiLwoKRXhlY0V4aXRlZBIRCglleGl0X2NvZGUYASABKAUSDgoGc2lnbmFsGAIgASgJIpQBChhSZXNvbHZlRXhlY3V0YWJsZVJlcXVlc3QSDwoHY29tbWFuZBgBIAEoCRI7CgNlbnYYAiADKAsyLi5kc2gueWF3bi52MS5SZXNvbHZlRXhlY3V0YWJsZVJlcXVlc3QuRW52RW50cnkaKgoIRW52RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASIpChlSZXNvbHZlRXhlY3V0YWJsZVJlc3BvbnNlEgwKBHBhdGgYASABKAkiLwoSUmVzb2x2ZVBhdGhSZXF1ZXN0EgwKBHBhdGgYASABKAkSCwoDY3dkGAIgASgJIkMKE1Jlc29sdmVQYXRoUmVzcG9uc2USFgoOY2Fub25pY2FsX3BhdGgYASABKAkSFAoMZGlzcGxheV9wYXRoGAIgASgJIjIKD1JlYWRGaWxlUmVxdWVzdBIMCgRwYXRoGAEgASgJEhEKCW1heF9ieXRlcxgCIAEoAyIjChBSZWFkRmlsZVJlc3BvbnNlEg8KB2NvbnRlbnQYASABKAwiRAoUUmVhZEZpbGVSYW5nZVJlcXVlc3QSDAoEcGF0aBgBIAEoCRIOCgZvZmZzZXQYAiABKAMSDgoGbGVuZ3RoGAMgASgDIigKFVJlYWRGaWxlUmFuZ2VSZXNwb25zZRIPCgdjb250ZW50GAEgASgMInIKEFdyaXRlRmlsZVJlcXVlc3QSDAoEcGF0aBgBIAEoCRIPCgdjb250ZW50GAIgASgMEhoKEGNyZWF0ZV9pZl9hYnNlbnQYAyABKAhIABIaChBleHBlY3RlZF92ZXJzaW9uGAQgASgJSABCBwoFZ3VhcmQiWQoRV3JpdGVGaWxlUmVzcG9uc2USDwoHY3JlYXRlZBgBIAEoCBISCgpoYWRfYmVmb3JlGAIgASgIEg4KBmJlZm9yZRgDIAEoDBIPCgd2ZXJzaW9uGAQgASgJInYKD0VkaXRGaWxlUmVxdWVzdBIMCgRwYXRoGAEgASgJEhIKCm9sZF9zdHJpbmcYAiABKAkSEgoKbmV3X3N0cmluZxgDIAEoCRITCgtyZXBsYWNlX2FsbBgEIAEoCBIYChBleHBlY3RlZF92ZXJzaW9uGAUgASgJIkIKEEVkaXRGaWxlUmVzcG9uc2USDgoGYmVmb3JlGAEgASgMEg0KBWFmdGVyGAIgASgMEg8KB3ZlcnNpb24YAyABKAkiNAoLU3RhdFJlcXVlc3QSDAoEcGF0aBgBIAEoCRIXCg9mb2xsb3dfc3ltbGlua3MYAiABKAgiYgoMU3RhdFJlc3BvbnNlEg4KBmV4aXN0cxgBIAEoCBIjCgR0eXBlGAIgASgOMhUuZHNoLnlhd24udjEuRmlsZVR5cGUSDAoEc2l6ZRgDIAEoAxIPCgd2ZXJzaW9uGAQgASgJIhsKC0xpc3RSZXF1ZXN0EgwKBHBhdGgYASABKAkidQoJTGlzdEVudHJ5EgwKBG5hbWUYASABKAkSFgoOY2Fub25pY2FsX3BhdGgYAiABKAkSIwoEdHlwZRgDIAEoDjIVLmRzaC55YXduLnYxLkZpbGVUeXBlEgwKBHNpemUYBCABKAMSDwoHdmVyc2lvbhgFIAEoCSI3CgxMaXN0UmVzcG9uc2USJwoHZW50cmllcxgBIAMoCzIWLmRzaC55YXduLnYxLkxpc3RFbnRyeSJOCgtUcmVlUmVxdWVzdBIMCgRwYXRoGAEgASgJEhwKFGV4Y2x1ZGVkX2RpcmVjdG9yaWVzGAIgAygJEhMKC21heF9lbnRyaWVzGAMgASgDIkcKCVRyZWVFbnRyeRIVCg1yZWxhdGl2ZV9wYXRoGAEgASgJEiMKBHR5cGUYAiABKA4yFS5kc2gueWF3bi52MS5GaWxlVHlwZSJKCgxUcmVlUmVzcG9uc2USJwoHZW50cmllcxgBIAMoCzIWLmRzaC55YXduLnYxLlRyZWVFbnRyeRIRCgl0cnVuY2F0ZWQYAiABKAgigQEKEVNldFNlY3JldHNSZXF1ZXN0EjwKB3NlY3JldHMYASADKAsyKy5kc2gueWF3bi52MS5TZXRTZWNyZXRzUmVxdWVzdC5TZWNyZXRzRW50cnkaLgoMU2VjcmV0c0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiFAoSU2V0U2VjcmV0c1Jlc3BvbnNlIkEKDUdpdENyZWRlbnRpYWwSDAoEaG9zdBgBIAEoCRIQCgh1c2VybmFtZRgCIAEoCRIQCghwYXNzd29yZBgDIAEoCSJLChhTZXRHaXRDcmVkZW50aWFsc1JlcXVlc3QSLwoLY3JlZGVudGlhbHMYASADKAsyGi5kc2gueWF3bi52MS5HaXRDcmVkZW50aWFsIhsKGVNldEdpdENyZWRlbnRpYWxzUmVzcG9uc2UiSwoMU2V0dXBSZXF1ZXN0EhYKDnJlcG9zaXRvcnlfdXJsGAEgASgJEhAKCHJldmlzaW9uGAIgASgJEhEKCXdvcmtzcGFjZRgDIAEoCSIcCg1TZXR1cFJlc3BvbnNlEgsKA3JhbhgBIAEoCCqBAQoIRmlsZVR5cGUSGQoVRklMRV9UWVBFX1VOU1BFQ0lGSUVEEAASFQoRRklMRV9UWVBFX1JFR1VMQVIQARIXChNGSUxFX1RZUEVfRElSRUNUT1JZEAISFQoRRklMRV9UWVBFX1NZTUxJTksQAxITCg9GSUxFX1RZUEVfT1RIRVIQBDL/CAoNUnVubmVyU2VydmljZRJBCgZIZWFsdGgSGi5kc2gueWF3bi52MS5IZWFsdGhSZXF1ZXN0GhsuZHNoLnlhd24udjEuSGVhbHRoUmVzcG9uc2USVgoNU2FuZGJveFN0YXR1cxIhLmRzaC55YXduLnYxLlNhbmRib3hTdGF0dXNSZXF1ZXN0GiIuZHNoLnlhd24udjEuU2FuZGJveFN0YXR1c1Jlc3BvbnNlEj0KBEV4ZWMSGC5kc2gueWF3bi52MS5FeGVjUmVxdWVzdBoZLmRzaC55YXduLnYxLkV4ZWNSZXNwb25zZTABEmIKEVJlc29sdmVFeGVjdXRhYmxlEiUuZHNoLnlhd24udjEuUmVzb2x2ZUV4ZWN1dGFibGVSZXF1ZXN0GiYuZHNoLnlhd24udjEuUmVzb2x2ZUV4ZWN1dGFibGVSZXNwb25zZRJQCgtSZXNvbHZlUGF0aBIfLmRzaC55YXduLnYxLlJlc29sdmVQYXRoUmVxdWVzdBogLmRzaC55YXduLnYxLlJlc29sdmVQYXRoUmVzcG9uc2USRwoIUmVhZEZpbGUSHC5kc2gueWF3bi52MS5SZWFkRmlsZVJlcXVlc3QaHS5kc2gueWF3bi52MS5SZWFkRmlsZVJlc3BvbnNlElYKDVJlYWRGaWxlUmFuZ2USIS5kc2gueWF3bi52MS5SZWFkRmlsZVJhbmdlUmVxdWVzdBoiLmRzaC55YXduLnYxLlJlYWRGaWxlUmFuZ2VSZXNwb25zZRJKCglXcml0ZUZpbGUSHS5kc2gueWF3bi52MS5Xcml0ZUZpbGVSZXF1ZXN0Gh4uZHNoLnlhd24udjEuV3JpdGVGaWxlUmVzcG9uc2USRwoIRWRpdEZpbGUSHC5kc2gueWF3bi52MS5FZGl0RmlsZVJlcXVlc3QaHS5kc2gueWF3bi52MS5FZGl0RmlsZVJlc3BvbnNlEjsKBFN0YXQSGC5kc2gueWF3bi52MS5TdGF0UmVxdWVzdBoZLmRzaC55YXduLnYxLlN0YXRSZXNwb25zZRI7CgRMaXN0EhguZHNoLnlhd24udjEuTGlzdFJlcXVlc3QaGS5kc2gueWF3bi52MS5MaXN0UmVzcG9uc2USOwoEVHJlZRIYLmRzaC55YXduLnYxLlRyZWVSZXF1ZXN0GhkuZHNoLnlhd24udjEuVHJlZVJlc3BvbnNlEk0KClNldFNlY3JldHMSHi5kc2gueWF3bi52MS5TZXRTZWNyZXRzUmVxdWVzdBofLmRzaC55YXduLnYxLlNldFNlY3JldHNSZXNwb25zZRJiChFTZXRHaXRDcmVkZW50aWFscxIlLmRzaC55YXduLnYxLlNldEdpdENyZWRlbnRpYWxzUmVxdWVzdBomLmRzaC55YXduLnYxLlNldEdpdENyZWRlbnRpYWxzUmVzcG9uc2USPgoFU2V0dXASGS5kc2gueWF3bi52MS5TZXR1cFJlcXVlc3QaGi5kc2gueWF3bi52MS5TZXR1cFJlc3BvbnNlQjtaOWdpdGh1Yi5jb20vemhtaW5nMC9kc2gteWF3bi9ydW5uZXIvZ2VuL2RzaC95YXduL3YxO3lhd252MWIGcHJvdG8z");
+  fileDesc("Chhkc2gveWF3bi92MS9ydW5uZXIucHJvdG8SC2RzaC55YXduLnYxIg8KDUhlYWx0aFJlcXVlc3QiPAoOSGVhbHRoUmVzcG9uc2USEgoKc2FuZGJveF9pZBgBIAEoCRIWCg5zZXR1cF9jb21wbGV0ZRgCIAEoCCIWChRTYW5kYm94U3RhdHVzUmVxdWVzdCLsAgoVU2FuZGJveFN0YXR1c1Jlc3BvbnNlEhIKCnNhbmRib3hfaWQYASABKAkSEAoIaG9zdG5hbWUYAiABKAkSDwoHb3NfbmFtZRgDIAEoCRIWCg5rZXJuZWxfdmVyc2lvbhgEIAEoCRIUCgxhcmNoaXRlY3R1cmUYBSABKAkSEQoJY3B1X2NvdW50GAYgASgFEhoKEm1lbW9yeV90b3RhbF9ieXRlcxgHIAEoAxIhChl3b3Jrc3BhY2VfZGlza191c2VkX2J5dGVzGAggASgDEiIKGndvcmtzcGFjZV9kaXNrX3RvdGFsX2J5dGVzGAkgASgDEiIKGmZpbGVzeXN0ZW1fZGlza191c2VkX2J5dGVzGAogASgDEiMKG2ZpbGVzeXN0ZW1fZGlza190b3RhbF9ieXRlcxgLIAEoAxIWCg51cHRpbWVfc2Vjb25kcxgMIAEoAxIXCg9saXN0ZW5pbmdfcG9ydHMYDSADKAUikwEKC0V4ZWNSZXF1ZXN0EgwKBGFyZ3YYASADKAkSCwoDY3dkGAIgASgJEi4KA2VudhgDIAMoCzIhLmRzaC55YXduLnYxLkV4ZWNSZXF1ZXN0LkVudkVudHJ5Eg0KBXN0ZGluGAQgASgMGioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEikwEKDEV4ZWNSZXNwb25zZRIrCgdzdGFydGVkGAEgASgLMhguZHNoLnlhd24udjEuRXhlY1N0YXJ0ZWRIABIQCgZzdGRvdXQYAiABKAxIABIQCgZzdGRlcnIYAyABKAxIABIpCgZleGl0ZWQYBCABKAsyFy5kc2gueWF3bi52MS5FeGVjRXhpdGVkSABCBwoFZXZlbnQiGgoLRXhlY1N0YXJ0ZWQSCwoDcGlkGAEgASgDIi8KCkV4ZWNFeGl0ZWQSEQoJZXhpdF9jb2RlGAEgASgFEg4KBnNpZ25hbBgCIAEoCSKUAQoYUmVzb2x2ZUV4ZWN1dGFibGVSZXF1ZXN0Eg8KB2NvbW1hbmQYASABKAkSOwoDZW52GAIgAygLMi4uZHNoLnlhd24udjEuUmVzb2x2ZUV4ZWN1dGFibGVSZXF1ZXN0LkVudkVudHJ5GioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiKQoZUmVzb2x2ZUV4ZWN1dGFibGVSZXNwb25zZRIMCgRwYXRoGAEgASgJIi8KElJlc29sdmVQYXRoUmVxdWVzdBIMCgRwYXRoGAEgASgJEgsKA2N3ZBgCIAEoCSJDChNSZXNvbHZlUGF0aFJlc3BvbnNlEhYKDmNhbm9uaWNhbF9wYXRoGAEgASgJEhQKDGRpc3BsYXlfcGF0aBgCIAEoCSIyCg9SZWFkRmlsZVJlcXVlc3QSDAoEcGF0aBgBIAEoCRIRCgltYXhfYnl0ZXMYAiABKAMiIwoQUmVhZEZpbGVSZXNwb25zZRIPCgdjb250ZW50GAEgASgMIkQKFFJlYWRGaWxlUmFuZ2VSZXF1ZXN0EgwKBHBhdGgYASABKAkSDgoGb2Zmc2V0GAIgASgDEg4KBmxlbmd0aBgDIAEoAyIoChVSZWFkRmlsZVJhbmdlUmVzcG9uc2USDwoHY29udGVudBgBIAEoDCJyChBXcml0ZUZpbGVSZXF1ZXN0EgwKBHBhdGgYASABKAkSDwoHY29udGVudBgCIAEoDBIaChBjcmVhdGVfaWZfYWJzZW50GAMgASgISAASGgoQZXhwZWN0ZWRfdmVyc2lvbhgEIAEoCUgAQgcKBWd1YXJkIlkKEVdyaXRlRmlsZVJlc3BvbnNlEg8KB2NyZWF0ZWQYASABKAgSEgoKaGFkX2JlZm9yZRgCIAEoCBIOCgZiZWZvcmUYAyABKAwSDwoHdmVyc2lvbhgEIAEoCSJ2Cg9FZGl0RmlsZVJlcXVlc3QSDAoEcGF0aBgBIAEoCRISCgpvbGRfc3RyaW5nGAIgASgJEhIKCm5ld19zdHJpbmcYAyABKAkSEwoLcmVwbGFjZV9hbGwYBCABKAgSGAoQZXhwZWN0ZWRfdmVyc2lvbhgFIAEoCSJCChBFZGl0RmlsZVJlc3BvbnNlEg4KBmJlZm9yZRgBIAEoDBINCgVhZnRlchgCIAEoDBIPCgd2ZXJzaW9uGAMgASgJIjQKC1N0YXRSZXF1ZXN0EgwKBHBhdGgYASABKAkSFwoPZm9sbG93X3N5bWxpbmtzGAIgASgIImIKDFN0YXRSZXNwb25zZRIOCgZleGlzdHMYASABKAgSIwoEdHlwZRgCIAEoDjIVLmRzaC55YXduLnYxLkZpbGVUeXBlEgwKBHNpemUYAyABKAMSDwoHdmVyc2lvbhgEIAEoCSIbCgtMaXN0UmVxdWVzdBIMCgRwYXRoGAEgASgJInUKCUxpc3RFbnRyeRIMCgRuYW1lGAEgASgJEhYKDmNhbm9uaWNhbF9wYXRoGAIgASgJEiMKBHR5cGUYAyABKA4yFS5kc2gueWF3bi52MS5GaWxlVHlwZRIMCgRzaXplGAQgASgDEg8KB3ZlcnNpb24YBSABKAkiNwoMTGlzdFJlc3BvbnNlEicKB2VudHJpZXMYASADKAsyFi5kc2gueWF3bi52MS5MaXN0RW50cnkiTgoLVHJlZVJlcXVlc3QSDAoEcGF0aBgBIAEoCRIcChRleGNsdWRlZF9kaXJlY3RvcmllcxgCIAMoCRITCgttYXhfZW50cmllcxgDIAEoAyJHCglUcmVlRW50cnkSFQoNcmVsYXRpdmVfcGF0aBgBIAEoCRIjCgR0eXBlGAIgASgOMhUuZHNoLnlhd24udjEuRmlsZVR5cGUiSgoMVHJlZVJlc3BvbnNlEicKB2VudHJpZXMYASADKAsyFi5kc2gueWF3bi52MS5UcmVlRW50cnkSEQoJdHJ1bmNhdGVkGAIgASgIIoEBChFTZXRTZWNyZXRzUmVxdWVzdBI8CgdzZWNyZXRzGAEgAygLMisuZHNoLnlhd24udjEuU2V0U2VjcmV0c1JlcXVlc3QuU2VjcmV0c0VudHJ5Gi4KDFNlY3JldHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIhQKElNldFNlY3JldHNSZXNwb25zZSJBCg1HaXRDcmVkZW50aWFsEgwKBGhvc3QYASABKAkSEAoIdXNlcm5hbWUYAiABKAkSEAoIcGFzc3dvcmQYAyABKAkiSwoYU2V0R2l0Q3JlZGVudGlhbHNSZXF1ZXN0Ei8KC2NyZWRlbnRpYWxzGAEgAygLMhouZHNoLnlhd24udjEuR2l0Q3JlZGVudGlhbCIbChlTZXRHaXRDcmVkZW50aWFsc1Jlc3BvbnNlIksKDFNldHVwUmVxdWVzdBIWCg5yZXBvc2l0b3J5X3VybBgBIAEoCRIQCghyZXZpc2lvbhgCIAEoCRIRCgl3b3Jrc3BhY2UYAyABKAkiHAoNU2V0dXBSZXNwb25zZRILCgNyYW4YASABKAgiXQoQSHR0cFByb3h5UmVxdWVzdBIxCgRoZWFkGAEgASgLMiEuZHNoLnlhd24udjEuSHR0cFByb3h5UmVxdWVzdEhlYWRIABIOCgRib2R5GAIgASgMSABCBgoEcGFydCJzChRIdHRwUHJveHlSZXF1ZXN0SGVhZBIOCgZtZXRob2QYASABKAkSDgoGdGFyZ2V0GAIgASgJEgwKBHBvcnQYAyABKAUSLQoHaGVhZGVycxgEIAMoCzIcLmRzaC55YXduLnYxLkh0dHBQcm94eUhlYWRlciIuCg9IdHRwUHJveHlIZWFkZXISDAoEbmFtZRgBIAEoCRINCgV2YWx1ZRgCIAEoCSJfChFIdHRwUHJveHlSZXNwb25zZRIyCgRoZWFkGAEgASgLMiIuZHNoLnlhd24udjEuSHR0cFByb3h5UmVzcG9uc2VIZWFkSAASDgoEYm9keRgCIAEoDEgAQgYKBHBhcnQiVgoVSHR0cFByb3h5UmVzcG9uc2VIZWFkEg4KBnN0YXR1cxgBIAEoBRItCgdoZWFkZXJzGAIgAygLMhwuZHNoLnlhd24udjEuSHR0cFByb3h5SGVhZGVyKoEBCghGaWxlVHlwZRIZChVGSUxFX1RZUEVfVU5TUEVDSUZJRUQQABIVChFGSUxFX1RZUEVfUkVHVUxBUhABEhcKE0ZJTEVfVFlQRV9ESVJFQ1RPUlkQAhIVChFGSUxFX1RZUEVfU1lNTElOSxADEhMKD0ZJTEVfVFlQRV9PVEhFUhAEMs8JCg1SdW5uZXJTZXJ2aWNlEkEKBkhlYWx0aBIaLmRzaC55YXduLnYxLkhlYWx0aFJlcXVlc3QaGy5kc2gueWF3bi52MS5IZWFsdGhSZXNwb25zZRJWCg1TYW5kYm94U3RhdHVzEiEuZHNoLnlhd24udjEuU2FuZGJveFN0YXR1c1JlcXVlc3QaIi5kc2gueWF3bi52MS5TYW5kYm94U3RhdHVzUmVzcG9uc2USPQoERXhlYxIYLmRzaC55YXduLnYxLkV4ZWNSZXF1ZXN0GhkuZHNoLnlhd24udjEuRXhlY1Jlc3BvbnNlMAESYgoRUmVzb2x2ZUV4ZWN1dGFibGUSJS5kc2gueWF3bi52MS5SZXNvbHZlRXhlY3V0YWJsZVJlcXVlc3QaJi5kc2gueWF3bi52MS5SZXNvbHZlRXhlY3V0YWJsZVJlc3BvbnNlElAKC1Jlc29sdmVQYXRoEh8uZHNoLnlhd24udjEuUmVzb2x2ZVBhdGhSZXF1ZXN0GiAuZHNoLnlhd24udjEuUmVzb2x2ZVBhdGhSZXNwb25zZRJHCghSZWFkRmlsZRIcLmRzaC55YXduLnYxLlJlYWRGaWxlUmVxdWVzdBodLmRzaC55YXduLnYxLlJlYWRGaWxlUmVzcG9uc2USVgoNUmVhZEZpbGVSYW5nZRIhLmRzaC55YXduLnYxLlJlYWRGaWxlUmFuZ2VSZXF1ZXN0GiIuZHNoLnlhd24udjEuUmVhZEZpbGVSYW5nZVJlc3BvbnNlEkoKCVdyaXRlRmlsZRIdLmRzaC55YXduLnYxLldyaXRlRmlsZVJlcXVlc3QaHi5kc2gueWF3bi52MS5Xcml0ZUZpbGVSZXNwb25zZRJHCghFZGl0RmlsZRIcLmRzaC55YXduLnYxLkVkaXRGaWxlUmVxdWVzdBodLmRzaC55YXduLnYxLkVkaXRGaWxlUmVzcG9uc2USOwoEU3RhdBIYLmRzaC55YXduLnYxLlN0YXRSZXF1ZXN0GhkuZHNoLnlhd24udjEuU3RhdFJlc3BvbnNlEjsKBExpc3QSGC5kc2gueWF3bi52MS5MaXN0UmVxdWVzdBoZLmRzaC55YXduLnYxLkxpc3RSZXNwb25zZRI7CgRUcmVlEhguZHNoLnlhd24udjEuVHJlZVJlcXVlc3QaGS5kc2gueWF3bi52MS5UcmVlUmVzcG9uc2USTQoKU2V0U2VjcmV0cxIeLmRzaC55YXduLnYxLlNldFNlY3JldHNSZXF1ZXN0Gh8uZHNoLnlhd24udjEuU2V0U2VjcmV0c1Jlc3BvbnNlEmIKEVNldEdpdENyZWRlbnRpYWxzEiUuZHNoLnlhd24udjEuU2V0R2l0Q3JlZGVudGlhbHNSZXF1ZXN0GiYuZHNoLnlhd24udjEuU2V0R2l0Q3JlZGVudGlhbHNSZXNwb25zZRI+CgVTZXR1cBIZLmRzaC55YXduLnYxLlNldHVwUmVxdWVzdBoaLmRzaC55YXduLnYxLlNldHVwUmVzcG9uc2USTgoJSHR0cFByb3h5Eh0uZHNoLnlhd24udjEuSHR0cFByb3h5UmVxdWVzdBoeLmRzaC55YXduLnYxLkh0dHBQcm94eVJlc3BvbnNlKAEwAUI7WjlnaXRodWIuY29tL3pobWluZzAvZHNoLXlhd24vcnVubmVyL2dlbi9kc2gveWF3bi92MTt5YXdudjFiBnByb3RvMw");
 
 /**
  * @generated from message dsh.yawn.v1.HealthRequest
@@ -137,6 +137,16 @@ export type SandboxStatusResponse = Message<"dsh.yawn.v1.SandboxStatusResponse">
    * @generated from field: int64 uptime_seconds = 12;
    */
   uptimeSeconds: bigint;
+
+  /**
+   * TCP ports with a listening socket in the sandbox's network namespace,
+   * ascending. The runner's own health listener is not one of them. A server
+   * the session started shows up here, which is how a preview finds its port
+   * without anyone being told it.
+   *
+   * @generated from field: repeated int32 listening_ports = 13;
+   */
+  listeningPorts: number[];
 };
 
 /**
@@ -905,6 +915,151 @@ export const SetupResponseSchema: GenMessage<SetupResponse> = /*@__PURE__*/
   messageDesc(file_dsh_yawn_v1_runner, 34);
 
 /**
+ * One request the control plane relays from a browser to a server listening
+ * on the sandbox's loopback. The first message on the stream must be the
+ * head; every later message is body bytes. Headers are plain pairs so
+ * repeatable ones (Set-Cookie) survive; both sides strip hop-by-hop headers
+ * and the Host header, because the loopback address is the runner's business.
+ *
+ * @generated from message dsh.yawn.v1.HttpProxyRequest
+ */
+export type HttpProxyRequest = Message<"dsh.yawn.v1.HttpProxyRequest"> & {
+  /**
+   * @generated from oneof dsh.yawn.v1.HttpProxyRequest.part
+   */
+  part: {
+    /**
+     * @generated from field: dsh.yawn.v1.HttpProxyRequestHead head = 1;
+     */
+    value: HttpProxyRequestHead;
+    case: "head";
+  } | {
+    /**
+     * @generated from field: bytes body = 2;
+     */
+    value: Uint8Array;
+    case: "body";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message dsh.yawn.v1.HttpProxyRequest.
+ * Use `create(HttpProxyRequestSchema)` to create a new message.
+ */
+export const HttpProxyRequestSchema: GenMessage<HttpProxyRequest> = /*@__PURE__*/
+  messageDesc(file_dsh_yawn_v1_runner, 35);
+
+/**
+ * @generated from message dsh.yawn.v1.HttpProxyRequestHead
+ */
+export type HttpProxyRequestHead = Message<"dsh.yawn.v1.HttpProxyRequestHead"> & {
+  /**
+   * @generated from field: string method = 1;
+   */
+  method: string;
+
+  /**
+   * The request target as the browser sent it: path and query only. A
+   * target without a leading slash is rejected.
+   *
+   * @generated from field: string target = 2;
+   */
+  target: string;
+
+  /**
+   * The loopback port the sandbox server listens on.
+   *
+   * @generated from field: int32 port = 3;
+   */
+  port: number;
+
+  /**
+   * @generated from field: repeated dsh.yawn.v1.HttpProxyHeader headers = 4;
+   */
+  headers: HttpProxyHeader[];
+};
+
+/**
+ * Describes the message dsh.yawn.v1.HttpProxyRequestHead.
+ * Use `create(HttpProxyRequestHeadSchema)` to create a new message.
+ */
+export const HttpProxyRequestHeadSchema: GenMessage<HttpProxyRequestHead> = /*@__PURE__*/
+  messageDesc(file_dsh_yawn_v1_runner, 36);
+
+/**
+ * @generated from message dsh.yawn.v1.HttpProxyHeader
+ */
+export type HttpProxyHeader = Message<"dsh.yawn.v1.HttpProxyHeader"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * @generated from field: string value = 2;
+   */
+  value: string;
+};
+
+/**
+ * Describes the message dsh.yawn.v1.HttpProxyHeader.
+ * Use `create(HttpProxyHeaderSchema)` to create a new message.
+ */
+export const HttpProxyHeaderSchema: GenMessage<HttpProxyHeader> = /*@__PURE__*/
+  messageDesc(file_dsh_yawn_v1_runner, 37);
+
+/**
+ * @generated from message dsh.yawn.v1.HttpProxyResponse
+ */
+export type HttpProxyResponse = Message<"dsh.yawn.v1.HttpProxyResponse"> & {
+  /**
+   * @generated from oneof dsh.yawn.v1.HttpProxyResponse.part
+   */
+  part: {
+    /**
+     * @generated from field: dsh.yawn.v1.HttpProxyResponseHead head = 1;
+     */
+    value: HttpProxyResponseHead;
+    case: "head";
+  } | {
+    /**
+     * @generated from field: bytes body = 2;
+     */
+    value: Uint8Array;
+    case: "body";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message dsh.yawn.v1.HttpProxyResponse.
+ * Use `create(HttpProxyResponseSchema)` to create a new message.
+ */
+export const HttpProxyResponseSchema: GenMessage<HttpProxyResponse> = /*@__PURE__*/
+  messageDesc(file_dsh_yawn_v1_runner, 38);
+
+/**
+ * @generated from message dsh.yawn.v1.HttpProxyResponseHead
+ */
+export type HttpProxyResponseHead = Message<"dsh.yawn.v1.HttpProxyResponseHead"> & {
+  /**
+   * @generated from field: int32 status = 1;
+   */
+  status: number;
+
+  /**
+   * @generated from field: repeated dsh.yawn.v1.HttpProxyHeader headers = 2;
+   */
+  headers: HttpProxyHeader[];
+};
+
+/**
+ * Describes the message dsh.yawn.v1.HttpProxyResponseHead.
+ * Use `create(HttpProxyResponseHeadSchema)` to create a new message.
+ */
+export const HttpProxyResponseHeadSchema: GenMessage<HttpProxyResponseHead> = /*@__PURE__*/
+  messageDesc(file_dsh_yawn_v1_runner, 39);
+
+/**
  * @generated from enum dsh.yawn.v1.FileType
  */
 export enum FileType {
@@ -1063,6 +1218,17 @@ export const RunnerService: GenService<{
     methodKind: "unary";
     input: typeof SetupRequestSchema;
     output: typeof SetupResponseSchema;
+  },
+  /**
+   * One browser request relayed to a server inside the sandbox. Each side
+   * sends its head message first, then body chunks; see the message docs.
+   *
+   * @generated from rpc dsh.yawn.v1.RunnerService.HttpProxy
+   */
+  httpProxy: {
+    methodKind: "bidi_streaming";
+    input: typeof HttpProxyRequestSchema;
+    output: typeof HttpProxyResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_dsh_yawn_v1_runner, 0);
