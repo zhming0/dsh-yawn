@@ -36,6 +36,9 @@ import {
 import { InstructionStore } from "../instruction-store.js";
 import type { InstructionSettingsView } from "../instructions-remote.js";
 import { ManagedInstructions } from "../managed-instructions.js";
+import { McpPool } from "../mcp-pool.js";
+import type { McpServerView, McpTestResult } from "../mcp-remote.js";
+import { McpServerStore, type McpServerEntry } from "../mcp-store.js";
 import { yawnHost } from "../remote-contributions.js";
 import type { RunnerClient } from "../runner-client.js";
 import type { SandboxStatusView } from "../sandbox-status-remote.js";
@@ -68,6 +71,8 @@ export interface ManagerDependencies {
   broker?: CredentialBroker;
   gateway?: RunnerGateway;
   instructions?: InstructionStore;
+  mcpStore?: McpServerStore;
+  mcpPool?: McpPool;
   workspaceRegistry?: WorkspaceRegistryLike;
   /** Credential resolution for Buildkite tokens; defaults to the host service. */
   credentials?: CredentialResolver;
@@ -106,6 +111,8 @@ export class SandboxManager extends TypertRemoteService {
   private readonly broker: CredentialBroker;
   private readonly ownedTunnel: TunnelServer | undefined;
   private readonly instructions: ManagedInstructions;
+  private readonly mcpStore: McpServerStore;
+  private readonly mcpPool: McpPool;
   private readonly workspaceRegistry: WorkspaceRegistryLike | undefined;
   private readonly engine: SandboxLifecycle;
   private readonly registry: ProfileRegistry;
@@ -151,6 +158,16 @@ export class SandboxManager extends TypertRemoteService {
       dependencies.broker ??
       new CredentialBroker({
         path: join(this.config.stateDir, "broker.json"),
+      });
+    this.mcpStore =
+      dependencies.mcpStore ??
+      new McpServerStore({ path: join(this.config.stateDir, "mcp.json") });
+    this.mcpPool =
+      dependencies.mcpPool ??
+      new McpPool({
+        ctx,
+        store: this.mcpStore,
+        warn: (message) => this.ctx.logger("sandbox").warn(message),
       });
     const fileIndexes = new FileIndexStore(
       join(this.config.stateDir, "file-index"),
@@ -360,6 +377,7 @@ export class SandboxManager extends TypertRemoteService {
     ctx.effect(() => () => {
       this.idle.dispose();
       void this.ownedTunnel?.close();
+      void this.mcpPool.dispose();
     });
   }
 
@@ -369,8 +387,12 @@ export class SandboxManager extends TypertRemoteService {
       this.broker.initialize(),
       this.ownedTunnel?.listen(),
       this.instructions.initialize(),
+      this.mcpStore.initialize(),
     ]);
     await this.engine.initialize();
+    // Mounting is asynchronous past ctx.plugin, so configured MCP servers are
+    // reconnected at boot without holding up the manager.
+    await this.mcpPool.sync();
     for (const record of this.engine.records()) {
       if (record.state === "running") {
         this.idle.schedule(record.sessionId);
@@ -511,6 +533,44 @@ export class SandboxManager extends TypertRemoteService {
     await this.ready;
     await this.broker.deleteSecret(name);
     return this.broker.secretNames();
+  }
+
+  /** Configured MCP servers with their live connection status. */
+  async listMcpServers(): Promise<McpServerView[]> {
+    await this.ready;
+    await this.mcpPool.sync();
+    return this.mcpPool.views();
+  }
+
+  /** Add or update one MCP server, then reconcile its live mount. */
+  async setMcpServer(entry: McpServerEntry): Promise<McpServerView[]> {
+    await this.ready;
+    await this.mcpStore.upsert(entry);
+    await this.mcpPool.sync();
+    return this.mcpPool.views();
+  }
+
+  async deleteMcpServer(serverName: string): Promise<McpServerView[]> {
+    await this.ready;
+    await this.mcpStore.remove(serverName);
+    await this.mcpPool.sync();
+    return this.mcpPool.views();
+  }
+
+  /**
+   * Connect one stored server again. The client stops reconnecting once its
+   * attempt budget runs out, so this is the only way back short of a restart.
+   */
+  async retryMcpServer(serverName: string): Promise<McpServerView[]> {
+    await this.ready;
+    await this.mcpPool.retry(serverName);
+    return this.mcpPool.views();
+  }
+
+  /** Try one configuration without saving it; the probe is always disposed. */
+  async testMcpServer(entry: McpServerEntry): Promise<McpTestResult> {
+    await this.ready;
+    return this.mcpPool.testConnection(entry);
   }
 
   async getInstructions(): Promise<InstructionSettingsView> {

@@ -123,6 +123,19 @@ sandbox is described rather than started; that is the same rule the `@` file
 index follows. The tab refreshes faster while a turn runs, because a turn is
 when a sandbox is provisioned, woken, or replaced.
 
+The **Settings → MCP** page adds remote Model Context Protocol servers over
+Streamable HTTP. An enabled server's tools join the model's tool list as
+`mcp__<serverName>__<tool>`. A token is sent as a static
+`Authorization: Bearer` header and is write-only: the browser receives only
+whether a token is saved, never its value. Adding, editing, disabling, or
+removing a server mounts or unmounts its tools for new tool calls without
+restarting the host, and **Test connection** probes an unsaved entry without
+saving it. A server that fails to connect is reported as `error`, and
+**Retry** connects it again — the client stops reconnecting on its own once
+its attempt budget runs out, so Retry is the only way back short of a restart.
+The configuration lives in `stateDir/mcp.json`, owner-only like the rest of the
+control plane's state, and never in a sandbox.
+
 The bundle also disables dsh's local shell permission presets and its file
 policy line. The remote shell uses one fixed container boundary and does not
 claim to enforce those per-command sandbox modes. The policy line would tell
@@ -330,19 +343,19 @@ the intended state while installing the control plane before its sandbox
 backend exists, and it keeps a mistyped profile map from stopping the host from
 starting, so the settings can still be corrected.
 
-| Setting             | When | Default                 | Meaning                                                          |
-| ------------------- | ---- | ----------------------- | ---------------------------------------------------------------- |
-| `profiles.<name>`   | live | none                    | One sandbox profile; its fields are listed in the next table     |
-| `defaultProfile`    | live | first profile           | Profile used when a session does not pick one                    |
-| `idleMs`            | live | 10 minutes              | Idle delay after the last turn or wake before hibernating        |
-| `expiresAfterMs`    | live | 7 days                  | How long a hibernated workspace is retained                      |
-| `repository`        | boot | session repository      | Fallback repository for non-anchor sessions                      |
-| `revision`          | boot | repository default      | Optional branch, tag, or commit to check out                     |
-| `workspace`         | boot | `/workspace/repository` | Repository checkout and working directory                        |
-| `stateDir`          | boot | `~/.dsh-yawn`           | Records, broker data, token, instructions, and Workspace anchors |
-| `registrationToken` | boot | see below               | Token(s) runners must present, comma-separated                   |
-| `tunnel.port`       | boot | `8081`                  | Port the host listens on for runner tunnels (see Tunnel)         |
-| `tunnel.bind`       | boot | `0.0.0.0`               | Address the tunnel listener binds to                             |
+| Setting             | When | Default                 | Meaning                                                                       |
+| ------------------- | ---- | ----------------------- | ----------------------------------------------------------------------------- |
+| `profiles.<name>`   | live | none                    | One sandbox profile; its fields are listed in the next table                  |
+| `defaultProfile`    | live | first profile           | Profile used when a session does not pick one                                 |
+| `idleMs`            | live | 10 minutes              | Idle delay after the last turn or wake before hibernating                     |
+| `expiresAfterMs`    | live | 7 days                  | How long a hibernated workspace is retained                                   |
+| `repository`        | boot | session repository      | Fallback repository for non-anchor sessions                                   |
+| `revision`          | boot | repository default      | Optional branch, tag, or commit to check out                                  |
+| `workspace`         | boot | `/workspace/repository` | Repository checkout and working directory                                     |
+| `stateDir`          | boot | `~/.dsh-yawn`           | Records, broker data, token, instructions, MCP servers, and Workspace anchors |
+| `registrationToken` | boot | see below               | Token(s) runners must present, comma-separated                                |
+| `tunnel.port`       | boot | `8081`                  | Port the host listens on for runner tunnels (see Tunnel)                      |
+| `tunnel.bind`       | boot | `0.0.0.0`               | Address the tunnel listener binds to                                          |
 
 Each profile carries the settings of its own backend. Profiles do not share
 settings with each other, so two Kubernetes profiles in one namespace both
