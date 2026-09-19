@@ -4,10 +4,84 @@ set -euo pipefail
 echo "--- :docker: Building the control-plane image"
 docker buildx bake control-plane-dev --load
 
+cleanup() {
+  docker rm -f dsh-yawn-check-loopback dsh-yawn-check-bind >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
 # Seed a throwaway home and dump the composed tree. The grep proves the
 # sandbox-manager row from the bundle patch survives composition against this
 # image's dsh version.
 echo "+++ :mag: Checking the composed profile"
-docker run --rm --entrypoint sh dsh-yawn-control-plane:dev -c \
-  'dsh-yawn-seed && dsh --profile web --dump-config' | grep -q "sandbox-manager"
+stock=$(docker run --rm --entrypoint sh dsh-yawn-control-plane:dev -c \
+  'dsh-yawn-seed && dsh --profile web --dump-config')
+printf '%s\n' "$stock" | grep -q "sandbox-manager"
 echo "sandbox-manager row composes"
+
+# The overlay restates the web bundle's whole webserver row, so it is only
+# correct while it still matches that row. Composing with and without it and
+# diffing the two turns upstream drift -- a field renamed, added, or dropped --
+# into a failure here, in the same change that bumps dsh. The only lines the
+# diff may contain are the two host values and the bundle's "patched by"
+# provenance markers.
+echo "+++ :mag: Checking the overlay changes only the bind host"
+patched=$(docker run --rm --entrypoint sh dsh-yawn-control-plane:dev -c \
+  'dsh-yawn-seed && dsh --profile web --patch /opt/dsh-yawn/bind-all.patch.yml --dump-config')
+changes=$(diff <(printf '%s\n' "$stock") <(printf '%s\n' "$patched") |
+  grep -E '^[<>]' | grep -v '^[<>] # == ' || true)
+printf '%s\n' "$changes"
+test "$(printf '%s\n' "$changes" | grep -c .)" -eq 2
+printf '%s\n' "$changes" | grep -q '^< .*host:.*127\.0\.0\.1'
+printf '%s\n' "$changes" | grep -q '^> .*host:.*0\.0\.0\.0'
+echo "the overlay moves the bind host and nothing else"
+
+# The Web UI's port in /proc/net/tcp is hex: 3000 == 0x0BB8. Waiting for it
+# also proves the entrypoint's privilege drop let the seed and dsh run.
+wait_for_listener() {
+  local name=$1
+  for _ in $(seq 1 60); do
+    if docker exec "$name" grep -q ':0BB8' /proc/net/tcp /proc/net/tcp6 2>/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  docker logs "$name" >&2
+  return 1
+}
+
+# dsh binds loopback unless DSH_YAWN_BIND_ALL=1 says otherwise; the Kubernetes
+# install relies on that default, and the single-machine demo's published port
+# needs the flag. Both runs must also come up as uid 1000, never root.
+echo "+++ :mag: Checking the loopback default"
+docker run -d --name dsh-yawn-check-loopback dsh-yawn-control-plane:dev
+wait_for_listener dsh-yawn-check-loopback
+docker exec dsh-yawn-check-loopback grep -q '^Uid:[[:space:]]*1000' /proc/1/status
+docker exec dsh-yawn-check-loopback grep -q '0100007F:0BB8' /proc/net/tcp
+echo "loopback bind, uid 1000"
+
+echo "+++ :mag: Checking DSH_YAWN_BIND_ALL"
+docker run -d --name dsh-yawn-check-bind -e DSH_YAWN_BIND_ALL=1 dsh-yawn-control-plane:dev
+wait_for_listener dsh-yawn-check-bind
+docker exec dsh-yawn-check-bind grep -q '00000000:0BB8' /proc/net/tcp
+echo "0.0.0.0 bind"
+
+# The entrypoint's other job is joining the mounted socket's group before it
+# drops root. A socket owned by a known group stands in for the Docker one, and
+# the server's /proc entry then has to list that group.
+echo "+++ :mag: Checking the socket group join"
+status=$(docker run --rm --entrypoint sh dsh-yawn-control-plane:dev -ec '
+  node -e "require(\"net\").createServer().listen(\"/var/run/docker.sock\", () => { require(\"fs\").chownSync(\"/var/run/docker.sock\", 0, 12345); require(\"fs\").chmodSync(\"/var/run/docker.sock\", 0o660); })" &
+  for _ in $(seq 1 30); do [ -S /var/run/docker.sock ] && break; sleep 0.2; done
+  dsh-yawn-entrypoint --no-open &
+  server=$!
+  for _ in $(seq 1 30); do
+    grep -q "^Groups:.*12345" /proc/$server/status 2>/dev/null && break
+    sleep 0.5
+  done
+  grep -E "^(Uid|Groups):" /proc/$server/status
+  kill $server
+')
+printf '%s\n' "$status"
+printf '%s\n' "$status" | grep -q '^Uid:[[:space:]]*1000'
+printf '%s\n' "$status" | grep '^Groups:' | grep -qw 12345
+echo "socket group joined, uid 1000"
