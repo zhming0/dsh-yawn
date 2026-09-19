@@ -627,6 +627,17 @@ export class SandboxManager extends TypertRemoteService {
   }
 
   /**
+   * Whether the session has a sandbox record, in any state. Inert, like the
+   * Sandbox tab: a store read that cannot provision or wake. The "@" file
+   * reference asks this before falling back to a runner walk, so the
+   * completion menu never creates a session's first sandbox.
+   */
+  async hasSandbox(agent: Agent): Promise<boolean> {
+    await this.ready;
+    return this.engine.record(this.rootSessionId(agent)) !== undefined;
+  }
+
+  /**
    * The top-level session whose sandbox serves this agent's work, memoized
    * per session id: resolution reads the live agent registry, so an ancestor
    * disposed mid-run would otherwise flip the session onto a different
