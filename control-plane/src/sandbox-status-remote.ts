@@ -17,6 +17,14 @@ export interface SandboxHostFacts {
   startedAt: string;
   /** Present once the sandbox has a deletion deadline: hibernated or checkpointed. */
   expiresAt?: string;
+  /**
+   * The host name serving this sandbox's previews,
+   * `<sandboxId>-p<port>.<domain>`, present when previews are configured and
+   * the sandbox still exists. It names a host, not a URL: the browser picks
+   * the scheme (its own), which keeps previews working behind any TLS
+   * termination.
+   */
+  previewHost?: string;
 }
 
 /**
@@ -37,12 +45,20 @@ export interface SandboxLiveFacts {
   filesystemDiskUsedBytes: number;
   filesystemDiskTotalBytes: number;
   uptimeSeconds: number;
+  /** The sandbox's listening TCP ports, the servers a session started. */
+  listeningPorts: number[];
 }
 
 export interface SandboxStatusView {
   /** Absent until the sandbox has been provisioned. */
   sandbox?: SandboxHostFacts;
   live?: SandboxLiveFacts;
+  /**
+   * The configured preview domain. Present — with or without a sandbox —
+   * whenever previews are enabled, so the Preview tab can explain what is
+   * missing before anything is provisioned.
+   */
+  previewDomain?: string;
 }
 
 /** The namespace map declaration lives in remote-contributions.ts. */
@@ -74,7 +90,8 @@ const hostFactsSchema: TypertSchema<SandboxHostFacts> = {
         facts.state !== "checkpointed") ||
       typeof facts.repositoryUrl !== "string" ||
       typeof facts.startedAt !== "string" ||
-      (facts.expiresAt !== undefined && typeof facts.expiresAt !== "string")
+      (facts.expiresAt !== undefined && typeof facts.expiresAt !== "string") ||
+      (facts.previewHost !== undefined && typeof facts.previewHost !== "string")
     ) {
       throw new TypeError("expected sandbox host facts");
     }
@@ -98,7 +115,9 @@ const liveFactsSchema: TypertSchema<SandboxLiveFacts> = {
       !isNonNegativeNumber(facts.workspaceDiskTotalBytes) ||
       !isNonNegativeNumber(facts.filesystemDiskUsedBytes) ||
       !isNonNegativeNumber(facts.filesystemDiskTotalBytes) ||
-      !isNonNegativeNumber(facts.uptimeSeconds)
+      !isNonNegativeNumber(facts.uptimeSeconds) ||
+      !Array.isArray(facts.listeningPorts) ||
+      !facts.listeningPorts.every(isPort)
     ) {
       throw new TypeError("expected sandbox live facts");
     }
@@ -110,10 +129,25 @@ function isNonNegativeNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
+function isPort(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= 65_535
+  );
+}
+
 const viewSchema: TypertSchema<SandboxStatusView> = {
   parse(value: unknown): SandboxStatusView {
     const view = value as SandboxStatusView | null;
     if (typeof view !== "object" || view === null) {
+      throw new TypeError("expected a sandbox status view");
+    }
+    if (
+      view.previewDomain !== undefined &&
+      typeof view.previewDomain !== "string"
+    ) {
       throw new TypeError("expected a sandbox status view");
     }
     if (view.sandbox !== undefined) {

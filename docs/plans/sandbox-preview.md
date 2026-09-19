@@ -36,7 +36,7 @@ Decided against, in discussion:
   security postures and a URL whose meaning depends on configuration. The
   path mode's compatibility advantage (no operator prerequisites) does not
   outweigh serving broken previews for most real apps; an install without a
-  preview domain gets a Preview tab that says what is missing instead.
+  preview domain gets a Web Preview tab that says what is missing instead.
 - **Mounting the route on the Web UI's server.** dsh's web server matches
   routes by path only (exact, then longest prefix, then one fallback seat),
   so a subdomain request with path `/` lands in the SPA fallback. A host
@@ -83,12 +83,12 @@ services (below), not with addressing.
 
 **Configuration.** `preview: { domain, port }` in the control plane settings,
 mirroring `tunnel: { port, bind }`. When the domain is unset the listener
-does not start and the Preview tab explains what is missing and where to
+does not start and the Web Preview tab explains what is missing and where to
 configure it — the tab never silently vanishes.
 
-**Status and the Preview tab.** The sandbox status carries an absolute
+**Status and the Web Preview tab.** The sandbox status carries an absolute
 `previewUrl` (the `<sandboxId>-p<port>` origin with the default port) beside
-the listening ports. The Preview tab offers the detected ports as chips, a
+the listening ports. The Web Preview tab offers the detected ports as chips, a
 path field as the frame's entry point, both remembered per session, and an
 Open link — safe again, because the preview's origin is not the UI's. The
 frame keeps scripts but now also `allow-same-origin`, so storage, IndexedDB,
@@ -109,6 +109,26 @@ NetworkPolicy needs no change — egress to the control plane pod is allowed
 on the tunnel port only, so sandboxes cannot reach the preview listener
 directly.
 
+**The proxy's cookie must never reach a sandbox.** Authenticating the
+wildcard host requires a cookie scoped to cover every preview host, so the
+browser attaches it to each preview request — and the relay passes cookies
+through, which is correct for the previewed app's own cookies and wrong for
+the proxy's: the app inside the sandbox is untrusted code, and a session
+credential it can read off the wire is one it can replay. oauth2-proxy does
+not strip its cookie before forwarding upstream (its issues #388 and #1993
+ask for exactly that), so the exposure change closes this on our side:
+
+- The listener drops configured auth-cookie names from the request before it
+  enters the tunnel — `preview.authCookieNames`, which the chart fills with
+  the cookie name it gives oauth2-proxy. The app's own cookies are untouched.
+- The preview cookie's domain stays disjoint from the UI's, so a cookie that
+  does leak somewhere is valid against previews only, never the control
+  plane's UI, and the UI's cookie is never attached to a preview request in
+  the first place.
+
+Both rules together are what make "the relay forwards cookies" safe: what
+arrives at the sandbox is the app's own session and nothing else.
+
 ## Limits
 
 - No WebSocket upgrades through the preview yet, so HMR does not connect.
@@ -121,15 +141,19 @@ directly.
 
 ## Steps
 
-1. **Preview feature PR** (on top of the transport): the preview listener
-   with host parsing, `preview: { domain, port }` settings, the relay
-   mounted on the listener, `previewUrl` in the status, the Preview tab
-   (port chips, path field, Open link, unset-domain message), the chart's
-   port/Service/proxy values, the operator documentation, and tests: host
-   parsing, relay round trip through the listener, status URL shape, and a
-   browser acceptance workflow — in development `<sandbox>-p<port>.localhost`
-   resolves to loopback in Chrome and Firefox, so no DNS or certificate is
-   needed to exercise it.
+1. **Preview feature** (on top of the transport; landed in two PRs): the
+   control-plane half — the preview listener with host parsing,
+   `preview: { domain, port }` settings, the relay on the listener,
+   `previewDomain` + `previewHost` facts in the status, the Web Preview tab
+   (port chips, path field, Open link, unset-domain message), and tests,
+   including a Docker smoke through the real listener. Then the exposure
+   half — the chart's port/Service/proxy values and the operator
+   documentation: wildcard DNS and certificates, the Ingress rule, the
+   auth-cookie rules above (`preview.authCookieNames` wired to the proxy's
+   cookie name, preview and UI cookie domains disjoint), and the
+   recommendation to keep previews on a registrable domain separate from the
+   UI's. Browser acceptance needs neither: `<sandbox>-p<port>.localhost`
+   resolves to loopback in Chrome and Firefox.
 2. **WebSocket upgrades through `HttpProxy`** so dev-server HMR connects
    (`wss://` terminated at the Ingress like every other preview byte).
 3. **Declared services** (optional, later): a per-repository manifest of

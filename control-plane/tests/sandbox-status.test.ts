@@ -59,6 +59,7 @@ describe("sandbox status", () => {
       filesystemDiskUsedBytes: 3 * 2 ** 30,
       filesystemDiskTotalBytes: 16 * 2 ** 30,
       uptimeSeconds: 90,
+      listeningPorts: [3000, 5173],
     });
   });
 
@@ -292,5 +293,42 @@ describe("SandboxStatus reads", () => {
 
     const view = await status.view("session-one");
     expect(view.sandbox?.image).toBeUndefined();
+  });
+
+  it("offers the preview host for a sandbox that still exists", async () => {
+    const status = new SandboxStatus({
+      store: stubStore([hibernatedRecord(), checkpointedRecord()]),
+      profiles: () => PROFILES,
+      runnerFor: () => undefined,
+      previewDomain: "sandbox.example.com",
+      previewHost: (sandboxId) => `${sandboxId}-p3000.sandbox.example.com`,
+    });
+    // Parked, not destroyed: the host is offered because it works again
+    // after a wake. The domain rides along even without a sandbox.
+    const hibernated = await status.view("session-one");
+    expect(hibernated.previewDomain).toBe("sandbox.example.com");
+    expect(hibernated.sandbox?.previewHost).toBe(
+      "sandbox-session-one-p3000.sandbox.example.com",
+    );
+    // Nothing to name without a sandbox ID.
+    const checkpointed = await status.view("checkpointed");
+    expect(checkpointed.previewDomain).toBe("sandbox.example.com");
+    expect(checkpointed.sandbox?.previewHost).toBeUndefined();
+    // An unknown session still says whether previews are configured.
+    expect(await status.view("never-provisioned")).toEqual({
+      previewDomain: "sandbox.example.com",
+    });
+  });
+
+  it("omits the preview fields when the host serves no previews", async () => {
+    const status = new SandboxStatus({
+      store: stubStore([hibernatedRecord()]),
+      profiles: () => PROFILES,
+      runnerFor: () => undefined,
+    });
+    const view = await status.view("session-one");
+    expect(view.previewDomain).toBeUndefined();
+    expect(view.sandbox?.previewHost).toBeUndefined();
+    expect(await status.view("never-provisioned")).toEqual({});
   });
 });
