@@ -11,6 +11,7 @@ import type {} from "@deepseek-ai/dsh-settings";
 import type {} from "@deepseek-ai/dsh-typert-registry";
 import { TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
+import { artifactsDirectory } from "../artifacts.js";
 import { CredentialBroker } from "../broker.js";
 import {
   resolveBuildkiteToken,
@@ -44,7 +45,11 @@ import type { SandboxStatusView } from "../sandbox-status-remote.js";
 import type { SessionProfileView } from "../session-profile-remote.js";
 import { SessionStore } from "../state-store.js";
 import { TunnelServer, type RunnerGateway } from "../tunnel.js";
-import type { BuildkiteProfile, SandboxBackend } from "../types.js";
+import type {
+  BackendCapabilities,
+  BuildkiteProfile,
+  SandboxBackend,
+} from "../types.js";
 import {
   createRepositoryAnchor,
   repositoryForAnchor,
@@ -258,6 +263,7 @@ export class SandboxManager extends TypertRemoteService {
     // listener installed below rides it onto exactly that turn's prompt.
     this.notices = new SandboxNotices(ctx, {
       rootSessionId: (agent) => this.rootSessionId(agent),
+      artifactsDirectory: () => artifactsDirectory(this.workspace),
     });
     this.engine.addHooks(this.notices);
     this.instructions = new ManagedInstructions(ctx, {
@@ -503,6 +509,19 @@ export class SandboxManager extends TypertRemoteService {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * What the agent's sandbox keeps across a sleep, for the model-facing
+   * environment section. Resolved on each prompt assembly, so a profile
+   * chosen after the agent exists is reflected; a session with no profile
+   * configured answers undefined and the text stays cautious.
+   */
+  sandboxCapabilitiesFor(agent: Agent): BackendCapabilities | undefined {
+    const profile = this.profileChoice.current(this.rootSessionId(agent));
+    return profile === undefined
+      ? undefined
+      : this.registry.backendOf(profile.name)?.capabilities;
   }
 
   /** Create and register the host Workspace selected by repository URL in Web. */

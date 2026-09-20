@@ -114,11 +114,12 @@ Details: [`control-plane/README.md`](control-plane/README.md#idle-and-hibernatio
 
 A Buildkite build cannot be paused, so that backend checkpoints instead: the
 working tree is committed, the commits `origin` does not have are written to a
-Git bundle in the control plane's state directory, and the sandbox is
+Git bundle in the control plane's state directory, the session's
+`/workspace/artifacts` folder is tarred beside it, and the sandbox is
 destroyed. The next prompt provisions a fresh sandbox, clones, runs
-`.agents/setup`, and unpacks the bundle. Kept: the branch, its commits, and
-every tracked or untracked file. Lost: ignored files, installed tools, and
-which changes were staged. Docker and Kubernetes hibernate properly.
+`.agents/setup`, and unpacks both. Kept: the branch, its commits, every tracked
+or untracked file, and the artifacts folder. Lost: ignored files, installed
+tools, and which changes were staged. Docker and Kubernetes hibernate properly.
 Details:
 [`control-plane/README.md`](control-plane/README.md#idle-and-hibernation).
 

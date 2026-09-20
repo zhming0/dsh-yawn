@@ -1,5 +1,5 @@
 import { Context } from "@deepseek-ai/cordis";
-import { SystemPrompt } from "@deepseek-ai/dsh-system-prompt";
+import { SystemPrompt, renderPrompt } from "@deepseek-ai/dsh-system-prompt";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -10,6 +10,7 @@ import {
   installSandboxContext,
   isHostOnlySection,
 } from "../src/sandbox-context.js";
+import type { BackendCapabilities } from "../src/types.js";
 import {
   HARNESS_SOURCE_TEMPLATE,
   WEB_SURFACE_TEMPLATE,
@@ -101,9 +102,13 @@ describe("dropHostOnlySections", () => {
 });
 
 describe("installSandboxContext", () => {
-  it("registers the environment section and the sandbox cwd variable", () => {
+  it("registers the environment section and the sandbox variables", () => {
     const systemPrompt = makeSystemPromptStub();
-    installSandboxContext(systemPrompt, () => "/workspace/repository");
+    installSandboxContext(
+      systemPrompt,
+      () => "/workspace/repository",
+      () => undefined,
+    );
     expect(systemPrompt.sections).toEqual([
       {
         name: SANDBOX_ENVIRONMENT_SECTION,
@@ -114,19 +119,43 @@ describe("installSandboxContext", () => {
     expect(systemPrompt.variables.get("cwd")?.({})).toBe(
       "/workspace/repository",
     );
+    expect(systemPrompt.variables.get("artifacts")?.({})).toBe(
+      "/workspace/artifacts",
+    );
   });
 
   it("resolves the workspace lazily on each assembly", () => {
     const systemPrompt = makeSystemPromptStub();
     let workspace = "/workspace/one";
-    installSandboxContext(systemPrompt, () => workspace);
+    installSandboxContext(
+      systemPrompt,
+      () => workspace,
+      () => undefined,
+    );
     expect(systemPrompt.variables.get("cwd")?.({})).toBe("/workspace/one");
+    expect(systemPrompt.variables.get("artifacts")?.({})).toBe(
+      "/workspace/artifacts",
+    );
     workspace = "/workspace/two";
     expect(systemPrompt.variables.get("cwd")?.({})).toBe("/workspace/two");
   });
 
-  it("references the cwd variable from the section text", () => {
+  it("resolves both sandbox paths from one workspace", () => {
+    const systemPrompt = makeSystemPromptStub();
+    installSandboxContext(
+      systemPrompt,
+      () => "/host/checkout",
+      () => undefined,
+    );
+    expect(systemPrompt.variables.get("cwd")?.({})).toBe("/host/checkout");
+    expect(systemPrompt.variables.get("artifacts")?.({})).toBe(
+      "/host/artifacts",
+    );
+  });
+
+  it("references the workspace variables from the section text", () => {
     expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("{{cwd}}");
+    expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("{{artifacts}}");
   });
 
   it("carries the GUI paragraph's still-true this-page mapping", () => {
@@ -139,9 +168,31 @@ describe("installSandboxContext", () => {
     expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("mise use -g");
     expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("uv tool install");
     expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("npm install -g");
-    expect(SANDBOX_ENVIRONMENT_PROMPT).toContain(
-      "discarded when the sandbox hibernates",
-    );
+    expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("{{tool_retention}}");
+  });
+
+  it("tells the model what this backend keeps across a sleep", () => {
+    const retention = (capabilities: BackendCapabilities | undefined) => {
+      const systemPrompt = makeSystemPromptStub();
+      installSandboxContext(
+        systemPrompt,
+        () => "/workspace/repository",
+        () => capabilities,
+      );
+      return systemPrompt.variables.get("tool_retention")?.({});
+    };
+    expect(retention(undefined)).toContain("may not keep");
+    expect(retention({ supportsHibernate: false })).toContain("does not keep");
+    expect(
+      retention({ supportsHibernate: true, wakeKeepsFilesystem: true }),
+    ).toContain("comes back with its files");
+    expect(
+      retention({ supportsHibernate: true, wakeKeepsFilesystem: false }),
+    ).toContain("come back with the new machine");
+  });
+
+  it("sends output that must outlive the sandbox to the artifacts folder", () => {
+    expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("always comes back");
   });
 });
 
@@ -237,5 +288,25 @@ describe("against the pinned dsh-system-prompt service", () => {
       "deployment:persona-prefix",
       "deployment:persona-suffix",
     ]);
+  });
+
+  it("resolves the sandbox variables in a real assembly", async () => {
+    const ctx = new Context();
+    const systemPrompt = new SystemPrompt(ctx, {
+      includeHarnessIdentity: false,
+      includeRuntimeContext: false,
+    });
+    installSandboxContext(
+      systemPrompt,
+      () => "/workspace/repository",
+      () => ({ supportsHibernate: false }),
+    );
+
+    const assembly = await systemPrompt.assemble({});
+    const rendered = renderPrompt(assembly);
+    expect(rendered).toContain("/workspace/artifacts");
+    expect(rendered).toContain(
+      "A sleep does not keep them, so reinstall what you need.",
+    );
   });
 });

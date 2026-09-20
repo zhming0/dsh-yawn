@@ -1,7 +1,7 @@
 import { metrics, trace } from "@opentelemetry/api";
 
 import { normalizeRepositoryUrl } from "../broker.js";
-import type { CheckpointStore } from "../checkpoint.js";
+import type { Checkpoint, CheckpointStore } from "../checkpoint.js";
 import type { RunnerClient } from "../runner-client.js";
 import type { SessionStore } from "../state-store.js";
 import {
@@ -69,12 +69,15 @@ export interface LifecycleHooks {
   /**
    * A checkpointed session is whole again in a fresh sandbox: the record says
    * running, the working tree is back, and the bundle is gone. The new runner
-   * is connected and cached, so the hook may talk to it.
+   * is connected and cached, so the hook may talk to it. `checkpoint` is what
+   * the old record said was saved, including whether the artifacts folder had
+   * to be left behind.
    */
   afterRestore?(context: {
     sessionId: string;
     record: RunningRecord;
     client: RunnerClient;
+    checkpoint: Checkpoint;
   }): Promise<void>;
   /** The session's record is gone; drop anything derived from it. */
   afterRelease?(sessionId: string): Promise<void>;
@@ -86,7 +89,7 @@ export interface SandboxLifecycleDependencies {
   /** The profile a session without a sandbox is provisioned with. */
   pendingProfile(sessionId: string): SandboxProfile;
   attachment: RunnerAttachment;
-  /** The bundles of checkpointed sessions, keyed by session. */
+  /** The saved checkpoints of checkpointed sessions, keyed by session. */
   checkpoints: CheckpointStore;
   expiresAfterMs: number;
   warn(message: string): void;
@@ -118,11 +121,11 @@ type LifecycleEvent = EnsureEvent | HibernateEvent | ReleaseEvent;
 /**
  * The sandbox session lifecycle as a small event-driven state machine: one
  * durable record per session whose `state` is `running`, `hibernated`, or
- * `checkpointed` (no sandbox exists; the work is a git bundle on the host),
- * with no record at all as the fourth state, absent. Callers do not name
- * procedures; they report what happened (a session needs its runner, an idle
- * countdown fired, a session is being discarded) and the machine picks the
- * reaction for the state the session is in.
+ * `checkpointed` (no sandbox exists; the work is checkpoint files on the
+ * host), with no record at all as the fourth state, absent. Callers do not
+ * name procedures; they report what happened (a session needs its runner, an
+ * idle countdown fired, a session is being discarded) and the machine picks
+ * the reaction for the state the session is in.
  *
  * Knows nothing about Cordis, agents, timers, or RPC — callers (the manager
  * facade, idle policy, host-event features) decide when an event fires and
@@ -346,8 +349,8 @@ export class SandboxLifecycle {
   }
 
   /**
-   * Row `checkpointed`: no sandbox exists, the work is a bundle on the host;
-   * ensureRunning provisions a fresh sandbox and restores it there.
+   * Row `checkpointed`: no sandbox exists, the work is checkpoint files on
+   * the host; ensureRunning provisions a fresh sandbox and restores it there.
    */
   private async whenCheckpointed(
     record: CheckpointedRecord,
@@ -500,9 +503,14 @@ export class SandboxLifecycle {
       });
     }
     const deadline = new Date(Date.now() + this.deps.expiresAfterMs);
-    const { checkpoint, bundle } =
+    const { checkpoint, bundle, artifacts, artifactsError } =
       await this.deps.attachment.checkpoint(record);
-    await this.deps.checkpoints.save(record.sessionId, bundle);
+    if (checkpoint.artifactsDropped === true) {
+      this.deps.warn(
+        `session ${record.sessionId}: the artifacts folder was not carried with the checkpoint: ${artifactsError ?? "unknown error"}`,
+      );
+    }
+    await this.deps.checkpoints.save(record.sessionId, bundle, artifacts);
     await this.deps.store.set({
       sessionId: record.sessionId,
       backend: record.backend,
@@ -676,9 +684,9 @@ export class SandboxLifecycle {
 
   /**
    * The checkpointed → running transition: provision a fresh sandbox under
-   * the same profile and put the bundle's commits and working tree back in
-   * it. The bundle is read first so a lost one fails before a sandbox is
-   * spent on it.
+   * the same profile and put the bundle's commits, working tree, and the
+   * artifacts folder back in it. The bundle is read first so a lost one fails
+   * before a sandbox is spent on it.
    *
    * The record stays checkpointed until the restore has succeeded, so a
    * failure or a host crash in between leaves the bundle as the truth and
@@ -696,6 +704,9 @@ export class SandboxLifecycle {
         `the checkpoint of session ${record.sessionId} is missing from the host's state directory`,
       );
     }
+    const artifacts = await this.deps.checkpoints.loadArtifacts(
+      record.sessionId,
+    );
     const profile = this.deps.registry.profile(record.profile);
     if (profile === undefined) {
       throw new Error("unreachable: no profile");
@@ -710,7 +721,11 @@ export class SandboxLifecycle {
       client = await this.deps.attachment.attach(
         replacement,
         record.repositoryUrl,
-        { checkpoint: record.checkpoint, bundle },
+        {
+          checkpoint: record.checkpoint,
+          bundle,
+          artifacts: artifacts ?? new Uint8Array(),
+        },
       );
     } catch (error) {
       const backend = this.deps.registry.backendFor(replacement);
@@ -726,6 +741,7 @@ export class SandboxLifecycle {
         sessionId: record.sessionId,
         record: replacement,
         client,
+        checkpoint: record.checkpoint,
       });
     }
     return client;
@@ -734,7 +750,7 @@ export class SandboxLifecycle {
   /**
    * The expired → gone transition: reclaim loudly while we still can name
    * the backend, so the next ensureRunning provisions fresh. A checkpointed
-   * session has no sandbox left; only its record and bundle go.
+   * session has no sandbox left; only its record and checkpoint files go.
    */
   private async reclaimExpired(
     record: HibernatedRecord | CheckpointedRecord,
@@ -750,8 +766,8 @@ export class SandboxLifecycle {
   /** Drop the session record and everything derived from it. */
   private async forgetSession(sessionId: string): Promise<void> {
     await this.deps.store.delete(sessionId);
-    // Unconditional: a crash between saving the bundle and writing the
-    // checkpointed record leaves a bundle behind a running record.
+    // Unconditional: a crash between saving the checkpoint files and writing
+    // the checkpointed record leaves them behind a running record.
     await this.deps.checkpoints.remove(sessionId);
     for (const hooks of this.hooks) {
       await hooks.afterRelease?.(sessionId);

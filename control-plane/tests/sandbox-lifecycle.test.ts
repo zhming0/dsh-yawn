@@ -12,7 +12,7 @@ import { ProfileRegistry } from "../src/manager/profile-registry.js";
 import { RunnerAttachment } from "../src/manager/runner-attachment.js";
 import { SessionStore } from "../src/state-store.js";
 import type { SandboxProfile } from "../src/types.js";
-import { FakeBackend, gatewayFor } from "./fakes.js";
+import { FakeBackend, gatewayFor, type FakeRunnerClient } from "./fakes.js";
 
 const PROFILE: SandboxProfile = {
   name: "standard",
@@ -34,6 +34,7 @@ describe("sandbox lifecycle engine", () => {
   async function engineFor(
     store: SessionStore,
     backend: FakeBackend,
+    warn: (message: string) => void = () => {},
   ): Promise<SandboxLifecycle> {
     const broker = new CredentialBroker({
       path: join(directory, "broker.json"),
@@ -57,7 +58,7 @@ describe("sandbox lifecycle engine", () => {
       attachment,
       checkpoints: new CheckpointStore(join(directory, "checkpoints")),
       expiresAfterMs: 60_000,
-      warn: () => {},
+      warn,
     });
   }
 
@@ -233,13 +234,41 @@ describe("sandbox lifecycle engine", () => {
   });
 
   describe("on a backend that cannot hibernate", () => {
-    const BUNDLE = new TextEncoder().encode("# v2 git bundle\nobjects");
+    const encode = (text: string) => new TextEncoder().encode(text);
+    const BUNDLE = encode("# v2 git bundle\nobjects");
     const SAVE_OUTPUT = new Uint8Array([
-      ...new TextEncoder().encode(`feature\n${COMMIT}\n`),
+      ...encode(`feature\n${COMMIT}\n`),
       ...BUNDLE,
     ]);
+    /**
+     * A minimal complete tar: a header block with the POSIX magic, closed by
+     * the two zero blocks the real save script's tar writes.
+     */
+    const TAR = (() => {
+      const tar = new Uint8Array(2048);
+      tar.set(encode("ustar"), 257);
+      return tar;
+    })();
+    const ARTIFACTS_OUTPUT = new Uint8Array([...encode("1\n"), ...TAR]);
+    const NO_ARTIFACTS_OUTPUT = encode("0\n");
+    const artifactsPath = () =>
+      join(directory, "checkpoints", "session-one.artifacts.tar");
     const bundlePath = () =>
       join(directory, "checkpoints", "session-one.bundle");
+
+    /**
+     * Queue one save's replies: the Git script prints first, then the
+     * artifacts script. A save always runs both, so every test that idles a
+     * session on this backend queues two.
+     */
+    function queueSave(
+      client: FakeRunnerClient,
+      git: string | Uint8Array = SAVE_OUTPUT,
+      artifacts: string | Uint8Array = NO_ARTIFACTS_OUTPUT,
+    ): void {
+      client.execReplies.push({ stdout: git });
+      client.execReplies.push({ stdout: artifacts });
+    }
 
     beforeEach(() => {
       backend.capabilities.supportsHibernate = false;
@@ -257,12 +286,16 @@ describe("sandbox lifecycle engine", () => {
       await engine.ensureRunning("session-one", async () => REPOSITORY);
       expect(client.setupRequests).toEqual([{ revision: "v1" }]);
 
-      client.execReplies.push({ stdout: SAVE_OUTPUT });
+      queueSave(client);
       expect(await engine.hibernate("session-one")).toBe(true);
 
       const checkpoint = { commit: COMMIT, branch: "feature" };
-      expect(client.execs).toHaveLength(1);
+      expect(client.execs).toHaveLength(2);
       expect(client.execs[0]?.cwd).toBe("/workspace/repository");
+      expect(client.execs[1]?.cwd).toBe("/workspace/repository");
+      expect(client.execs[1]?.env.DSH_YAWN_ARTIFACTS_DIR).toBe(
+        "/workspace/artifacts",
+      );
       expect(backend.hibernations).toBe(0);
       expect(backend.destroys).toBe(1);
       expect(backend.expiries).toBe(0);
@@ -274,6 +307,7 @@ describe("sandbox lifecycle engine", () => {
       expect(saved.expiresAt).toBeDefined();
       expect(saved).not.toHaveProperty("sandboxId");
       expect(new Uint8Array(await readFile(bundlePath()))).toEqual(BUNDLE);
+      expect(existsSync(artifactsPath())).toBe(false);
 
       // The restore turn is the one that fires the seam, once.
       const restored = await engine.ensureRunning(
@@ -286,11 +320,11 @@ describe("sandbox lifecycle engine", () => {
       expect(backend.provisions).toBe(2);
       // The clone is the usual one; the restore brings the work in afterwards.
       expect(client.setupRequests[1]).toEqual({ revision: "v1" });
-      expect(client.execs).toHaveLength(2);
-      expect(client.execs[1]?.env).toEqual(
+      expect(client.execs).toHaveLength(3);
+      expect(client.execs[2]?.env).toEqual(
         restoreEnvironment(checkpoint, BUNDLE),
       );
-      expect(new Uint8Array(client.execs[1]?.stdin ?? [])).toEqual(BUNDLE);
+      expect(new Uint8Array(client.execs[2]?.stdin ?? [])).toEqual(BUNDLE);
       const resumed = store.get("session-one");
       expect(resumed?.state).toBe("running");
       expect(resumed).not.toHaveProperty("checkpoint");
@@ -305,6 +339,67 @@ describe("sandbox lifecycle engine", () => {
       expect(again).toBe(backend.client);
       expect(restores).toEqual(["session-one"]);
       expect(backend.provisions).toBe(2);
+    });
+
+    it("leaves the artifacts folder behind without failing the checkpoint", async () => {
+      const warnings: string[] = [];
+      engine = await engineFor(store, backend, (message) =>
+        warnings.push(message),
+      );
+      const client = backend.client;
+      await engine.initialize();
+      await engine.ensureRunning("session-one", async () => REPOSITORY);
+      // The artifacts script fails after the Git bundle is already out; the
+      // Git work must still checkpoint.
+      client.execReplies.push({ stdout: SAVE_OUTPUT });
+      client.execReplies.push({ exitCode: 1 });
+
+      expect(await engine.hibernate("session-one")).toBe(true);
+      expect(backend.destroys).toBe(1);
+      expect(existsSync(bundlePath())).toBe(true);
+      expect(existsSync(artifactsPath())).toBe(false);
+      const saved = store.get("session-one");
+      if (saved?.state !== "checkpointed") {
+        throw new Error("expected a checkpointed record");
+      }
+      expect(saved.checkpoint.artifactsDropped).toBe(true);
+      // The warning names the failure, so a save that broke can be told from
+      // a folder that was simply over the cap.
+      expect(warnings).toEqual([
+        expect.stringContaining(
+          "the artifacts folder was not carried with the checkpoint",
+        ),
+      ]);
+      expect(warnings[0]).toContain("failed with exit code 1");
+
+      // The replacement still gets the Git work.
+      await engine.ensureRunning("session-one", async () => REPOSITORY);
+      expect(client.execs).toHaveLength(3);
+      expect(new Uint8Array(client.execs[2]?.stdin ?? [])).toEqual(BUNDLE);
+      expect(store.get("session-one")?.state).toBe("running");
+    });
+
+    it("carries the artifacts folder into the replacement sandbox", async () => {
+      const client = backend.client;
+      await engine.initialize();
+      await engine.ensureRunning("session-one", async () => REPOSITORY);
+      queueSave(client, SAVE_OUTPUT, ARTIFACTS_OUTPUT);
+      await engine.hibernate("session-one");
+
+      const saved = store.get("session-one");
+      if (saved?.state !== "checkpointed") {
+        throw new Error("expected a checkpointed record");
+      }
+      expect(saved.checkpoint.artifactsDropped).toBeUndefined();
+      expect(new Uint8Array(await readFile(artifactsPath()))).toEqual(TAR);
+
+      await engine.ensureRunning("session-one", async () => REPOSITORY);
+      expect(client.execs).toHaveLength(4);
+      expect(client.execs[3]?.env.DSH_YAWN_ARTIFACTS_DIR).toBe(
+        "/workspace/artifacts",
+      );
+      expect(new Uint8Array(client.execs[3]?.stdin ?? [])).toEqual(TAR);
+      expect(existsSync(artifactsPath())).toBe(false);
     });
 
     it("keeps the sandbox when the save fails", async () => {
@@ -324,7 +419,7 @@ describe("sandbox lifecycle engine", () => {
       const client = backend.client;
       await engine.initialize();
       await engine.ensureRunning("session-one", async () => REPOSITORY);
-      client.execReplies.push({ stdout: SAVE_OUTPUT });
+      queueSave(client);
       // The same durable state a host crash between the two steps leaves.
       backend.destroyFailure = new Error("backend unreachable");
       await expect(engine.hibernate("session-one")).rejects.toThrow(
@@ -337,8 +432,8 @@ describe("sandbox lifecycle engine", () => {
       // The next turn restores from the bundle instead of cloning fresh.
       await engine.ensureRunning("session-one", async () => REPOSITORY);
       expect(backend.provisions).toBe(2);
-      expect(client.execs).toHaveLength(2);
-      expect(client.execs[1]?.env.DSH_YAWN_CHECKPOINT_COMMIT).toBe(COMMIT);
+      expect(client.execs).toHaveLength(3);
+      expect(client.execs[2]?.env.DSH_YAWN_CHECKPOINT_COMMIT).toBe(COMMIT);
       expect(store.get("session-one")?.state).toBe("running");
     });
 
@@ -346,11 +441,11 @@ describe("sandbox lifecycle engine", () => {
       const client = backend.client;
       await engine.initialize();
       await engine.ensureRunning("session-one", async () => REPOSITORY);
-      client.execReplies.push({ stdout: SAVE_OUTPUT });
+      queueSave(client);
       await engine.hibernate("session-one");
 
       // How many runner commands had run when each record was written: the
-      // running record must come after the restore (the second exec), so a
+      // running record must come after the restore (the last exec), so a
       // crash mid-restore still finds a checkpointed record and the bundle.
       const writes: Array<{ state: string; execs: number }> = [];
       const set = store.set.bind(store);
@@ -359,7 +454,7 @@ describe("sandbox lifecycle engine", () => {
         await set(record);
       };
       await engine.ensureRunning("session-one", async () => REPOSITORY);
-      expect(writes).toEqual([{ state: "running", execs: 2 }]);
+      expect(writes).toEqual([{ state: "running", execs: 3 }]);
       expect(existsSync(bundlePath())).toBe(false);
     });
 
@@ -373,7 +468,7 @@ describe("sandbox lifecycle engine", () => {
       });
       await engine.initialize();
       await engine.ensureRunning("session-one", async () => REPOSITORY);
-      client.execReplies.push({ stdout: SAVE_OUTPUT });
+      queueSave(client);
       await engine.hibernate("session-one");
       const saved = store.get("session-one");
       if (saved?.state !== "checkpointed") {
@@ -399,16 +494,16 @@ describe("sandbox lifecycle engine", () => {
       await engine.ensureRunning("session-one", async () => REPOSITORY);
       expect(restores).toEqual(["session-one"]);
       expect(backend.provisions).toBe(3);
-      expect(client.execs).toHaveLength(3);
-      expect(client.execs[2]?.env.DSH_YAWN_CHECKPOINT_COMMIT).toBe(COMMIT);
-      expect(new Uint8Array(client.execs[2]?.stdin ?? [])).toEqual(BUNDLE);
+      expect(client.execs).toHaveLength(4);
+      expect(client.execs[3]?.env.DSH_YAWN_CHECKPOINT_COMMIT).toBe(COMMIT);
+      expect(new Uint8Array(client.execs[3]?.stdin ?? [])).toEqual(BUNDLE);
       expect(store.get("session-one")?.state).toBe("running");
     });
 
     it("fails the turn without provisioning when the bundle is gone", async () => {
       await engine.initialize();
       await engine.ensureRunning("session-one", async () => REPOSITORY);
-      backend.client.execReplies.push({ stdout: SAVE_OUTPUT });
+      queueSave(backend.client);
       await engine.hibernate("session-one");
       await rm(bundlePath());
 
@@ -435,11 +530,11 @@ describe("sandbox lifecycle engine", () => {
           );
         },
       });
-      backend.client.execReplies.push({ stdout: `\n${COMMIT}\n` });
+      queueSave(backend.client, `\n${COMMIT}\n`);
       await restarted.hibernate("session-one");
       // Only the checkpoint hook fires, with the reconnected runner.
       expect(seen).toEqual(["checkpoint:true"]);
-      expect(backend.client.execs).toHaveLength(1);
+      expect(backend.client.execs).toHaveLength(2);
       expect(store.get("session-one")).toMatchObject({
         state: "checkpointed",
         checkpoint: { commit: COMMIT },
@@ -463,7 +558,7 @@ describe("sandbox lifecycle engine", () => {
     it("never touches the backend again for a checkpointed record", async () => {
       await engine.initialize();
       await engine.ensureRunning("session-one", async () => REPOSITORY);
-      backend.client.execReplies.push({ stdout: `\n${COMMIT}\n` });
+      queueSave(backend.client, `\n${COMMIT}\n`);
       await engine.hibernate("session-one");
       expect(backend.destroys).toBe(1);
 

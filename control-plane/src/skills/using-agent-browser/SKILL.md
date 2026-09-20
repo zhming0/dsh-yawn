@@ -28,9 +28,7 @@ agent-browser skills get core --full
   `--disable-dev-shm-usage`, because `/dev/shm` is 64 MB. This is only safe in
   a sandbox that is disposable by design; do not load untrusted pages into it.
 - Write screenshots and recordings the user should see to
-  `/workspace/.agents/artifacts/` by absolute path. That directory is on the
-  workspace volume but outside the checkout, so reads reach it, a wake keeps
-  it, and a capture never lands as an untracked file in the repository. A path
+  `/workspace/artifacts/` by absolute path, and keep the folder small. A path
   starting with `.` is read as a CSS selector, so pass the full path.
 - `set viewport` and `set device` change size, DPR, and user agent only: they
   never make `(pointer: coarse)` match, so a `set device` capture is not what

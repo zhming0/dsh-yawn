@@ -2,6 +2,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 
+import type { Checkpoint } from "../checkpoint.js";
 import type { LifecycleHooks } from "./sandbox-lifecycle.js";
 
 /** One sandbox notice: the model-facing text and its one-line transcript account. */
@@ -13,12 +14,21 @@ interface SandboxNotice {
 /**
  * The one-turn notes the model sees when ensureRunning brought its session
  * back in an environment it did not last see: a checkpoint restore, a wake
- * that built a new machine, or a wake that reused the old one.
+ * that built a new machine, or a wake that reused the old one. The environment
+ * section carries the rule — the artifacts folder survives every sleep — so a
+ * note states what happened this time, and only a restore that had to leave
+ * the folder behind names an exception to that rule.
  */
 const RESTORE_NOTICE: SandboxNotice = {
-  text: "This sandbox was recreated from a checkpoint. Your Git changes and commits are back, but anything not tracked by Git is gone: installed tools, ignored files, and files outside the repository. Previously staged changes are now unstaged. Re-run setup steps you need before continuing.",
+  text: "This sandbox was recreated. Your Git changes and commits are back. Installed tools, ignored files, and everything else outside the repository are gone. Previously staged changes are now unstaged. Re-run setup steps you need before continuing.",
   summary: "Sandbox restored from a checkpoint",
 };
+const RESTORE_NOTICE_ARTIFACTS_DROPPED = (
+  artifacts: string,
+): SandboxNotice => ({
+  text: `This sandbox was recreated. Your Git changes and commits are back, but the artifacts folder could not be brought back, so the files in ${artifacts} are gone. Installed tools, ignored files, and everything else outside the repository are gone too. Previously staged changes are now unstaged. Re-run setup steps you need before continuing.`,
+  summary: "Sandbox restored from a checkpoint without artifacts",
+});
 const WAKE_NOTICE: SandboxNotice = {
   text: "This sandbox was suspended and woke on a newly created machine. Files under /workspace survived, including your home directory, but running processes, /tmp, and anything installed outside /workspace are gone. Re-create what you need before continuing.",
   summary: "Sandbox woke from hibernation",
@@ -32,6 +42,8 @@ const SANDBOX_NOTICE_SOURCE = "@zhming0/dsh-yawn:sandbox";
 export interface SandboxNoticesDependencies {
   /** The root session whose sandbox an agent's work shares. */
   rootSessionId(agent: Agent): string;
+  /** The session's artifacts folder, for the notice that had to drop it. */
+  artifactsDirectory(): string;
 }
 
 /**
@@ -71,9 +83,23 @@ export class SandboxNotices implements LifecycleHooks {
     });
   }
 
-  /** A checkpoint restore completed; the next prompt says what survived. */
-  async afterRestore({ sessionId }: { sessionId: string }): Promise<void> {
-    this.pending.set(sessionId, RESTORE_NOTICE);
+  /**
+   * A checkpoint restore completed; the next prompt says what survived,
+   * including whether the artifacts folder had to be left behind.
+   */
+  async afterRestore({
+    sessionId,
+    checkpoint,
+  }: {
+    sessionId: string;
+    checkpoint: Checkpoint;
+  }): Promise<void> {
+    this.pending.set(
+      sessionId,
+      checkpoint.artifactsDropped === true
+        ? RESTORE_NOTICE_ARTIFACTS_DROPPED(this.deps.artifactsDirectory())
+        : RESTORE_NOTICE,
+    );
   }
 
   /** A hibernated sandbox woke; its backend says what the machine kept. */

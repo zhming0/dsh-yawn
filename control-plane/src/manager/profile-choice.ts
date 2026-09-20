@@ -58,6 +58,17 @@ export class ProfileChoice {
     return profile;
   }
 
+  /**
+   * The profile a session runs under, or would run under before it has a
+   * sandbox, when one is configured. Used for model-facing facts about the
+   * sandbox, so it never throws.
+   */
+  current(sessionId: string): SandboxProfile | undefined {
+    const record = this.store.get(sessionId);
+    const name = record?.profile ?? this.pendingName(sessionId);
+    return name === undefined ? undefined : this.settings.profiles[name];
+  }
+
   /** The profile name a new sandbox would try to use, if any. */
   private pendingName(sessionId: string): string | undefined {
     return this.store.pendingProfile(sessionId) ?? this.settings.defaultProfile;

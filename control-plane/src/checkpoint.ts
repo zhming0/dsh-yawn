@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { artifactsDirectory } from "./artifacts.js";
 import type { RunnerClient } from "./runner-client.js";
 
 /**
@@ -8,13 +9,21 @@ import type { RunnerClient } from "./runner-client.js";
  * without hibernation (Buildkite) loses the whole machine on idle, so the
  * manager commits the working tree inside the sandbox, pulls the commits the
  * repository's remote does not have out as a git bundle, keeps that bundle on
- * the host, and unpacks it into the next sandbox.
+ * the host, and unpacks it into the next sandbox. It also carries the
+ * artifacts folder, which lives outside the checkout and so cannot ride the
+ * bundle.
  */
 export interface Checkpoint {
   /** HEAD when the sandbox was released, after the checkpoint commit if any. */
   commit: string;
   /** Branch the session had checked out, absent when HEAD was detached. */
   branch?: string;
+  /**
+   * The artifacts folder was left behind: it was over the transfer cap or its
+   * save failed. The Git work still came out, and the restore notice tells the
+   * model the folder did not.
+   */
+  artifactsDropped?: boolean;
 }
 
 /**
@@ -23,6 +32,14 @@ export interface Checkpoint {
  * far below it; the cap bounds host memory and disk for the pathological one.
  */
 export const MAX_BUNDLE_BYTES = 64 * 1024 * 1024;
+
+/**
+ * An artifacts tar bigger than this is left behind instead of carried. The
+ * checkpoint rests on the Git bundle, so oversized media must not hold the
+ * sandbox, and the build behind it, open; the restore notice says the folder
+ * did not come back.
+ */
+export const MAX_ARTIFACTS_BYTES = 64 * 1024 * 1024;
 
 const COMMIT_MESSAGE = "dsh: checkpoint before the sandbox is released";
 
@@ -65,6 +82,31 @@ fi
 `;
 
 /**
+ * Runs in the sandbox after the Git save. Prints `1` and a tar of the
+ * artifacts folder, or `0` when there is nothing to carry. The folder is
+ * outside the checkout, so the bundle cannot reach it and this second stream
+ * is what makes it survive the checkpoint.
+ */
+export const SAVE_ARTIFACTS_SCRIPT = `set -eu
+artifacts="$DSH_YAWN_ARTIFACTS_DIR"
+if [ -d "$artifacts" ] && [ -n "$(ls -A "$artifacts")" ]; then
+  printf '1\\n'
+  tar -C "$artifacts" -cf - .
+else
+  printf '0\\n'
+fi
+`;
+
+/**
+ * Runs in the new sandbox after the Git restore, with the tar on stdin. The
+ * folder was outside the checkout, so the fresh machine does not have it yet.
+ */
+export const RESTORE_ARTIFACTS_SCRIPT = `set -eu
+mkdir -p "$DSH_YAWN_ARTIFACTS_DIR"
+tar -x -C "$DSH_YAWN_ARTIFACTS_DIR"
+`;
+
+/**
  * Runs in the new sandbox after setup, with the bundle on stdin. Unpacks the
  * commits, puts the session back on its own branch (or a detached HEAD) at
  * the checkpoint, and turns the checkpoint commit back into uncommitted
@@ -88,15 +130,27 @@ if is_checkpoint_commit; then
 fi
 `;
 
-export interface SavedCheckpoint {
+/** The Git half of a checkpoint: what the first save script prints. */
+export interface GitCheckpoint {
   checkpoint: Checkpoint;
   /** Git bundle bytes; empty when the remote already has the commit. */
   bundle: Uint8Array;
 }
 
+export interface SavedCheckpoint extends GitCheckpoint {
+  /** Tar of the artifacts folder; empty when there was nothing or it was dropped. */
+  artifacts: Uint8Array;
+  /**
+   * Why the folder was left behind, when it was. The checkpoint still
+   * succeeds; the host warning carries this so a failure can be told from a
+   * folder that was simply over the cap.
+   */
+  artifactsError?: string;
+}
+
 const BUNDLE_HEADER = /^# v\d+ git bundle\n/;
 
-export function parseSaveOutput(output: Uint8Array): SavedCheckpoint {
+export function parseSaveOutput(output: Uint8Array): GitCheckpoint {
   const buffer = Buffer.from(
     output.buffer,
     output.byteOffset,
@@ -123,6 +177,66 @@ export function parseSaveOutput(output: Uint8Array): SavedCheckpoint {
   };
 }
 
+/** Offset of the POSIX tar magic in a tar header. */
+const TAR_MAGIC_OFFSET = 257;
+/** A tar is a whole number of these, closed by two zero blocks. */
+const TAR_BLOCK_BYTES = 512;
+const TAR_END_BLOCKS = 2;
+
+/**
+ * The artifacts save script's output: a `0` line when the folder was empty,
+ * or a `1` line followed by a tar. A stream cut short or replaced by something
+ * else is rejected here, because a tar that fails to unpack would fail the
+ * restore every time the session is woken.
+ */
+export function parseArtifactsOutput(output: Uint8Array): Uint8Array {
+  const buffer = Buffer.from(
+    output.buffer,
+    output.byteOffset,
+    output.byteLength,
+  );
+  const first = buffer.indexOf("\n");
+  const header = first === -1 ? "" : buffer.subarray(0, first).toString();
+  if (header === "0") {
+    return new Uint8Array();
+  }
+  const tar = buffer.subarray(first + 1);
+  if (header !== "1" || !isCompleteTar(tar)) {
+    throw new Error(
+      `unexpected artifacts output: ${JSON.stringify(buffer.subarray(0, 120).toString("latin1"))}`,
+    );
+  }
+  return new Uint8Array(tar);
+}
+
+/**
+ * Whether the tar the save script wrote arrived whole: the POSIX magic in its
+ * first header, whole 512-byte blocks, and the two zero blocks that close an
+ * archive. Anything the output cap or a broken stream cut short fails here, so
+ * it is left behind at save time instead of stored to fail the restore.
+ */
+function isCompleteTar(tar: Buffer): boolean {
+  if (tar.length < TAR_BLOCK_BYTES * TAR_END_BLOCKS) {
+    return false;
+  }
+  if (tar.length % TAR_BLOCK_BYTES !== 0) {
+    return false;
+  }
+  if (
+    tar.subarray(TAR_MAGIC_OFFSET, TAR_MAGIC_OFFSET + 5).toString("latin1") !==
+    "ustar"
+  ) {
+    return false;
+  }
+  const trailer = tar.subarray(tar.length - TAR_BLOCK_BYTES * TAR_END_BLOCKS);
+  for (const byte of trailer) {
+    if (byte !== 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function restoreEnvironment(
   checkpoint: Checkpoint,
   bundle: Uint8Array,
@@ -134,7 +248,12 @@ export function restoreEnvironment(
   };
 }
 
-/** Commit the session's working tree in the still-running sandbox and pull the bundle out. */
+/**
+ * Commit the session's working tree in the still-running sandbox and pull the
+ * bundle and the artifacts folder out. A failed or oversized artifacts save
+ * does not fail the checkpoint: the Git work is what must not be lost, so the
+ * folder is left behind and recorded as dropped instead.
+ */
 export async function saveCheckpoint(
   client: RunnerClient,
   workspace: string,
@@ -144,42 +263,109 @@ export async function saveCheckpoint(
     stdin: new Uint8Array(),
     stdoutMaxBytes: MAX_BUNDLE_BYTES,
   });
-  return parseSaveOutput(output);
+  const git = parseSaveOutput(output);
+  const artifacts = await saveArtifacts(client, workspace);
+  if ("error" in artifacts) {
+    return {
+      checkpoint: { ...git.checkpoint, artifactsDropped: true },
+      bundle: git.bundle,
+      artifacts: new Uint8Array(),
+      artifactsError: artifacts.error,
+    };
+  }
+  return { ...git, artifacts: artifacts.tar };
 }
 
-/** Turn a fresh clone back into the session's tree. */
+/** The artifacts tar, or the reason the folder could not be carried. */
+async function saveArtifacts(
+  client: RunnerClient,
+  workspace: string,
+): Promise<{ tar: Uint8Array } | { error: string }> {
+  try {
+    const output = await runScript(client, workspace, SAVE_ARTIFACTS_SCRIPT, {
+      env: { DSH_YAWN_ARTIFACTS_DIR: artifactsDirectory(workspace) },
+      stdin: new Uint8Array(),
+      stdoutMaxBytes: MAX_ARTIFACTS_BYTES,
+    });
+    return { tar: parseArtifactsOutput(output) };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * Turn a fresh clone back into the session's tree, then put the artifacts
+ * folder back into place.
+ */
 export async function restoreCheckpoint(
   client: RunnerClient,
   workspace: string,
   checkpoint: Checkpoint,
   bundle: Uint8Array,
+  artifacts: Uint8Array,
 ): Promise<void> {
   await runScript(client, workspace, RESTORE_SCRIPT, {
     env: restoreEnvironment(checkpoint, bundle),
     stdin: bundle,
     stdoutMaxBytes: 4096,
   });
+  if (artifacts.length > 0) {
+    await runScript(client, workspace, RESTORE_ARTIFACTS_SCRIPT, {
+      env: { DSH_YAWN_ARTIFACTS_DIR: artifactsDirectory(workspace) },
+      stdin: artifacts,
+      stdoutMaxBytes: 4096,
+    });
+  }
 }
 
 /**
- * One bundle file per checkpointed session, next to the file index in the
- * host's state directory. Same trust domain as a hibernated sandbox's disk:
- * whatever the working tree held, ignored files aside, is in here.
+ * One bundle and, when the session had one, one artifacts tar per
+ * checkpointed session, next to the file index in the host's state directory.
+ * Same trust domain as a hibernated sandbox's disk: whatever the working tree
+ * or the artifacts folder held, ignored files aside, is in here.
  */
 export class CheckpointStore {
   constructor(private readonly directory: string) {}
 
-  async save(sessionId: string, bundle: Uint8Array): Promise<void> {
+  async save(
+    sessionId: string,
+    bundle: Uint8Array,
+    artifacts: Uint8Array,
+  ): Promise<void> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
-    const path = this.pathFor(sessionId);
-    const temporary = `${path}.${process.pid}.tmp`;
-    await writeFile(temporary, bundle, { mode: 0o600 });
-    await rename(temporary, path);
+    await this.write(this.bundlePath(sessionId), bundle);
+    if (artifacts.length > 0) {
+      await this.write(this.artifactsPath(sessionId), artifacts);
+    } else {
+      // A save retried after a crash runs while the record is still running,
+      // so a previous tar can be on disk. Removing it keeps the pair matching
+      // the record: otherwise the restore unpacks files from an older sandbox
+      // while the notice says the folder came back.
+      await rm(this.artifactsPath(sessionId), { force: true });
+    }
   }
 
   async load(sessionId: string): Promise<Uint8Array | undefined> {
+    return this.read(this.bundlePath(sessionId));
+  }
+
+  /** The artifacts tar, absent when the folder was empty or left behind. */
+  async loadArtifacts(sessionId: string): Promise<Uint8Array | undefined> {
+    return this.read(this.artifactsPath(sessionId));
+  }
+
+  async remove(sessionId: string): Promise<void> {
+    await Promise.all([
+      rm(this.bundlePath(sessionId), { force: true }),
+      rm(this.artifactsPath(sessionId), { force: true }),
+    ]);
+  }
+
+  private async read(path: string): Promise<Uint8Array | undefined> {
     try {
-      return await readFile(this.pathFor(sessionId));
+      return await readFile(path);
     } catch (error) {
       if (isNotFound(error)) {
         return undefined;
@@ -188,12 +374,21 @@ export class CheckpointStore {
     }
   }
 
-  async remove(sessionId: string): Promise<void> {
-    await rm(this.pathFor(sessionId), { force: true });
+  private async write(path: string, bytes: Uint8Array): Promise<void> {
+    const temporary = `${path}.${process.pid}.tmp`;
+    await writeFile(temporary, bytes, { mode: 0o600 });
+    await rename(temporary, path);
   }
 
-  private pathFor(sessionId: string): string {
+  private bundlePath(sessionId: string): string {
     return join(this.directory, `${encodeURIComponent(sessionId)}.bundle`);
+  }
+
+  private artifactsPath(sessionId: string): string {
+    return join(
+      this.directory,
+      `${encodeURIComponent(sessionId)}.artifacts.tar`,
+    );
   }
 }
 
