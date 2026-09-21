@@ -117,7 +117,6 @@ COPY --from=build /dsh-yawn-runner /usr/local/bin/dsh-yawn-runner
 ENV HOME=/workspace/home \
     NPM_CONFIG_PREFIX=/workspace/home/.local \
     PATH=/workspace/home/.local/share/mise/shims:/opt/mise/installs/node/${NODE_VERSION}/bin:$PATH
-USER sandbox
 WORKDIR /workspace
 EXPOSE 8080
 

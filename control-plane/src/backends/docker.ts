@@ -45,6 +45,8 @@ export class DockerBackend implements SandboxBackend {
       const { stdout } = await this.command([
         "run",
         "--detach",
+        "--user",
+        "1000:1000",
         "--name",
         sandboxId,
         "--label",
