@@ -134,7 +134,8 @@ has the YAML and the setup steps. What matters to the backend:
 - `-e VAR` with no value copies that variable from the job environment, which
   is how `DSH_YAWN_SANDBOX_ID`, `DSH_YAWN_CONTROL_PLANE_URL`, and
   `DSH_YAWN_REGISTRATION_TOKEN` reach the runner.
-  The image's entrypoint is `dsh-yawn-runner`.
+  The image has no entrypoint and defaults to `CMD ["dsh-yawn-runner"]`.
+  Passing a command after the image name replaces that default.
 - The control plane sets `DSH_YAWN_RUNNER_IMAGE` to the tag matching its own version, so
   the pipeline never pins an image and cannot drift from the control plane.
 - `agents.queue` picks the fleet, and it has to be set in the pipeline: steps
