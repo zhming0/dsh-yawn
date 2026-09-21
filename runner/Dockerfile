@@ -124,4 +124,4 @@ EXPOSE 8080
 # GHCR links the image to the GitHub repository this label names.
 LABEL org.opencontainers.image.source="https://github.com/zhming0/dsh-yawn"
 
-ENTRYPOINT ["dsh-yawn-runner"]
+CMD ["dsh-yawn-runner"]
