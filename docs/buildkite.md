@@ -131,16 +131,23 @@ The pipeline is one command step that runs the runner image the control plane na
 [`installations-buildkite.md`](installations-buildkite.md#create-the-pipeline)
 has the YAML and the setup steps. What matters to the backend:
 
-- `-e VAR` with no value copies that variable from the job environment, which
-  is how `DSH_YAWN_SANDBOX_ID`, `DSH_YAWN_CONTROL_PLANE_URL`, and
-  `DSH_YAWN_REGISTRATION_TOKEN` reach the runner.
+- Hosted Linux agents use `image: "$DSH_YAWN_RUNNER_IMAGE"`, resolved from
+  the build environment. Startup hooks run as root, then `runuser -u sandbox`
+  launches the runner as UID 1000 with `HOME=/workspace/home`, retaining the
+  `DSH_YAWN_*` job variables. There is no nested runner container.
+- Self-hosted agents use `docker run --user 1000:1000`. Its `-e VAR` flags
+  copy `DSH_YAWN_SANDBOX_ID`, `DSH_YAWN_CONTROL_PLANE_URL`, and
+  `DSH_YAWN_REGISTRATION_TOKEN` from the job environment into the container.
   The image has no entrypoint and defaults to `CMD ["dsh-yawn-runner"]`.
-  Passing a command after the image name replaces that default.
+- The image leaves `HOME` unset so the container runtime selects the starting
+  user's home: `/root` for root, or `/workspace/home` for the sandbox account
+  (UID 1000). This lets root-run hosted agent hooks create Docker credentials
+  under `/root/.docker` rather than the sandbox account's home.
 - The control plane sets `DSH_YAWN_RUNNER_IMAGE` to the tag matching its own version, so
   the pipeline never pins an image and cannot drift from the control plane.
-- `agents.queue` picks the fleet, and it has to be set in the pipeline: steps
-  defined in the editor interpolate only a fixed list of `BUILDKITE_*`
-  variables, before the build exists. Two fleets mean two pipelines.
+- `agents.queue` explicitly picks the fleet in the pipeline. Two fleets mean
+  two pipelines; do not assume the hosted `image` interpolation behavior
+  applies to queue selection.
 - `checkout: { skip: true }` stops the agent from cloning the pipeline's own
   repository. The runner clones the session's repository itself, into
   `/workspace/repository` inside the container, with credentials the control plane

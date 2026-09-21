@@ -105,17 +105,18 @@ RUN set -eux; \
 COPY install-browser.sh /usr/local/bin/install-browser
 RUN chmod 0755 /usr/local/bin/install-browser && sh -n /usr/local/bin/install-browser
 COPY --from=build /dsh-yawn-runner /usr/local/bin/dsh-yawn-runner
-# $HOME lives on the workspace volume so home files and caches survive a
+# The sandbox account's home lives on the workspace volume so files and caches survive a
 # Kubernetes wake. A sandbox mounts its workspace volume over /workspace, which
 # hides this image's copy, so the runner recreates the directory at startup.
+# Leave HOME unset so the runtime uses the starting user's passwd entry:
+# /workspace/home for sandbox, /root for root (including hosted agent hooks).
 # npm's default global prefix is the root-owned Node install, where
 # `npm install -g` fails with EACCES; $HOME/.local is writable, is on PATH,
 # and is on the workspace volume, so global installs work and survive a wake.
 # mise keeps its default data directory under $HOME too, so no override is set.
 # The agent-browser CLI sits outside both $HOME and /workspace for the same
 # volume reason, and is linked onto PATH under a name that outlives the mount.
-ENV HOME=/workspace/home \
-    NPM_CONFIG_PREFIX=/workspace/home/.local \
+ENV NPM_CONFIG_PREFIX=/workspace/home/.local \
     PATH=/workspace/home/.local/share/mise/shims:/opt/mise/installs/node/${NODE_VERSION}/bin:$PATH
 WORKDIR /workspace
 EXPOSE 8080
