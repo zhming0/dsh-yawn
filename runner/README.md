@@ -28,8 +28,11 @@ own `.git` directory so it never appears as an untracked file. Keeping
 the checkout beneath the persistent volume root prevents filesystem metadata
 such as `lost+found` from entering the repository. The file APIs operate with
 the container user's permissions; they are not a filesystem sandbox. Run the
-image as its non-root `sandbox` user and isolate its filesystem/network at the
-container platform boundary.
+image as its non-root `sandbox` user (UID/GID 1000) and isolate its
+filesystem/network at the container platform boundary. The image leaves `USER`
+unset for Buildkite hosted agents, so a plain `docker run` defaults to root.
+The Docker backend and documented Buildkite command pass `--user 1000:1000`;
+the Kubernetes template sets the identity through its security context.
 
 The home directory is `/workspace/home`, also on the workspace volume, so
 package caches, tool configuration, and anything installed under `$HOME`
@@ -43,8 +46,8 @@ Global installs need no root: `NPM_CONFIG_PREFIX` sends `npm install -g` to
 default data directory at `$HOME/.local/share/mise`. A `/etc/profile.d` script
 puts those directories back on `PATH` for login shells, which Debian's
 `/etc/profile` would otherwise reset. The image has no `sudo` and no writable
-system directory, so `apt-get` and other system package managers cannot install
-anything.
+system directory for `sandbox`, so `apt-get` and other system package managers
+cannot install anything when running as that user.
 
 `GET /health` on `ADDR` (default `:8080`) is an unauthenticated
 process-readiness probe for the kubelet; it is the only listener the runner

@@ -87,6 +87,12 @@ if (args[0] === "inspect") process.stdout.write(JSON.stringify([{
       "inspect",
       "start",
     ]);
+    expect(commands[0]?.slice(0, 4)).toEqual([
+      "run",
+      "--detach",
+      "--user",
+      "1000:1000",
+    ]);
     expect(commands[0]).toContain(
       "DSH_YAWN_CONTROL_PLANE_URL=ws://host.docker.internal:8081/tunnel",
     );

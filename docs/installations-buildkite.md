@@ -27,7 +27,7 @@ steps: the pipeline's own definition is the whole contract.
 steps:
   - label: dsh sandbox
     command: >-
-      docker run --rm
+      docker run --rm --user 1000:1000
       -e DSH_YAWN_SANDBOX_ID -e DSH_YAWN_CONTROL_PLANE_URL -e DSH_YAWN_REGISTRATION_TOKEN
       "$DSH_YAWN_RUNNER_IMAGE"
     checkout:
