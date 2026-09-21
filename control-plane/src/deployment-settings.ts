@@ -4,7 +4,12 @@ import { join } from "node:path";
 
 import { parse as parseYaml } from "yaml";
 
-import { parseDeploymentSettings, type RuntimeConfig } from "./config.js";
+import {
+  parseDeploymentPreview,
+  parseDeploymentSettings,
+  type DeploymentPreview,
+  type RuntimeConfig,
+} from "./config.js";
 
 /**
  * Where a deployment mounts its sandbox settings: one ordinary file, never a
@@ -25,16 +30,33 @@ export const DEPLOYMENT_SETTINGS_PATH = "/etc/dsh-yawn/sandbox-settings.yaml";
 export function readDeploymentSettings(
   path = DEPLOYMENT_SETTINGS_PATH,
 ): RuntimeConfig {
-  let raw: string;
+  return parseDeploymentSettings(readDocument(path), path);
+}
+
+/**
+ * Read the deployment's preview section — the domain its Ingress answers
+ * for, and the cookie names the relay strips — from the same document.
+ *
+ * @param path - Document path; defaults to the chart's mount.
+ * @returns The section as written; an absent file or section means the
+ *   deployment configures no previews.
+ */
+export function readDeploymentPreview(
+  path = DEPLOYMENT_SETTINGS_PATH,
+): DeploymentPreview {
+  return parseDeploymentPreview(readDocument(path), path);
+}
+
+/** The document's text, or undefined when the file is absent. */
+function readDocument(path: string): string | undefined {
   try {
-    raw = readFileSync(path, "utf8");
+    return readFileSync(path, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return {};
+      return undefined;
     }
     throw error;
   }
-  return parseDeploymentSettings(raw, path);
 }
 
 /** The Harness home, the directory holding the legacy settings document. */
