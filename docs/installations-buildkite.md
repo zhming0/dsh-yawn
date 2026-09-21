@@ -11,17 +11,41 @@ Install the [control plane](installations-control-plane.md) first.
 
 - a Buildkite organization and permission to create a pipeline, an
   [API access token](https://buildkite.com/docs/apis/managing-api-tokens) with
-  the `read_builds` and `write_builds` scopes, and agents that can run Docker.
-  Docker is present on hosted Linux agents and on any self-hosted agent you
-  give it to.
+  the `read_builds` and `write_builds` scopes, and either hosted Linux agents
+  or self-hosted agents that can run Docker.
 - the tunnel reachable from wherever those agents run. Agents are never on the
   host machine, so an in-cluster address will not do; see
   [Reaching the tunnel](#reaching-the-tunnel) below.
 
 ## Create the pipeline
 
-Create a pipeline with this one command step. The control plane never uploads
-steps: the pipeline's own definition is the whole contract.
+For hosted Linux agents, create a pipeline with this one command step. The
+control plane never uploads steps: the pipeline's own definition is the whole
+contract.
+
+```yaml
+steps:
+  - label: dsh sandbox
+    image: "$DSH_YAWN_RUNNER_IMAGE"
+    command: |
+      exec runuser -u sandbox -- sh -c 'cd /workspace && exec dsh-yawn-runner'
+    checkout:
+      skip: true
+    secrets:
+      DSH_YAWN_REGISTRATION_TOKEN: dsh_registration_token
+    timeout_in_minutes: 240
+    agents:
+      queue: hosted-amd64-small
+```
+
+Set `queue` to your hosted Linux queue. Hosted agents resolve `image` from the
+build environment. The agent and its startup hooks run as root with
+`HOME=/root`; the command then launches the runner as `sandbox` (UID 1000)
+with `HOME=/workspace/home`. Do not add `--login` or `--preserve-environment`
+to `runuser`: the command needs to retain the `DSH_YAWN_*` job variables while
+resetting `HOME` for the sandbox account.
+
+For self-hosted agents, use Docker instead:
 
 ```yaml
 steps:
@@ -36,7 +60,7 @@ steps:
       DSH_YAWN_REGISTRATION_TOKEN: dsh_registration_token
     timeout_in_minutes: 240
     agents:
-      queue: hosted
+      queue: self-hosted
 ```
 
 - `DSH_YAWN_RUNNER_IMAGE`, `DSH_YAWN_SANDBOX_ID`, and `DSH_YAWN_CONTROL_PLANE_URL` come from the build
@@ -46,10 +70,10 @@ steps:
   into the job environment. Create `dsh_registration_token` with the same value
   the control plane holds — the `dsh-yawn-registration-token` Secret in the cluster — so the
   runner can register on the tunnel. This needs agent 3.106.0 or later.
-- `agents.queue` has to be set here rather than from the build environment:
-  pipeline steps interpolate only a fixed list of `BUILDKITE_*` variables,
-  before the build exists. To offer two fleets, create two pipelines and point
-  two profiles at them.
+- `agents.queue` selects your fleet. Keep it explicit in the pipeline; the
+  hosted `image` behavior does not imply that other step attributes resolve
+  arbitrary build variables. To offer two fleets, create two pipelines and
+  point two profiles at them.
 - `timeout_in_minutes` bounds a sandbox's life even if the control plane never cancels
   it; the control plane cancels on idle. Buildkite applies its own ceilings on top.
 - The pipeline should not trigger builds on its own. Turn off its repository
