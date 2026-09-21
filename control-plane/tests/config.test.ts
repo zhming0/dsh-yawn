@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   configSchema,
+  mergePreviewBase,
+  parseDeploymentPreview,
   parseDeploymentSettings,
   readSetting,
   resolveBootConfig,
@@ -131,23 +133,36 @@ describe("sandbox provider settings", () => {
       domain: undefined,
       port: 8082,
       bind: "0.0.0.0",
+      authCookieNames: [],
     });
     expect(
       resolveConfig({ preview: { domain: "  " }, profiles }).preview,
-    ).toEqual({ domain: undefined, port: 8082, bind: "0.0.0.0" });
+    ).toEqual({
+      domain: undefined,
+      port: 8082,
+      bind: "0.0.0.0",
+      authCookieNames: [],
+    });
 
     // A configured domain is normalized once, here: both sides match the
-    // lowercased, trimmed spelling against the Host header.
+    // lowercased, trimmed spelling against the Host header. The strip list
+    // trims and drops empties alongside it.
     expect(
       resolveConfig({
         preview: {
           domain: " Sandbox.Example.COM ",
           port: 9000,
           bind: "127.0.0.1",
+          authCookieNames: [" _auth ", "", "session"],
         },
         profiles,
       }).preview,
-    ).toEqual({ domain: "sandbox.example.com", port: 9000, bind: "127.0.0.1" });
+    ).toEqual({
+      domain: "sandbox.example.com",
+      port: 9000,
+      bind: "127.0.0.1",
+      authCookieNames: ["_auth", "session"],
+    });
 
     // A scheme, a path, a wildcard, or an empty label would build host names
     // no browser ever sends, so boot fails rather than never matching.
@@ -276,5 +291,42 @@ sandboxManager:
         '{"sandboxManager":{"profiles":{"x":{"backend":"nope"}}}}',
       ),
     ).toThrow("does not match the sandbox-manager settings");
+  });
+});
+
+describe("deployment preview section", () => {
+  it("parses the document's preview section and ignores its absence", () => {
+    expect(parseDeploymentPreview(undefined)).toEqual({});
+    expect(parseDeploymentPreview("sandboxManager: {}")).toEqual({});
+    expect(
+      parseDeploymentPreview(
+        "sandboxManager: {}\npreview:\n  domain: sandbox.example.com\n  authCookieNames: [_auth]\n",
+      ),
+    ).toEqual({ domain: "sandbox.example.com", authCookieNames: ["_auth"] });
+    expect(() => parseDeploymentPreview("preview: [not, a, map]")).toThrow(
+      "preview section must be a YAML mapping",
+    );
+    // Unknown fields pass through unread, like the runtime section's
+    // schema: a newer chart may carry fields this image does not read yet.
+    expect(
+      parseDeploymentPreview("preview:\n  domain: ok\n  extra: 1\n"),
+    ).toEqual({ domain: "ok", authCookieNames: [], extra: 1 });
+  });
+
+  it("merges the deployment beneath the row config, field by field", () => {
+    const base = { domain: "dep.example.com", authCookieNames: ["_auth"] };
+    // Nothing on either side: previews stay off.
+    expect(mergePreviewBase(undefined, {})).toBeUndefined();
+    // Only the deployment: its values stand.
+    expect(mergePreviewBase(undefined, base)).toEqual(base);
+    // Only the row: untouched.
+    expect(
+      mergePreviewBase({ domain: "row.example.com", port: 9000 }, {}),
+    ).toEqual({ domain: "row.example.com", port: 9000 });
+    // Both: the row wins per field, the deployment fills the rest.
+    expect(mergePreviewBase({ domain: "row.example.com" }, base)).toEqual({
+      domain: "row.example.com",
+      authCookieNames: ["_auth"],
+    });
   });
 });

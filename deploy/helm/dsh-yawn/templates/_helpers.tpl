@@ -87,6 +87,17 @@ installed. */}}
 {{- end -}}
 sandboxManager:
 {{ pick $managed "profiles" "defaultProfile" "idleMs" "expiresAfterMs" | toYaml | indent 2 }}
+{{- if .Values.preview.domain }}
+{{- /* Previews are deployment infrastructure, not an agent setting: the
+domain and the strip list arrive here rather than in the Web-editable
+profile patch. */}}
+preview:
+  domain: {{ .Values.preview.domain | quote }}
+  {{- with .Values.preview.authCookieNames }}
+  authCookieNames:
+{{ toYaml . | indent 4 }}
+  {{- end }}
+{{- end }}
 {{- end }}
 
 {{/* Fails the render on combinations that cannot work, so `helm install`

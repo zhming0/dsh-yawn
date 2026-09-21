@@ -46,7 +46,22 @@ Decided against, in discussion:
   sandbox-reachable port.
 - **A token or capability URL.** One control plane is one trust domain, so a
   per-sandbox token gates nothing while inviting the URL to be treated as
-  shareable. Previews sit behind the same proxy as the UI.
+  shareable. Previews sit behind the operator's authenticating front.
+- **A third-party tunnel run inside the sandbox** (ngrok, `cloudflared`).
+  Moving bytes is the cheap part and already rides the runner's one
+  connection. What a sandbox-side tunnel cannot do is the part only the
+  control plane knows: map a sandbox to its runner, wake a hibernated
+  sandbox on a request, count preview traffic as activity, and survive a
+  wake, which kills every process the session started. It would also be a
+  second channel out of the sandbox, with its own credential inside it.
+- **The chart authenticating previews itself.** A first exposure cut added a
+  second oauth2-proxy for the wildcard host, since one instance routes
+  upstreams by path, not host. It worked, but it made the chart own a
+  wildcard OAuth callback, a domain-scoped cookie, and guards keeping both
+  in sync with the strip list: edge authentication, which operators already
+  run (an authenticating Ingress, Cloudflare Access, a VPN). The chart stops
+  at the Service; the control plane keeps only the cookie strip, because the
+  strip is the one rule no front applies for us.
 - **A second runner→host channel for proxied bytes.** One runner-initiated
   connection carries everything; HTTP/2 multiplexes the preview streams.
 - **An in-app preview tab.** The first cut framed previews in a Web Preview
@@ -104,45 +119,46 @@ Preview traffic counts as session activity, so a sandbox receiving preview
 requests does not hibernate under its viewer, and opening a preview wakes a
 hibernated one.
 
-**Kubernetes and auth.** The chart gains the container port, a `ClusterIP`
-Service (a sibling of the tunnel Service), and oauth2-proxy configuration to
-authenticate the preview domain with its own cookie. Operator setup, which
-the chart documents but does not own: a wildcard DNS record, a wildcard
-certificate (cert-manager DNS-01), and an Ingress rule for
-`*.sandbox.<domain>` routed to the preview Service with the same long read
-and send timeouts the UI needs. That Ingress also serves the UI, on the same
-scheme and default port: a preview URL carries no port, so the browser asks
-for whatever the UI's own page used. Previews open in the user's own browser,
-as top-level pages: that is the most robust path through the authenticating
-proxy (a first-party OAuth roundtrip on every browser, no framed third-party
-cookie at all), which is also why dsh's in-app sidebar Browser is left
-disabled. An install that wants in-app tabs may enable it; previews are its
-own origins either way. Putting previews on a registrable domain separate
-from the UI's is recommended: it keeps the proxy's cookies off the UI's site
-entirely and removes same-site request surfaces. The sandbox
-NetworkPolicy needs no change — egress to the control plane pod is allowed
-on the tunnel port only, so sandboxes cannot reach the preview listener
-directly.
+**Kubernetes and auth.** The chart gains the container port and a
+`ClusterIP` Service (a sibling of the tunnel Service), and nothing in front
+of it. Operator setup, which the chart documents but does not own: a
+wildcard DNS record, a wildcard certificate (cert-manager DNS-01), an
+Ingress rule for `*.<preview-domain>` routed to the preview Service with the
+same long read and send timeouts the UI needs, and authentication on that
+rule. The Ingress serves the UI and previews on the same scheme and default
+port: a preview URL carries no port, so the browser asks for whatever the
+UI's own page used. Previews open in the user's own browser, as top-level
+pages: that is the most robust path through any authenticating front (a
+first-party login on every browser, no framed third-party cookie at all),
+which is also why dsh's in-app sidebar Browser is left disabled. An install
+that wants in-app tabs may enable it; previews are their own origins either
+way. Putting previews on a registrable domain separate from the UI's is
+recommended: it keeps the front's cookies off the UI's site entirely and
+removes same-site request surfaces. The sandbox NetworkPolicy needs no
+change — egress to the control plane pod is allowed on the tunnel port only,
+so sandboxes cannot reach the preview listener directly.
 
-**The proxy's cookie must never reach a sandbox.** Authenticating the
-wildcard host requires a cookie scoped to cover every preview host, so the
+**The front's cookie must never reach a sandbox.** Authenticating the
+wildcard host takes a cookie scoped to cover every preview host, so the
 browser attaches it to each preview request — and the relay passes cookies
 through, which is correct for the previewed app's own cookies and wrong for
-the proxy's: the app inside the sandbox is untrusted code, and a session
-credential it can read off the wire is one it can replay. oauth2-proxy does
-not strip its cookie before forwarding upstream (its issues #388 and #1993
-ask for exactly that), so the exposure change closes this on our side:
+the front's: the app inside the sandbox is untrusted code, and a session
+credential it can read off the wire is one it can replay. Fronts such as
+oauth2-proxy do not strip their cookie before forwarding upstream (its
+issues #388 and #1993 ask for exactly that), so the control plane closes
+this on our side:
 
 - The listener drops configured auth-cookie names from the request before it
-  enters the tunnel — `preview.authCookieNames`, which the chart fills with
-  the cookie name it gives oauth2-proxy. The app's own cookies are untouched.
-- The preview cookie's domain stays disjoint from the UI's, so a cookie that
-  does leak somewhere is valid against previews only, never the control
-  plane's UI, and the UI's cookie is never attached to a preview request in
-  the first place.
+  enters the tunnel — `preview.authCookieNames`, which the operator fills
+  with the front's cookie name (the chart passes it through). The app's own
+  cookies are untouched.
+- The UI's cookie stays host-only, so it is never attached to a preview
+  request in the first place.
 
 Both rules together are what make "the relay forwards cookies" safe: what
-arrives at the sandbox is the app's own session and nothing else.
+arrives at the sandbox is the app's own session and nothing else. The strip
+is cookie-only; a front that authenticates by header hands that header to
+the sandbox, and the docs say so.
 
 ## Limits
 
@@ -150,30 +166,33 @@ arrives at the sandbox is the app's own session and nothing else.
   Both ends already speak WebSocket; the extension is its own change.
 - Requests are buffered up to 32 MiB, like every other host↔sandbox
   transfer.
-- Previews need operator prerequisites (wildcard DNS and certificate). An
-  install without them has no previews, by the one-mode decision above.
+- Previews need operator prerequisites (wildcard DNS, a certificate, and
+  authentication in front of the Service). An install without them has no
+  previews, by the one-mode decision above.
 - The app sees a loopback Host, not its public hostname.
 
 ## Steps
 
-1. **Preview feature** (on top of the transport; landed in two PRs): the
-   control-plane half — the preview listener with host parsing,
-   `preview: { domain, port }` settings, the relay on the listener,
-   `previewDomain` + `previewHost` facts in the status, the preview surfaces
-   (a third cut replaced the first Web Preview tab with Sandbox-tab links
-   and the prompt sentence), and tests, including a Docker smoke through the
-   real listener. Then the exposure
-   half — the chart's port/Service/proxy values and the operator
-   documentation: wildcard DNS and certificates, the Ingress rule, the
-   auth-cookie rules above (`preview.authCookieNames` wired to the proxy's
-   cookie name, preview and UI cookie domains disjoint), and the
-   recommendation to keep previews on a registrable domain separate from the
-   UI's. Browser acceptance needs neither: `<sandbox>-p<port>.localhost`
-   resolves to loopback in Chrome and Firefox, with a browser-side host
-   mapping for the listener's port (`docs/e2e-testing.md`).
-2. **WebSocket upgrades through `HttpProxy`** so dev-server HMR connects
-   (`wss://` terminated at the Ingress like every other preview byte).
-3. **Declared services** (optional, later): a per-repository manifest of
-   long-running services the control plane supervises across wakes — the
-   successor to `setsid`-started servers, which every wake kills — with
-   `PORT`/`PUBLIC_URL` injection for apps that need their public origin.
+1. **Preview feature** (on top of the transport): the control-plane half —
+   the preview listener with host parsing, `preview: { domain, port }`
+   settings, the relay on the listener, `previewDomain` + `previewHost`
+   facts in the status, the preview surfaces (a later cut replaced the first
+   Web Preview tab with Sandbox-tab links and the prompt sentence), and
+   tests, including a Docker smoke through the real listener. Then the
+   exposure half — the chart's port, Service, and `preview.domain` /
+   `preview.authCookieNames` values, the relay's cookie strip, and the
+   operator documentation: wildcard DNS and certificates, the Ingress rule,
+   the authentication the operator supplies, and the cookie rules above.
+   Browser acceptance needs neither: `<sandbox>-p<port>.localhost` resolves
+   to loopback in Chrome and Firefox, with a browser-side host mapping for
+   the listener's port (`docs/e2e-testing.md`).
+
+Deferred, not scheduled until a user asks for them:
+
+- **WebSocket upgrades through `HttpProxy`** so dev-server HMR connects
+  (`wss://` terminated at the Ingress like every other preview byte). Until
+  then a page reload picks up changes.
+- **Declared services**: a per-repository manifest of long-running services
+  the control plane supervises across wakes — the successor to
+  `setsid`-started servers, which every wake kills — with `PORT`/`PUBLIC_URL`
+  injection for apps that need their public origin.

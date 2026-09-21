@@ -19,7 +19,9 @@ import {
 } from "../buildkite-token.js";
 import { CheckpointStore } from "../checkpoint.js";
 import {
+  type DeploymentPreview,
   configSchema,
+  mergePreviewBase,
   readSetting,
   resolveBootConfig,
   resolveRegistrationTokens,
@@ -31,6 +33,7 @@ import {
 import {
   dshHome,
   missingImportedProfiles,
+  readDeploymentPreview,
   readDeploymentSettings,
 } from "../deployment-settings.js";
 import {
@@ -99,6 +102,8 @@ export interface ManagerDependencies {
    * to the file the chart mounts at /etc/dsh-yawn/sandbox-settings.yaml.
    */
   deploymentSettings?: RuntimeConfig;
+  /** The deployment document's preview section; defaults to the mounted file. */
+  deploymentPreview?: DeploymentPreview;
 }
 
 interface WorkspaceRegistryLike {
@@ -177,10 +182,22 @@ export class SandboxManager extends TypertRemoteService {
     this.rawConfig = config;
     this.deployment =
       dependencies.deploymentSettings ?? readDeploymentSettings();
+    const deploymentPreview =
+      dependencies.deploymentPreview ?? readDeploymentPreview();
     // Settings-form writes land in the profile patch the Loader reads, so a
     // schema-valid but unusable value must not take the whole row down on the
     // next restart: degrade the editable slice, log why, keep booting.
-    const boot = resolveBootConfig(config, this.deployment);
+    // The deployment's preview section sits beneath the row config, field by
+    // field, exactly like the runtime section: a profile patch that names a
+    // domain wins over the deployment's.
+    const preview = mergePreviewBase(config.preview, deploymentPreview);
+    const boot = resolveBootConfig(
+      {
+        ...config,
+        ...(preview === undefined ? {} : { preview }),
+      },
+      this.deployment,
+    );
     for (const warning of boot.warnings) {
       ctx.logger("sandbox").warn(warning);
     }
@@ -243,6 +260,7 @@ export class SandboxManager extends TypertRemoteService {
         port: this.config.preview.port,
         bind: this.config.preview.bind,
         gateway: this.gateway,
+        authCookieNames: this.config.preview.authCookieNames,
         log: (message) => this.ctx.logger("sandbox").info(message),
         onPreviewHit: (sandboxId) => this.markPreviewed(sandboxId),
       });

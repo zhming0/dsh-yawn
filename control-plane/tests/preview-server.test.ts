@@ -85,6 +85,36 @@ describe("preview listener on the manager", () => {
     await expect(request(port as number, host, "/")).rejects.toThrow();
   });
 
+  it("serves previews from the deployment settings, beneath the row config", async () => {
+    const ctx = new Context();
+    const gateway = fakeGateway();
+    // No preview in the row config at all; the deployment document's section
+    // is the whole configuration, like a chart install.
+    const manager = new SandboxManager(
+      ctx,
+      {
+        stateDir: directory,
+        repository: REPOSITORY,
+        registrationToken: SECRET,
+        profiles: { standard: { backend: "docker", image: "runner:test" } },
+      },
+      {
+        backends: {},
+        gateway,
+        deploymentPreview: {
+          domain: DOMAIN,
+          authCookieNames: ["_dsh_yawn_preview"],
+        },
+      },
+    );
+    await manager.getSessionProfile("session-one");
+    expect(manager.previewPort()).toBeDefined();
+    expect(await manager.getSandboxStatus("session-one")).toEqual({
+      previewDomain: DOMAIN,
+    });
+    await ctx.fiber.dispose();
+  });
+
   it("starts no listener without a preview domain", async () => {
     const ctx = new Context();
     const manager = new SandboxManager(

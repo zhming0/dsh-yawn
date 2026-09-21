@@ -72,6 +72,33 @@ the control plane log and open it directly:
 
 {{- end }}
 
+{{- if .Values.preview.domain }}
+
+Previews are enabled: each sandbox serves its HTTP servers at
+<sandboxId>-p<port>.{{ .Values.preview.domain }}. Four things are yours to
+provide — the walkthrough in docs/kubernetes.md has copy-paste forms:
+
+  - a wildcard DNS record: *.{{ .Values.preview.domain }} → your ingress
+  - a wildcard certificate for *.{{ .Values.preview.domain }} (cert-manager
+    needs the DNS-01 solver)
+  - an Ingress rule (or Gateway API route) for host *.{{ .Values.preview.domain }}
+    → Service dsh-yawn-control-plane-preview, with the same long read and
+    send timeouts the Web UI's rule needs
+  - authentication in front of that Service (an authenticating Ingress,
+    Cloudflare Access, a VPN): the chart adds none, and the listener answers
+    every request that reaches it
+{{- if .Values.preview.authCookieNames }}
+
+The control plane strips these cookies before a request enters a sandbox:
+{{ join ", " .Values.preview.authCookieNames }}.
+{{- else }}
+
+preview.authCookieNames is empty: if your front authenticates with a cookie,
+list its name there, or code in the sandbox receives that session.
+{{- end }}
+
+{{- end }}
+
 Add provider secrets (a GITHUB_TOKEN is also the Git credential for
 github.com) from the Web UI's Settings → Secrets page, once you can reach the
 UI.

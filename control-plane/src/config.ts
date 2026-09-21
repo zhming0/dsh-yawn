@@ -87,13 +87,20 @@ export interface Config {
   /**
    * Previews: each sandbox port is served at its own origin,
    * `<sandboxId>-p<port>.<domain>`. Without a domain the preview listener
-   * does not start and the Preview tab explains what is missing.
+   * does not start and the Sandbox tab explains what is missing.
    */
   preview?: {
     /** A bare host, no scheme, such as `sandbox.example.com`. */
     domain?: string;
     port?: number;
     bind?: string;
+    /**
+     * Cookie names stripped from preview requests before they enter the
+     * sandbox. Whatever authenticates the preview domain mints a cookie
+     * scoped to cover the wildcard, so the browser attaches it to every
+     * preview request; the names listed here never reach sandbox code.
+     */
+    authCookieNames?: string[];
   };
 }
 
@@ -112,7 +119,12 @@ export interface ResolvedConfig {
   expiresAfterMs: number;
   registrationToken?: string;
   tunnel: { port: number; bind: string };
-  preview: { domain: string | undefined; port: number; bind: string };
+  preview: {
+    domain: string | undefined;
+    port: number;
+    bind: string;
+    authCookieNames: string[];
+  };
 }
 
 /**
@@ -220,6 +232,7 @@ export const configSchema = z.object({
     domain: z.string(),
     port: z.natural().min(1).max(65_535).default(8082),
     bind: z.string().default("0.0.0.0"),
+    authCookieNames: z.array(z.string()).default([]),
   }),
 });
 
@@ -237,6 +250,64 @@ export const configSchema = z.object({
 const deploymentSettingsSchema = z.object(runtimeFields());
 
 /**
+ * The `preview` section of the deployment document: the parts a deployment
+ * owns — the domain its Ingress answers for, and the cookie names the relay
+ * strips. Port and bind stay row settings; a deployment does not vary them.
+ */
+const deploymentPreviewSchema = z.object({
+  domain: z.string(),
+  authCookieNames: z.array(z.string()).default([]),
+});
+
+/** The `preview` section of the deployment document, as written. */
+export interface DeploymentPreview {
+  domain?: string;
+  authCookieNames?: string[];
+}
+
+/**
+ * Parse the deployment document's `preview` section. Like the runtime
+ * section, a malformed one fails loudly: a silently missing domain would
+ * read as previews being off.
+ */
+export function parseDeploymentPreview(
+  raw: string | undefined,
+  source = "the deployment settings",
+): DeploymentPreview {
+  const section = deploymentSection(raw, source, "preview");
+  if (section === undefined) {
+    return {};
+  }
+  try {
+    return deploymentPreviewSchema(section);
+  } catch (error) {
+    throw new Error(
+      `${source} does not match the preview settings: ${messageOf(error)}`,
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * The deployment document sits beneath the row config, field by field: a
+ * profile patch that names a preview domain wins over the deployment's, and
+ * undefined on both sides leaves previews off.
+ */
+export function mergePreviewBase(
+  row: Config["preview"],
+  base: DeploymentPreview,
+): Config["preview"] {
+  const merged = {
+    ...(base.domain === undefined ? {} : { domain: base.domain }),
+    ...(base.authCookieNames !== undefined && base.authCookieNames.length > 0
+      ? { authCookieNames: base.authCookieNames }
+      : {}),
+    ...(row ?? {}),
+  };
+  return Object.keys(merged).length === 0 ? undefined : merged;
+}
+
+/**
  * Parse one deployment settings document. A malformed document fails the row
  * loudly: it is operator configuration, and a silent fallback to no profiles
  * would look like the sandbox feature vanished.
@@ -248,8 +319,31 @@ export function parseDeploymentSettings(
   raw: string | undefined,
   source = "the deployment settings",
 ): RuntimeConfig {
-  if (raw === undefined || raw.trim() === "") {
+  const section = deploymentSection(raw, source, "sandboxManager");
+  if (section === undefined) {
     return {};
+  }
+  try {
+    return deploymentSettingsSchema(section);
+  } catch (error) {
+    throw new Error(
+      `${source} does not match the sandbox-manager settings: ${messageOf(error)}`,
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * One top-level section of the deployment document, or undefined when the
+ * document or the section is absent. Anything that is not a mapping throws.
+ */
+function deploymentSection(
+  raw: string | undefined,
+  source: string,
+  key: string,
+): object | undefined {
+  if (raw === undefined || raw.trim() === "") {
+    return undefined;
   }
   let value: unknown;
   try {
@@ -262,27 +356,18 @@ export function parseDeploymentSettings(
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`${source} must be a YAML mapping`);
   }
-  const section = Reflect.get(value, "sandboxManager") as unknown;
+  const section = Reflect.get(value, key) as unknown;
   if (section === undefined) {
-    return {};
+    return undefined;
   }
   if (
     typeof section !== "object" ||
     section === null ||
     Array.isArray(section)
   ) {
-    throw new Error(
-      `${source}'s sandboxManager section must be a YAML mapping`,
-    );
+    throw new Error(`${source}'s ${key} section must be a YAML mapping`);
   }
-  try {
-    return deploymentSettingsSchema(section);
-  } catch (error) {
-    throw new Error(
-      `${source} does not match the sandbox-manager settings: ${messageOf(error)}`,
-      { cause: error },
-    );
-  }
+  return section;
 }
 
 /**
@@ -481,6 +566,9 @@ function assembleConfig(
       domain: checkPreviewDomain(config.preview?.domain),
       port: config.preview?.port ?? 8082,
       bind: config.preview?.bind ?? "0.0.0.0",
+      authCookieNames: (config.preview?.authCookieNames ?? [])
+        .map((name) => name.trim())
+        .filter((name) => name !== ""),
     },
   };
   if (!resolved.workspace.startsWith("/")) {

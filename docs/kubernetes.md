@@ -420,6 +420,63 @@ control plane is one trust domain — everyone the issuer lets through shares th
 same sessions, credentials, and sandboxes. Restrict
 `OAUTH2_PROXY_EMAIL_DOMAINS` accordingly.
 
+### Exposing previews
+
+Set the chart's `preview.domain` and each sandbox's HTTP servers are served
+at their own origin, `<sandboxId>-p<port>.<domain>`: the domain and the
+strip list travel in the sandbox-settings document's `preview` section, the
+preview listener opens (`preview.port`, default 8082), and the chart creates
+Service `dsh-yawn-control-plane-preview`. Everything in front of that Service
+is yours: the wildcard DNS record, the wildcard certificate (cert-manager's
+DNS-01 solver — HTTP-01 cannot answer for a wildcard name), the Ingress
+rule, and authentication:
+
+```yaml
+rules:
+  - host: "*.sandbox.example.com"
+    http:
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: dsh-yawn-control-plane-preview
+              port:
+                name: http
+tls:
+  - hosts: ["*.sandbox.example.com"]
+    secretName: dsh-yawn-preview-tls
+```
+
+The read and send timeouts on the UI's rule above apply here too.
+
+The listener answers every request that reaches it, so the chart's
+`oidc.enabled` does not cover previews. Use whatever your cluster already
+puts in front of internal apps — an authenticating Ingress (for example an
+oauth2-proxy of your own behind `auth-url`), Cloudflare Access, a VPN — or
+keep the Service internal. Three rules keep that front from leaking a
+credential into sandbox code:
+
+- **List its session cookie in `preview.authCookieNames`.** A front that
+  covers every preview host sets a cookie scoped to the wildcard, so the
+  browser attaches it to every preview request. The control plane removes
+  the listed names, including their numbered `_1`, `_2`, … chunks, before a
+  request enters a sandbox; the previewed app's own cookies pass through.
+- **Do not authenticate previews by header.** The strip removes cookies
+  only, so a front that authenticates with a header (basic auth's
+  `Authorization`, for example) hands that credential to sandbox code.
+- **Keep the UI's cookie host-only.** Never set a cookie domain on the UI's
+  oauth2-proxy that spans the preview hosts, or the UI's session rides every
+  preview request.
+
+Previews open as top-level pages, so they work on any domain. A registrable
+domain separate from the UI's is recommended (the examples here share
+`example.com` only for brevity): the browser then keeps the UI's and the
+previews' cookies apart on its own. The reasoning is in
+[`docs/plans/sandbox-preview.md`](plans/sandbox-preview.md); the sandbox
+NetworkPolicy needs no change, since sandbox egress to the control plane
+pod is limited to the tunnel port.
+
 ## Connectivity and isolation
 
 A Sandbox has no Service (`service: false`) and accepts no ingress at all. The
