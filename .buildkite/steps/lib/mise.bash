@@ -36,11 +36,13 @@ ensure_tools() {
   local root
   root="$(git rev-parse --show-toplevel)"
 
-  # The buildkite-agent cache speeds up `mise install` across CI builds, but
-  # buildkite-agent is not present in a session's sandbox (or in `.agents/setup`
-  # and `.agents/resume` runs). Guard both halves so the bootstrap is not
-  # coupled to CI while still using the cache when it is available.
-  if command -v buildkite-agent >/dev/null 2>&1; then
+  # The buildkite-agent cache speeds up `mise install` across CI builds. Test
+  # for the job's access token rather than the binary: a session's sandbox on a
+  # hosted agent has buildkite-agent on PATH (the agent mounts it into the job
+  # container) but the runner deliberately keeps the token out of the command
+  # environment, so `.agents/setup` and `.agents/resume` would fail on the
+  # cache call. The token only exists in a real CI step.
+  if [[ -n "${BUILDKITE_AGENT_ACCESS_TOKEN:-}" ]]; then
     echo "--- :recycle: Restoring the toolchain cache"
     buildkite-agent cache restore --name mise
   fi
@@ -49,7 +51,7 @@ ensure_tools() {
   mise trust "${root}/mise.toml"
   mise install --cd "$root"
 
-  if command -v buildkite-agent >/dev/null 2>&1; then
+  if [[ -n "${BUILDKITE_AGENT_ACCESS_TOKEN:-}" ]]; then
     buildkite-agent cache save --name mise
   fi
   eval "$(mise activate bash --shims)"
