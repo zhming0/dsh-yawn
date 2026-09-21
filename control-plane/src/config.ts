@@ -56,6 +56,17 @@ export interface Config {
     port?: number;
     bind?: string;
   };
+  /**
+   * Previews: each sandbox port is served at its own origin,
+   * `<sandboxId>-p<port>.<domain>`. Without a domain the preview listener
+   * does not start and the Preview tab explains what is missing.
+   */
+  preview?: {
+    /** A bare host, no scheme, such as `sandbox.example.com`. */
+    domain?: string;
+    port?: number;
+    bind?: string;
+  };
 }
 
 export interface ResolvedConfig {
@@ -73,6 +84,7 @@ export interface ResolvedConfig {
   expiresAfterMs: number;
   registrationToken?: string;
   tunnel: { port: number; bind: string };
+  preview: { domain: string | undefined; port: number; bind: string };
 }
 
 /**
@@ -169,6 +181,11 @@ export const configSchema: Schemastery<Config> = z.object({
     port: z.natural().min(1).max(65_535).default(8081),
     bind: z.string().default("0.0.0.0"),
   }),
+  preview: z.object({
+    domain: z.string(),
+    port: z.natural().min(1).max(65_535).default(8082),
+    bind: z.string().default("0.0.0.0"),
+  }),
 });
 
 /**
@@ -239,11 +256,34 @@ export function resolveConfig(config: Config): ResolvedConfig {
       port: tunnelPort,
       bind: config.tunnel?.bind ?? "0.0.0.0",
     },
+    preview: {
+      domain: checkPreviewDomain(config.preview?.domain),
+      port: config.preview?.port ?? 8082,
+      bind: config.preview?.bind ?? "0.0.0.0",
+    },
   };
   if (!resolved.workspace.startsWith("/")) {
     throw new Error("workspace must be an absolute Linux path");
   }
   return resolved;
+}
+
+/**
+ * The preview domain is baked into host names both sides match exactly, so a
+ * scheme, a path, or an uppercase spelling must fail the boot rather than
+ * silently never match. An empty or absent domain disables previews.
+ */
+function checkPreviewDomain(domain: string | undefined): string | undefined {
+  if (domain === undefined || domain.trim() === "") {
+    return undefined;
+  }
+  const lowered = domain.trim().toLowerCase();
+  if (!/^[a-z0-9.-]+$/.test(lowered) || lowered.includes("..")) {
+    throw new Error(
+      `preview domain ${domain} must be a bare host, such as sandbox.example.com`,
+    );
+  }
+  return lowered;
 }
 
 function resolveProfile(

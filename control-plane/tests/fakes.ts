@@ -68,6 +68,7 @@ export class FakeRunnerClient {
       filesystemDiskUsedBytes: 3n * 1024n ** 3n,
       filesystemDiskTotalBytes: 16n * 1024n ** 3n,
       uptimeSeconds: 90n,
+      listeningPorts: [3000, 5173],
     };
   }
 
