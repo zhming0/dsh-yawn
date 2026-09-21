@@ -136,6 +136,10 @@ has the YAML and the setup steps. What matters to the backend:
   `DSH_YAWN_REGISTRATION_TOKEN` reach the runner.
   The image has no entrypoint and defaults to `CMD ["dsh-yawn-runner"]`.
   Passing a command after the image name replaces that default.
+- The image leaves `HOME` unset so the container runtime selects the starting
+  user's home: `/root` for root, or `/workspace/home` for the sandbox account
+  (UID 1000). This lets root-run hosted agent hooks create Docker credentials
+  under `/root/.docker` rather than the sandbox account's home.
 - The control plane sets `DSH_YAWN_RUNNER_IMAGE` to the tag matching its own version, so
   the pipeline never pins an image and cannot drift from the control plane.
 - `agents.queue` picks the fleet, and it has to be set in the pipeline: steps
