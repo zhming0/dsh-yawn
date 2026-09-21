@@ -109,7 +109,31 @@ describe("runner tunnel", () => {
       await tunnel.close();
     }
   });
+
+  it("forgets sandbox ids it waited on and never saw", async () => {
+    const tunnel = new TunnelServer({ port: 0, tokens: ["good-token"] });
+    await tunnel.listen();
+    try {
+      // The preview listener waits on whatever id a Host header names, so any
+      // client that can reach the preview port decides these keys. An id that
+      // never registers must leave nothing behind.
+      await expect(tunnel.waitFor("ghost-one", 10)).rejects.toThrow(
+        "did not register",
+      );
+      await expect(tunnel.waitFor("ghost-two", 10)).rejects.toThrow(
+        "did not register",
+      );
+      expect(pendingWaiters(tunnel).size).toBe(0);
+    } finally {
+      await tunnel.close();
+    }
+  });
 });
+
+/** The waiter map is the bookkeeping under test, so read it directly. */
+function pendingWaiters(tunnel: TunnelServer): Map<string, Set<unknown>> {
+  return (tunnel as unknown as { waiters: Map<string, Set<unknown>> }).waiters;
+}
 
 type Handshake = { status: number; body?: string };
 

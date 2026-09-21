@@ -93,8 +93,8 @@ path field as the frame's entry point, both remembered per session, and an
 Open link — safe again, because the preview's origin is not the UI's. The
 frame keeps scripts but now also `allow-same-origin`, so storage, IndexedDB,
 and service workers work. Preview traffic counts as session activity, so a
-sandbox being previewed does not hibernate under the viewer, and opening a
-preview wakes a hibernated one.
+sandbox receiving preview requests does not hibernate under its viewer, and
+opening a preview wakes a hibernated one.
 
 **Kubernetes and auth.** The chart gains the container port, a `ClusterIP`
 Service (a sibling of the tunnel Service), and oauth2-proxy configuration to
@@ -102,7 +102,9 @@ authenticate the preview domain with its own cookie. Operator setup, which
 the chart documents but does not own: a wildcard DNS record, a wildcard
 certificate (cert-manager DNS-01), and an Ingress rule for
 `*.sandbox.<domain>` routed to the preview Service with the same long read
-and send timeouts the UI needs. Putting previews on a registrable domain
+and send timeouts the UI needs. That Ingress also serves the UI, on the same
+scheme and default port: a preview URL carries no port, so the browser asks
+for whatever the UI's own page used. Putting previews on a registrable domain
 separate from the UI's is recommended: it keeps the proxy's cookies off the
 UI's site entirely and removes same-site request surfaces. The sandbox
 NetworkPolicy needs no change — egress to the control plane pod is allowed
@@ -153,7 +155,8 @@ arrives at the sandbox is the app's own session and nothing else.
    cookie name, preview and UI cookie domains disjoint), and the
    recommendation to keep previews on a registrable domain separate from the
    UI's. Browser acceptance needs neither: `<sandbox>-p<port>.localhost`
-   resolves to loopback in Chrome and Firefox.
+   resolves to loopback in Chrome and Firefox, with a browser-side host
+   mapping for the listener's port (`docs/e2e-testing.md`).
 2. **WebSocket upgrades through `HttpProxy`** so dev-server HMR connects
    (`wss://` terminated at the Ingress like every other preview byte).
 3. **Declared services** (optional, later): a per-repository manifest of

@@ -273,8 +273,13 @@ const captionColor = "var(--dsw-alias-label-caption)";
  * (`<sandboxId>-p<port>.<domain>`, see src/preview.ts); only the trailing
  * port marker is touched, and anything that does not parse leaves the host
  * alone.
+ *
+ * Exported for its test: this decides the origin of every framed preview.
  */
-function withPreviewPort(host: string, port: string): string | undefined {
+export function withPreviewPort(
+  host: string,
+  port: string,
+): string | undefined {
   const trimmed = port.trim();
   if (!/^\d{1,5}$/.test(trimmed)) {
     return undefined;
@@ -299,8 +304,10 @@ function describe(reason: unknown): string {
  * The entry path appended to a preview origin. Leading slashes are dropped
  * rather than doubled; an empty path means the server's root, and a query
  * rides along untouched.
+ *
+ * Exported for its test, like `withPreviewPort`.
  */
-function previewPathSuffix(path: string): string {
+export function previewPathSuffix(path: string): string {
   const trimmed = path.trim().replace(/^\/+/, "");
   return trimmed === "" ? "" : `/${trimmed}`;
 }
