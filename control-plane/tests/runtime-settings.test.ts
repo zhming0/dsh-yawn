@@ -159,6 +159,13 @@ describe("sandbox-manager settings", () => {
 
   it("hot-reloads a direct edit of the settings document", async () => {
     const settingsFile = join(directory, "settings.yaml");
+    // Materialize the document before the provider starts. A document that
+    // appears while its watcher is starting can be missed: chokidar announces
+    // ready — and the provider re-reads the file once — before it settles on
+    // watching the directory that will hold the new file. Creating an empty
+    // document first, as the settings API's `prepareDocument` does, keeps this
+    // test about an edit to an existing document.
+    await writeFile(settingsFile, "", "utf8");
     const { manager } = await managerOver(settingsFile);
     await manager.getSessionProfile("session-one");
     await writeFile(
