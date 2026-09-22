@@ -27,6 +27,11 @@ import (
 const (
 	defaultReadLimit = int64(16 << 20)
 	defaultWorkspace = "/workspace/repository"
+	// How long an exec keeps draining a command's output pipes after the
+	// command itself exits. A process the command left behind — a background
+	// server that inherited stdout, say — holds the pipes open; the grace
+	// collects what it writes promptly and bounds the wait.
+	execPipeDrainGrace = 500 * time.Millisecond
 )
 
 var execDuration metric.Float64Histogram
@@ -140,6 +145,34 @@ func envValue(env []string, key string) string {
 	return ""
 }
 
+// execChunk is one piece of a command's output, tagged with the stream it came
+// from.
+type execChunk struct {
+	data   []byte
+	stderr bool
+}
+
+// execChunkWriter publishes one of a command's output pipes as chunks on the
+// exec stream. os/exec starts a copying goroutine for a writer like this one
+// and Wait drains it before closing the pipe, so no output is dropped;
+// blocking here applies backpressure, and a canceled context unblocks the
+// writer so the command can be reaped.
+type execChunkWriter struct {
+	chunks chan<- execChunk
+	ctx    context.Context
+	stderr bool
+}
+
+func (w execChunkWriter) Write(data []byte) (int, error) {
+	// io.Copy reuses its buffer, so the chunk owns its bytes.
+	select {
+	case w.chunks <- execChunk{data: append([]byte(nil), data...), stderr: w.stderr}:
+		return len(data), nil
+	case <-w.ctx.Done():
+		return 0, w.ctx.Err()
+	}
+}
+
 func (s *Service) Exec(ctx context.Context, request *connect.Request[v1.ExecRequest], stream *connect.ServerStream[v1.ExecResponse]) error {
 	if len(request.Msg.Argv) == 0 {
 		return cerr(connect.CodeInvalidArgument, errors.New("argv is required"))
@@ -161,48 +194,25 @@ func (s *Service) Exec(ctx context.Context, request *connect.Request[v1.ExecRequ
 		cmd.Stdin = bytes.NewReader(request.Msg.Stdin)
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return cerr(connect.CodeInternal, err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return cerr(connect.CodeInternal, err)
-	}
+	// Stream through writers rather than StdoutPipe/StderrPipe. os/exec
+	// documents that Wait must not run before the caller has read a pipe to
+	// EOF: Wait closes the parent's end of a StdoutPipe as soon as the command
+	// exits, discarding output still buffered in the pipe. A command that
+	// prints a few bytes and exits at once — `cat` of a small file — can lose
+	// its whole output that way. With writers, os/exec owns the pipes and Wait
+	// drains them before closing.
+	chunks := make(chan execChunk, 16)
+	cmd.Stdout = execChunkWriter{chunks: chunks, ctx: execCtx}
+	cmd.Stderr = execChunkWriter{chunks: chunks, ctx: execCtx, stderr: true}
+	cmd.WaitDelay = execPipeDrainGrace
 	if err := cmd.Start(); err != nil {
 		return cerr(connect.CodeInvalidArgument, err)
 	}
-	type chunk struct {
-		data   []byte
-		stderr bool
-	}
-	chunks := make(chan chunk, 16)
-	var wg sync.WaitGroup
-	copyPipe := func(reader io.Reader, isStderr bool) {
-		defer wg.Done()
-		buffer := make([]byte, 32<<10)
-		for {
-			count, readError := reader.Read(buffer)
-			if count > 0 {
-				select {
-				case chunks <- chunk{data: append([]byte(nil), buffer[:count]...), stderr: isStderr}:
-				case <-execCtx.Done():
-					return
-				}
-			}
-			if readError != nil {
-				return
-			}
-		}
-	}
-	wg.Add(2)
-	go copyPipe(stdout, false)
-	go copyPipe(stderr, true)
-	go func() { wg.Wait(); close(chunks) }()
 	var commandError error
 	waitDone := make(chan struct{})
 	go func() {
 		commandError = cmd.Wait()
+		close(chunks)
 		close(waitDone)
 	}()
 	go func() {
@@ -241,7 +251,10 @@ func (s *Service) Exec(ctx context.Context, request *connect.Request[v1.ExecRequ
 			if waitStatus, ok := exitError.Sys().(syscall.WaitStatus); ok && waitStatus.Signaled() {
 				exit.Signal = waitStatus.Signal().String()
 			}
-		} else {
+		} else if !errors.Is(commandError, exec.ErrWaitDelay) {
+			// ErrWaitDelay is not a failure of the command itself: it exited,
+			// and only a process it left behind held a pipe open past the
+			// grace, so the recorded exit status stands.
 			return cerr(connect.CodeInternal, commandError)
 		}
 	}

@@ -15,14 +15,7 @@ import (
 )
 
 func TestExecEmptyStdinMeansIgnore(t *testing.T) {
-	s := New("box")
-	mux := http.NewServeMux()
-	mux.Handle(yawnv1connect.NewRunnerServiceHandler(s))
-	server := httptest.NewUnstartedServer(mux)
-	server.EnableHTTP2 = true
-	server.StartTLS()
-	defer server.Close()
-	client := yawnv1connect.NewRunnerServiceClient(server.Client(), server.URL)
+	client := newExecClient(t)
 
 	exitCode := func(stdin []byte) int {
 		stream, err := client.Exec(context.Background(), connect.NewRequest(&v1.ExecRequest{
@@ -52,6 +45,106 @@ func TestExecEmptyStdinMeansIgnore(t *testing.T) {
 	if code := exitCode(nil); code != 1 {
 		t.Fatalf("empty stdin: child saw a pipe stdin, exit = %d", code)
 	}
+}
+
+func TestExecKeepsOutputWrittenAfterTheCommandExits(t *testing.T) {
+	client := newExecClient(t)
+
+	// The command exits at once but leaves a process behind that writes to the
+	// stdout it inherited a moment later. Waiting for the command must not
+	// close that pipe underneath the output.
+	stream, err := client.Exec(context.Background(), connect.NewRequest(&v1.ExecRequest{
+		Argv: []string{"/bin/sh", "-c", "sh -c 'sleep 0.1; printf late' & exit 0"},
+		Cwd:  t.TempDir(),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stream.Close() }()
+	var stdout strings.Builder
+	exited := false
+	for stream.Receive() {
+		if chunk := stream.Msg().GetStdout(); chunk != nil {
+			stdout.Write(chunk)
+		}
+		if stream.Msg().GetExited() != nil {
+			exited = true
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !exited {
+		t.Fatal("exec stream ended without an exit status")
+	}
+	if got := stdout.String(); got != "late" {
+		t.Fatalf("stdout = %q, want %q", got, "late")
+	}
+}
+
+func TestExecKeepsFastOutput(t *testing.T) {
+	client := newExecClient(t)
+	directory := t.TempDir()
+	small := filepath.Join(directory, "sentinel")
+	if err := os.WriteFile(small, []byte("media"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A command that prints a few bytes and exits immediately leaves its
+	// output in the pipe. Losing that read looks like a successful command
+	// with no output, which is how the Docker smoke test read an empty
+	// artifacts sentinel.
+	for attempt := 0; attempt < 500; attempt++ {
+		if got := execOutput(t, client, directory, []string{"cat", small}); got != "media" {
+			t.Fatalf("attempt %d: stdout = %q, want %q", attempt, got, "media")
+		}
+	}
+
+	// Output that outruns the reader is the same race with a longer tail: the
+	// pipe holds 64KiB, so a fast large write can exit with that much unread.
+	large := strings.Repeat("abcdefghij", 20000)
+	big := filepath.Join(directory, "big")
+	if err := os.WriteFile(big, []byte(large), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := execOutput(t, client, directory, []string{"cat", big}); got != large {
+		t.Fatalf("large output read %d bytes, want %d", len(got), len(large))
+	}
+}
+
+// execOutput runs one command to completion and returns the stdout it saw.
+func execOutput(t *testing.T, client yawnv1connect.RunnerServiceClient, cwd string, argv []string) string {
+	t.Helper()
+	stream, err := client.Exec(context.Background(), connect.NewRequest(&v1.ExecRequest{
+		Argv: argv,
+		Cwd:  cwd,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stream.Close() }()
+	var stdout strings.Builder
+	for stream.Receive() {
+		if chunk := stream.Msg().GetStdout(); chunk != nil {
+			stdout.Write(chunk)
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return stdout.String()
+}
+
+func newExecClient(t *testing.T) yawnv1connect.RunnerServiceClient {
+	t.Helper()
+	s := New("box")
+	mux := http.NewServeMux()
+	mux.Handle(yawnv1connect.NewRunnerServiceHandler(s))
+	server := httptest.NewUnstartedServer(mux)
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	return yawnv1connect.NewRunnerServiceClient(server.Client(), server.URL)
 }
 
 func TestWriteGuardsAndEditAmbiguity(t *testing.T) {
