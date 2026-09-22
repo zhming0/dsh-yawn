@@ -4,6 +4,7 @@ import { Button, Switch } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { SettingsSectionOwnerProps } from "@deepseek-ai/dsh-client-ui-settings/client";
 
 import {
+  notificationBlockedReason,
   notificationPermission,
   notificationsEnabled,
   requestNotificationPermission,
@@ -24,6 +25,7 @@ export function NotificationsSettings(_props: SettingsSectionOwnerProps) {
     notificationPermission,
   );
   const [error, setError] = useState<string>();
+  const blocked = notificationBlockedReason();
   const active = enabled && permission === "granted";
 
   const toggle = async (next: boolean) => {
@@ -55,10 +57,16 @@ export function NotificationsSettings(_props: SettingsSectionOwnerProps) {
         The choice is stored in this browser, not on the control plane.
       </p>
 
-      {permission === "unsupported" ? (
+      {blocked === "insecure" ? (
         <p style={{ margin: 0, ...messageStyle }}>
           This page cannot show notifications. Browsers allow them only on
           https:// pages, or on localhost.
+        </p>
+      ) : blocked === "unsupported" ? (
+        <p style={{ margin: 0, ...messageStyle }}>
+          This browser does not offer notifications to web pages, so there is
+          nothing to turn on here. On an iPhone or iPad, use Safari 16.4 or
+          later, and add this page to the Home Screen.
         </p>
       ) : (
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>

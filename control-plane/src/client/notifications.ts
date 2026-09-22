@@ -12,7 +12,10 @@
  * Three browser rules bound this feature and none of them can be lifted here:
  * the Notifications API exists only in a secure context (https, or localhost),
  * the user must grant permission from a click, and a frozen background tab can
- * delay the feed until the tab wakes.
+ * delay the feed until the tab wakes. Support is also uneven: iOS exposes the
+ * API to Safari only (16.4+, and for a web app added to the Home Screen), so
+ * every other browser there reports `unsupported` even on https. This module
+ * keeps the browser's reason apart from the page's, so Settings can say which.
  *
  * @module @zhming0/dsh-yawn/client/notifications
  */
@@ -31,6 +34,15 @@ export const NOTIFICATIONS_ENABLED_KEY = "dsh-yawn.notifications.enabled";
 export type NotificationPermissionState =
   | "unsupported"
   | NotificationPermission;
+
+/**
+ * Why this page cannot show notifications at all.
+ *
+ * `insecure` is the page's fault: the browser exposes the API to a secure
+ * context only. `unsupported` is the browser's: it never exposes the API here,
+ * as on the iOS browsers other than Safari, whatever the page's scheme.
+ */
+export type NotificationBlockedReason = "insecure" | "unsupported";
 
 /**
  * The client session verbs the notification layer uses. Named here because the
@@ -85,17 +97,35 @@ export function setNotificationsEnabled(enabled: boolean): void {
   }
 }
 
-/** Read the browser's notification permission. */
-export function notificationPermission(): NotificationPermissionState {
+/**
+ * Why this page cannot ask for notifications, or `undefined` when it can.
+ *
+ * `Notification` is absent both when the browser never implements the API here
+ * and when the page is not a secure context, and the two need different words:
+ * one is fixed by https, the other by changing browser.
+ */
+export function notificationBlockedReason():
+  | NotificationBlockedReason
+  | undefined {
   if (typeof Notification === "undefined") {
+    return globalThis.isSecureContext === false ? "insecure" : "unsupported";
+  }
+  if (typeof Notification.permission !== "string") {
     return "unsupported";
   }
-  return Notification.permission;
+  return undefined;
+}
+
+/** Read the browser's notification permission. */
+export function notificationPermission(): NotificationPermissionState {
+  return notificationBlockedReason() === undefined
+    ? Notification.permission
+    : "unsupported";
 }
 
 /** Ask the browser for permission. Call from a click: browsers require a gesture. */
 export async function requestNotificationPermission(): Promise<NotificationPermissionState> {
-  if (typeof Notification === "undefined") {
+  if (notificationBlockedReason() !== undefined) {
     return "unsupported";
   }
   return await Notification.requestPermission();
