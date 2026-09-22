@@ -1,7 +1,8 @@
 # The control-plane image: dsh with the `web` profile assembled around the
 # dsh-yawn control plane. The build derives the dsh version from the
-# its own dependency pins, so control-plane/package.json stays the single
-# source of truth for which dsh this distribution ships.
+# control-plane's own dependency pins and asserts that the CLI the image locks
+# is the same version, so control-plane/package.json stays the single source
+# of truth for which dsh this distribution ships.
 #
 # Layout rule: the image owns the software, the home volume owns the data.
 # The runtime user's home is /data, so dsh sessions ($HOME/.dsh) and the
@@ -32,6 +33,12 @@ RUN mkdir -p /out/meta \
         if (!DEFAULT_RUNNER_IMAGE.endsWith(expected)) { \
           throw new Error('default runner image ' + DEFAULT_RUNNER_IMAGE + ' does not end with ' + expected); \
         }" \
+    && node -e " \
+        const peer = require('./control-plane/package.json').peerDependencies['@deepseek-ai/dsh-agent']; \
+        const cli = require('./control-plane/image/dsh-cli/package.json').dependencies['@deepseek-ai/dsh']; \
+        if (cli !== peer) { \
+          throw new Error('the image @deepseek-ai/dsh dependency ' + cli + ' does not match the pinned @deepseek-ai/dsh-agent ' + peer + '; update both and regenerate its lockfile'); \
+        }" \
     && node -p "require('./control-plane/package.json').peerDependencies['@deepseek-ai/dsh-agent']" >/out/meta/dsh-version \
     && node -p "require('./package.json').packageManager" >/out/meta/package-manager \
     && printf '%s\n' "$VERSION" >/out/meta/version
@@ -52,12 +59,21 @@ COPY --from=docker:29.8.0-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=build /out/meta /opt/dsh-yawn/meta
 COPY --from=build /out/dsh-yawn.tgz /opt/dsh-yawn/dsh-yawn.tgz
 
-# pnpm is what `dsh plugin` forwards to; dsh itself comes from npm at the
-# version the control plane pins.
+# The dsh CLI comes from its own lockfile (control-plane/image/dsh-cli), not a
+# fresh registry resolution. The pinned release's dependency ranges float onto
+# newer prereleases, and upstream can publish one of those incomplete, which
+# breaks the install. `npm ci` installs exactly the locked tree, and the
+# version check keeps the image on the version control-plane/package.json
+# pins. Bumping the CLI means editing that package.json and regenerating its
+# lockfile. pnpm is what `dsh plugin` forwards to.
+COPY control-plane/image/dsh-cli/package.json control-plane/image/dsh-cli/package-lock.json /opt/dsh-yawn/cli/
 RUN corepack install -g "$(cat /opt/dsh-yawn/meta/package-manager)" \
     && corepack enable pnpm \
-    && npm install -g "@deepseek-ai/dsh@$(cat /opt/dsh-yawn/meta/dsh-version)" \
-    && npm cache clean --force
+    && cd /opt/dsh-yawn/cli \
+    && npm ci --no-audit --no-fund \
+    && npm cache clean --force \
+    && test "$(./node_modules/.bin/dsh --version)" = "$(cat /opt/dsh-yawn/meta/dsh-version)"
+ENV PATH="/opt/dsh-yawn/cli/node_modules/.bin:$PATH"
 
 # Assemble the web profile once, at build time, with the real installer, so
 # the baked composition is exactly what `dsh plugin add` produces. The shipped
