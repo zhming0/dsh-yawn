@@ -132,6 +132,12 @@ export class TunnelServer implements RunnerGateway {
         resolve,
         timer: setTimeout(() => {
           waiterSet.delete(waiter);
+          // The preview listener waits on whatever id a Host header names, so
+          // an id that never registers must not leave its set behind: every
+          // entry is memory an unauthenticated client could grow.
+          if (waiterSet.size === 0) {
+            this.waiters.delete(sandboxId);
+          }
           reject(
             new Error(
               `runner ${sandboxId} did not register within ${timeoutMs}ms`,

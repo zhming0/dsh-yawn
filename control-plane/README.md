@@ -632,10 +632,29 @@ does can reach the Web UI's origin around it. The listener is deliberately
 not the tunnel port (sandboxes can reach that one) and not the Web UI's
 server (dsh's web server matches routes by path, so a subdomain request would
 land in the SPA fallback); it is a third listener, fronted by whatever fronts
-the UI. Requests are relayed over each runner's registered tunnel — the
-runner dials `127.0.0.1:<port>` and never learns the public host name — and a
-preview hit counts as session activity, so a sandbox does not hibernate under
-its viewer.
+the UI. Since a preview URL carries no port, that front door has to serve the
+UI and `*.preview.domain` on the same scheme and default port — a browser
+asks for whatever the UI's own page used, so previews and the UI cannot sit
+on different ports behind it. Requests are relayed over each runner's
+registered tunnel — the runner dials `127.0.0.1:<port>` and never learns the
+public host name — and a preview request counts as session activity,
+re-arming the idle countdown, so a page that keeps making requests does not
+hibernate under its viewer. A page that loads once and then sits idle makes
+no further requests, and the sandbox hibernates as usual.
+
+**Do not publish the preview listener yet.** The relay forwards the browser's
+headers to the sandbox, cookies included, because the previewed app's own
+session has to work — but that also carries whatever authenticates the
+wildcard host into untrusted sandbox code. `preview.authCookieNames`, which
+drops configured auth-cookie names from the request before it enters the
+tunnel, lands with the exposure half (chart, Service, and Ingress) described
+in `docs/plans/sandbox-preview.md`; keep previews on a development host until
+it does. For the same reason, the listener binds `0.0.0.0` by default: on the
+Kubernetes backend the reference NetworkPolicy lets sandbox egress reach only
+the tunnel port, so a sandbox cannot dial it, but on the Docker development
+path the sandboxes share the host's network and can. Set `preview.bind` to
+`127.0.0.1` when the preview port is not meant to be reachable from the
+network.
 
 The Web Preview tab beside the chat follows the sandbox's listening ports (the
 runner reports them), lets you pick a port and an entry path, and can open the

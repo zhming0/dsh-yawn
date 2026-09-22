@@ -91,4 +91,44 @@ describe("sandbox provider settings", () => {
       }),
     ).toThrow("profile old: controlPlaneUrl must be a ws:// or wss:// URL");
   });
+
+  it("takes a bare preview domain and refuses anything else", () => {
+    const profiles = { standard: { backend: "docker" as const } };
+    // No domain: previews are off and the listener does not start.
+    expect(resolveConfig({ profiles }).preview).toEqual({
+      domain: undefined,
+      port: 8082,
+      bind: "0.0.0.0",
+    });
+    expect(
+      resolveConfig({ preview: { domain: "  " }, profiles }).preview,
+    ).toEqual({ domain: undefined, port: 8082, bind: "0.0.0.0" });
+
+    // A configured domain is normalized once, here: both sides match the
+    // lowercased, trimmed spelling against the Host header.
+    expect(
+      resolveConfig({
+        preview: {
+          domain: " Sandbox.Example.COM ",
+          port: 9000,
+          bind: "127.0.0.1",
+        },
+        profiles,
+      }).preview,
+    ).toEqual({ domain: "sandbox.example.com", port: 9000, bind: "127.0.0.1" });
+
+    // A scheme, a path, a wildcard, or an empty label would build host names
+    // no browser ever sends, so boot fails rather than never matching.
+    for (const domain of [
+      "https://sandbox.example.com",
+      "sandbox.example.com/previews",
+      "*.example.com",
+      "a..b",
+      "sandbox example.com",
+    ]) {
+      expect(() => resolveConfig({ preview: { domain }, profiles })).toThrow(
+        "must be a bare host",
+      );
+    }
+  });
 });

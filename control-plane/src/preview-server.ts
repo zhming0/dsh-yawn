@@ -93,9 +93,12 @@ export class PreviewServer {
   }
 
   async close(): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      this.server.close((error) => (error ? reject(error) : resolve()));
-    });
+    // Drop connections first, the order TunnelServer.close() uses: a relay
+    // still streaming would otherwise hold the close callback open until the
+    // sandbox server finished a response nobody is left to read. A server
+    // that never listened closes here too, which is why the callback's error
+    // is ignored.
     this.server.closeAllConnections();
+    await new Promise<void>((resolve) => this.server.close(() => resolve()));
   }
 }

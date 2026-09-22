@@ -14,7 +14,9 @@ import {
   type HttpProxyRequestHead,
 } from "../src/gen/dsh/yawn/v1/runner_pb.js";
 import { parsePreviewHost, previewHost } from "../src/preview.js";
+import type { PreviewGateway } from "../src/preview-relay.js";
 import { PreviewServer } from "../src/preview-server.js";
+import type { RunnerClient } from "../src/runner-client.js";
 import { SANDBOX_ID_HEADER, TunnelServer } from "../src/tunnel.js";
 
 /** The runner's registration token; previews carry none of their own. */
@@ -223,6 +225,66 @@ describe("preview server", () => {
       await server.close();
       await tunnel.close();
       h2.close();
+    }
+  });
+
+  it("closes while a response is still streaming", async () => {
+    // A relay that has sent its head and then stalls. Closing the listener
+    // must not wait for a sandbox server to finish a response the browser is
+    // no longer there to read.
+    const gateway: PreviewGateway = {
+      waitFor: async () =>
+        ({
+          httpProxy: () =>
+            (async function* () {
+              yield {
+                part: { case: "head", value: { status: 200, headers: [] } },
+              };
+              // One chunk, so the browser sees the response and the relay is
+              // provably mid-stream; then the sandbox stalls.
+              yield { part: { case: "body", value: new Uint8Array([104]) } };
+              await new Promise<void>((resolve) => {
+                setTimeout(resolve, 30_000).unref();
+              });
+            })(),
+        }) as unknown as RunnerClient,
+    };
+    const server = new PreviewServer({
+      domain: DOMAIN,
+      port: 0,
+      bind: "127.0.0.1",
+      gateway,
+    });
+    await server.listen();
+    const streaming = httpRequest(
+      {
+        host: "127.0.0.1",
+        port: server.port(),
+        path: "/stream",
+        headers: { host: HOST },
+      },
+      (response) => {
+        response.on("data", () => {});
+        response.on("error", () => {});
+      },
+    );
+    streaming.on("error", () => {});
+    streaming.end();
+    try {
+      // Wait for the head, so the relay is provably mid-stream before close.
+      await new Promise<void>((resolve) => {
+        streaming.once("response", () => resolve());
+      });
+      const outcome = await Promise.race([
+        server.close().then(() => "closed"),
+        new Promise<string>((resolve) => {
+          setTimeout(() => resolve("pending"), 2_000).unref();
+        }),
+      ]);
+      expect(outcome).toBe("closed");
+    } finally {
+      streaming.destroy();
+      await server.close();
     }
   });
 });
