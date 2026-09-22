@@ -13,6 +13,8 @@ import type { SessionId } from "@deepseek-ai/dsh-session/types";
 
 import {
   installTurnNotifications,
+  notificationBlockedReason,
+  notificationPermission,
   notificationsEnabled,
   setNotificationsEnabled,
   watchTurnEnds,
@@ -196,6 +198,27 @@ describe("turn finished notifications", () => {
 
     onClick();
     expect(open).toHaveBeenCalledWith(id("root"));
+  });
+
+  it("tells an insecure page apart from a browser without the API", () => {
+    vi.stubGlobal("Notification", {
+      permission: "granted",
+      requestPermission: () => Promise.resolve("granted"),
+    });
+    expect(notificationBlockedReason()).toBeUndefined();
+    expect(notificationPermission()).toBe("granted");
+
+    vi.stubGlobal("Notification", undefined);
+    // http on a name other than localhost: the page is the reason, so this is
+    // the https message.
+    vi.stubGlobal("isSecureContext", false);
+    expect(notificationBlockedReason()).toBe("insecure");
+
+    // https: the API is missing, but the page's scheme is not the reason.
+    // Firefox and Chrome on iOS land here.
+    vi.stubGlobal("isSecureContext", true);
+    expect(notificationBlockedReason()).toBe("unsupported");
+    expect(notificationPermission()).toBe("unsupported");
   });
 
   it("keeps the choice in browser storage", () => {

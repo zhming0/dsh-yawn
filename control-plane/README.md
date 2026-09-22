@@ -115,7 +115,9 @@ notification opens that session. The browser already receives one running/idle
 bit per session on the session list feed, so this needs no host round-trip and
 no new endpoint, and the on/off choice is stored in the browser rather than on
 the control plane. It needs the page to stay open: a fully closed browser
-receives nothing.
+receives nothing. It also needs the Notifications API, which is not universal:
+an insecure page and a browser that does not offer the API at all get separate
+messages, because only the first is fixed by serving the page over https.
 
 The conversation gains a third view beside **Chat** and **Trajectory**: a
 read-only **Sandbox** tab describing the session's environment. It reports the
@@ -693,4 +695,6 @@ see
 - Turn notifications are a page feature: the page must stay open (a background
   tab is fine), the browser exposes the Notifications API only in a secure
   context (https, or localhost), and a frozen background tab can delay a
-  notification until the browser wakes it.
+  notification until the browser wakes it. On iOS, only Safari exposes the API
+  (16.4+, and to a page added to the Home Screen); Firefox and Chrome there
+  cannot show notifications on any page.
