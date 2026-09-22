@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import z from "@deepseek-ai/schemastery";
+import type { Volatile } from "@deepseek-ai/cosmokit";
 
 import { DEFAULT_RUNNER_IMAGE } from "./runner-image.js";
 import type { SandboxProfile } from "./types.js";
@@ -36,21 +37,47 @@ export type ProfileConfig =
       readyTimeoutMs?: number;
     };
 
+/**
+ * One runtime setting as it can arrive: a volatile reference when the Loader
+ * mounted the row (the settings form edits those live), a plain value in
+ * tests and static overlays.
+ */
+export type RuntimeSetting<T> = Volatile<T | undefined> | T | undefined;
+
+/** Read the current value of one runtime setting, whatever form it takes. */
+interface VolatileReader<T> {
+  get(): T | undefined;
+}
+
+export function readSetting<T>(value: RuntimeSetting<T>): T | undefined {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "get" in value &&
+    typeof value.get === "function"
+  ) {
+    // The snapshot type is structural; the reference owns the value's type.
+    return (value as VolatileReader<T>).get();
+  }
+  return value as T | undefined;
+}
+
 export interface Config {
   /**
    * Named sandbox profiles a session can choose from before its first prompt.
    * An empty map is allowed: the host boots and serves sessions, but no
-   * sandbox can be provisioned until a profile is added.
+   * sandbox can be provisioned until a profile is added. Volatile: the Web
+   * Sandboxes page edits these live through the settings form.
    */
-  profiles?: Record<string, ProfileConfig>;
+  profiles?: RuntimeSetting<Record<string, ProfileConfig>>;
   /** Profile used when the session did not pick one. Defaults to the first. */
-  defaultProfile?: string;
+  defaultProfile?: RuntimeSetting<string>;
   stateDir?: string;
   repository?: string;
   revision?: string;
   workspace?: string;
-  idleMs?: number;
-  expiresAfterMs?: number;
+  idleMs?: RuntimeSetting<number>;
+  expiresAfterMs?: RuntimeSetting<number>;
   registrationToken?: string;
   tunnel?: {
     port?: number;
@@ -158,20 +185,27 @@ const runtimeFields = () => ({
 });
 
 /**
- * The schema of the `sandbox-manager` settings namespace: the slice of this
- * row's config that the settings document and the Web Sandboxes page can
- * override at runtime, layered over this row's config as the composition
- * base.
+ * The schema cordis validates the row config against. The runtime slice is
+ * volatile, so the settings service projects exactly those fields as this
+ * row's live form and edits reach the running host through the Loader's
+ * volatile update. Every default here must stay in sync with resolveConfig,
+ * which applies the same defaults at runtime.
  */
-export const runtimeSettingsSchema: Schemastery<RuntimeConfig> =
-  z.object(runtimeFields());
+const volatileRuntimeFields = () => {
+  const fields = runtimeFields();
+  return {
+    profiles: fields.profiles.volatile(),
+    defaultProfile: fields.defaultProfile.volatile(),
+    idleMs: fields.idleMs.volatile(),
+    expiresAfterMs: fields.expiresAfterMs.volatile(),
+  };
+};
 
-/**
- * The schema cordis validates the row config against. Every default here must
- * stay in sync with resolveConfig, which applies the same defaults at runtime.
- */
-export const configSchema: Schemastery<Config> = z.object({
-  ...runtimeFields(),
+// The volatile field wrappers widen the schema's inferred output past what
+// the annotation can express, so the assembled schema is asserted onto the
+// Config shape the rest of the package reads.
+export const configSchema = z.object({
+  ...volatileRuntimeFields(),
   stateDir: z.string(),
   repository: z.string(),
   revision: z.string().default(""),
@@ -197,8 +231,12 @@ export function resolveRuntime(
   config: RuntimeConfig,
   tunnelPort: number,
 ): ResolvedRuntime {
+  const rawProfiles = readSetting(config.profiles) ?? {};
+  const rawDefaultProfile = readSetting(config.defaultProfile);
+  const rawIdleMs = readSetting(config.idleMs);
+  const rawExpiresAfterMs = readSetting(config.expiresAfterMs);
   const profiles = Object.fromEntries(
-    Object.entries(config.profiles ?? {}).map(([name, profile]) => [
+    Object.entries(rawProfiles).map(([name, profile]) => [
       name,
       resolveProfile(name, profile, tunnelPort),
     ]),
@@ -208,9 +246,7 @@ export function resolveRuntime(
   // leftover name is ignored rather than stopping the host from booting; the
   // first prompt reports the missing profile instead.
   const defaultProfile =
-    configured.length === 0
-      ? undefined
-      : (config.defaultProfile ?? configured[0]);
+    configured.length === 0 ? undefined : (rawDefaultProfile ?? configured[0]);
   if (defaultProfile !== undefined && profiles[defaultProfile] === undefined) {
     throw new Error(
       `defaultProfile ${defaultProfile} is not a configured profile`,
@@ -219,8 +255,8 @@ export function resolveRuntime(
   const resolved: ResolvedRuntime = {
     profiles,
     defaultProfile,
-    idleMs: config.idleMs ?? 10 * 60_000,
-    expiresAfterMs: config.expiresAfterMs ?? 7 * 24 * 60 * 60_000,
+    idleMs: rawIdleMs ?? 10 * 60_000,
+    expiresAfterMs: rawExpiresAfterMs ?? 7 * 24 * 60 * 60_000,
   };
   for (const [name, value] of [
     ["idleMs", resolved.idleMs],
@@ -239,10 +275,107 @@ export function resolveRuntime(
  * first prompt explains what to add.
  */
 export function resolveConfig(config: Config): ResolvedConfig {
-  const stateDir = config.stateDir ?? join(homedir(), ".dsh-yawn");
   const tunnelPort = config.tunnel?.port ?? 8081;
+  return assembleConfig(config, resolveRuntime(config, tunnelPort));
+}
+
+/**
+ * The boot face of {@link resolveConfig}. Since dsh 0.1.7, settings-form
+ * writes persist into the profile's own `cordis.patch.yml` — the same file
+ * the Loader reads at boot — and the form validates against the row schema
+ * alone, so a semantically bad but schema-valid value (a `defaultProfile`
+ * naming no profile, a `controlPlaneUrl` that is not a WebSocket URL) can be
+ * saved. This resolver degrades that slice instead of throwing: the bad
+ * pieces drop with one warning each, the host still boots, and the operator
+ * fixes the value in the form. Boot-authored fields (state directories, the
+ * tunnel, the preview domain) stay strict — an image that ships them broken
+ * must fail loudly.
+ *
+ * Every warning explains what was ignored, so a degraded boot is legible in
+ * the control-plane log.
+ */
+/**
+ * The boot face of {@link resolveConfig}. Since dsh 0.1.7, settings-form
+ * writes persist into the profile's own `cordis.patch.yml` — the same file
+ * the Loader reads at boot — and the form validates against the row schema
+ * alone, so a semantically bad but schema-valid value (a `defaultProfile`
+ * naming no profile, a `controlPlaneUrl` that is not a WebSocket URL) can be
+ * saved. The boot resolver degrades that slice instead of throwing; see
+ * {@link resolveDegradingRuntime}.
+ */
+export function resolveBootConfig(config: Config): {
+  config: ResolvedConfig;
+  warnings: string[];
+} {
+  const { runtime, warnings } = resolveDegradingRuntime(
+    config,
+    config.tunnel?.port ?? 8081,
+  );
+  return { config: assembleConfig(config, runtime), warnings };
+}
+
+/**
+ * Resolve the runtime slice piece by piece: a broken profile drops with one
+ * warning, a `defaultProfile` naming no remaining profile falls back to the
+ * first, and an out-of-range timer restores its default. Boot and the
+ * running host both read through this, so a value that survives a restart
+ * also applies live -- only the pieces that cannot work are ignored.
+ */
+export function resolveDegradingRuntime(
+  config: RuntimeConfig,
+  tunnelPort: number,
+): { runtime: ResolvedRuntime; warnings: string[] } {
+  const warnings: string[] = [];
+
+  const rawProfiles = readSetting(config.profiles) ?? {};
+  const profiles: Record<string, SandboxProfile> = {};
+  for (const [name, profile] of Object.entries(rawProfiles)) {
+    try {
+      profiles[name] = resolveProfile(name, profile, tunnelPort);
+    } catch (error) {
+      warnings.push(
+        `ignoring sandbox profile ${name}, which the host cannot apply: ${messageOf(error)}`,
+      );
+    }
+  }
+
+  const configured = Object.keys(profiles);
+  // The unset case matches the strict resolver: the first configured profile
+  // is the default, so a fresh installation with profiles picks one without
+  // an explicit setting.
+  const named = readSetting(config.defaultProfile);
+  let defaultProfile =
+    configured.length === 0 ? undefined : (named ?? configured[0]);
+  if (defaultProfile !== undefined && profiles[defaultProfile] === undefined) {
+    warnings.push(
+      `defaultProfile ${named} names no configured profile; using ${configured[0]}`,
+    );
+    defaultProfile = configured[0];
+  }
+
+  const runtime: ResolvedRuntime = {
+    profiles,
+    defaultProfile,
+    idleMs: bootTimer(config, "idleMs", 10 * 60_000, warnings),
+    expiresAfterMs: bootTimer(
+      config,
+      "expiresAfterMs",
+      7 * 24 * 60 * 60_000,
+      warnings,
+    ),
+  };
+
+  return { runtime, warnings };
+}
+
+function assembleConfig(
+  config: Config,
+  runtime: ResolvedRuntime,
+): ResolvedConfig {
+  const tunnelPort = config.tunnel?.port ?? 8081;
+  const stateDir = config.stateDir ?? join(homedir(), ".dsh-yawn");
   const resolved: ResolvedConfig = {
-    ...resolveRuntime(config, tunnelPort),
+    ...runtime,
     stateDir,
     ...(config.repository === undefined
       ? {}
@@ -284,6 +417,30 @@ function checkPreviewDomain(domain: string | undefined): string | undefined {
     );
   }
   return lowered;
+}
+
+/** One timer with the degrading fallback: the schema rejects negatives at
+ * the form, a hand-edited patch may still carry one, and resolution degrades
+ * with a note instead of failing the whole slice. */
+function bootTimer(
+  config: RuntimeConfig,
+  key: "idleMs" | "expiresAfterMs",
+  fallback: number,
+  warnings: string[],
+): number {
+  const value = readSetting(config[key]);
+  if (value === undefined) {
+    return fallback;
+  }
+  if (!Number.isFinite(value) || value <= 0) {
+    warnings.push(`${key} ${value} must be positive; using ${fallback}`);
+    return fallback;
+  }
+  return value;
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function resolveProfile(

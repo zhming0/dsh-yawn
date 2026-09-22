@@ -38,7 +38,7 @@ export type NotificationPermissionState =
  * its own store type, so `Pick<ISessions, …>` is the honest face in a program
  * that type-checks both planes.
  */
-export type ClientSessions = Pick<ISessions, "list" | "open">;
+export type ClientSessions = Pick<ISessions, "list">;
 
 /** What one finished turn looks like to the notification layer. */
 export interface TurnFinishedNotice {
@@ -57,8 +57,8 @@ export interface TurnNotificationRuntime {
   permission(): NotificationPermissionState;
   /** Whether the user is looking at this page right now. */
   looking(): boolean;
-  /** Show one notification; clicking it runs `onClick`. */
-  show(notice: TurnFinishedNotice, onClick: () => void): void;
+  /** Show one notification; clicking it focuses the page. */
+  show(notice: TurnFinishedNotice): void;
 }
 
 /** Whether this browser has turn notifications switched on. */
@@ -171,16 +171,10 @@ export function installTurnNotifications(
     if (runtime.looking()) {
       return;
     }
-    runtime.show(
-      { sessionId: String(summary.id), title: summary.displayTitle },
-      () => {
-        try {
-          sessions.open(summary.id);
-        } catch {
-          // The session left the list between the notification and the click.
-        }
-      },
-    );
+    runtime.show({
+      sessionId: String(summary.id),
+      title: summary.displayTitle,
+    });
   });
 }
 
@@ -189,24 +183,18 @@ export const browserRuntime: TurnNotificationRuntime = {
   enabled: notificationsEnabled,
   permission: notificationPermission,
   looking: () => !document.hidden && document.hasFocus(),
-  show: (notice, onClick) =>
+  show: (notice) =>
     showNotification(
       notice.title,
       "The turn finished.",
       // One notification per session: a second browser tab showing the same
       // completion replaces this one instead of alerting twice.
       `dsh-yawn-turn:${notice.sessionId}`,
-      onClick,
     ),
 };
 
 /** Build and wire one Notification; a click focuses the page first. */
-function showNotification(
-  title: string,
-  body: string,
-  tag: string,
-  onClick?: () => void,
-): void {
+function showNotification(title: string, body: string, tag: string): void {
   let notification: Notification;
   try {
     notification = new Notification(title, { body, tag });
@@ -217,6 +205,5 @@ function showNotification(
   notification.onclick = () => {
     window.focus();
     notification.close();
-    onClick?.();
   };
 }

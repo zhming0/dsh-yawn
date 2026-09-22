@@ -2,6 +2,8 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { createUserMessage, type Message } from "@deepseek-ai/dsh-llm";
 
+import { YAWN_MESSAGE_SOURCE } from "./message-source.js";
+
 import { InstructionStore } from "./instruction-store.js";
 import type {
   InstructionSettingsView,
@@ -12,7 +14,6 @@ import {
   repositoryForAnchor,
 } from "./workspace-anchor.js";
 
-const MANAGED_INSTRUCTIONS_SOURCE = "@zhming0/dsh-yawn:instructions";
 const CLEARED_INSTRUCTIONS =
   "<system-reminder>\nUI-managed AGENTS.md instructions were cleared. Earlier UI-managed AGENTS.md instruction baselines no longer apply. Checked-in AGENTS.md instructions remain active.\n</system-reminder>";
 
@@ -156,8 +157,7 @@ function managedInstructionMessage(text: string) {
   return createUserMessage({
     content: [{ type: "text" as const, text }],
     source: {
-      kind: "plugin" as const,
-      plugin: MANAGED_INSTRUCTIONS_SOURCE,
+      kind: YAWN_MESSAGE_SOURCE,
       form: "instructions" as const,
     },
   });
@@ -178,8 +178,8 @@ function latestManagedInstructions(agent: Agent): string | undefined {
 
 function managedInstructionText(message: Message): string | undefined {
   if (
-    message.source.kind !== "plugin" ||
-    message.source.plugin !== MANAGED_INSTRUCTIONS_SOURCE
+    message.source.kind !== YAWN_MESSAGE_SOURCE ||
+    message.source.form !== "instructions"
   ) {
     return undefined;
   }

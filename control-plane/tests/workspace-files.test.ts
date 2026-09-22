@@ -3,7 +3,6 @@ import { posix } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { Agent } from "@deepseek-ai/dsh-agent";
-import type { FsTarget, FsVersion } from "@deepseek-ai/dsh-fs";
 import type { SessionId } from "@deepseek-ai/dsh-session";
 import {
   WorkspaceFiles,
@@ -21,7 +20,6 @@ const SANDBOX_ROOT = "/workspace/repository";
 type Target = { readonly path: string };
 
 /** The fake filesystem's targets carry only a path; the stock code never looks inside. */
-const target = (path: string) => ({ path }) as unknown as FsTarget;
 
 /**
  * Enough of `SandboxFileSystem` to exercise the service: every call needs an
@@ -54,6 +52,7 @@ function makeFakeFs(
     );
   const typeOf = (path: string) =>
     files.has(path) ? "file" : directories.has(path) ? "directory" : undefined;
+  const watchers: { path: string; changed: (error?: Error) => void }[] = [];
   const fs = {
     resolve: async (path: string, options: { cwd?: string }) => {
       observe();
@@ -72,6 +71,20 @@ function makeFakeFs(
       }
       const size = files.get(target.path)?.length;
       return { type, version: `v-${target.path}`, size };
+    },
+    watch: async (
+      target: Target,
+      changed: (error?: Error) => void,
+      _signal: AbortSignal,
+    ) => {
+      observe();
+      watchers.push({ path: target.path, changed });
+      return async () => {
+        const index = watchers.findIndex((entry) => entry.path === target.path);
+        if (index >= 0) {
+          watchers.splice(index, 1);
+        }
+      };
     },
     listDir: async (target: Target) => {
       observe();
@@ -122,7 +135,7 @@ function makeFakeFs(
       return pathToFileURL(target.path).href;
     },
   };
-  return { fs, initiators };
+  return { fs, initiators, watchers };
 }
 
 function makeService(files: Map<string, string>) {
@@ -156,7 +169,7 @@ function makeService(files: Map<string, string>) {
       };
     },
   };
-  const { fs, initiators } = makeFakeFs(agents, files);
+  const { fs, initiators, watchers } = makeFakeFs(agents, files);
   ctx.provide("fs", fs);
   ctx.provide("sandboxPolicy", { workspaceRoot: SANDBOX_ROOT });
   // The stock constructor waits for `sessions` and `typert` before it
@@ -172,7 +185,16 @@ function makeService(files: Map<string, string>) {
     sessionId: "session-one" as SessionId,
     workspaceRoot: HOST_CWD,
   };
-  return { ctx, service, undo, agent, scope, initiators, resolveCalls };
+  return {
+    ctx,
+    service,
+    undo,
+    agent,
+    scope,
+    initiators,
+    resolveCalls,
+    watchers,
+  };
 }
 
 function signal() {
@@ -241,34 +263,32 @@ describe("scopeToSession", () => {
     expect(initiators).toEqual([]);
   });
 
-  it("follows filesystem observations inside the workspace as the session agent", async () => {
-    const { ctx, service, scope, agent, initiators } = makeService(new Map());
+  it("follows target watches inside the workspace as the session agent", async () => {
+    const { service, scope, agent, initiators, watchers } = makeService(
+      new Map([[`${SANDBOX_ROOT}/out.txt`, "produced"]]),
+    );
     const controller = new AbortController();
-    const changes = service.changes(scope, controller.signal);
+    const changes = service.changes(scope, "out.txt", controller.signal);
     const frames = changes[Symbol.asyncIterator]();
 
     const ready = await frames.next();
     expect(ready).toEqual({ done: false, value: { kind: "ready" } });
-    expect(initiators).toEqual([agent]);
+    expect(initiators.length).toBeGreaterThan(0);
+    expect(watchers.map((entry) => entry.path)).toEqual([
+      `${SANDBOX_ROOT}/out.txt`,
+    ]);
 
-    ctx.emit(
-      "fs/observed",
-      target("/elsewhere/secret.txt"),
-      { kind: "present", version: "1" as FsVersion },
-      undefined,
-    );
-    ctx.emit(
-      "fs/observed",
-      target(`${SANDBOX_ROOT}/out.txt`),
-      { kind: "present", version: "7" as FsVersion },
-      undefined,
-    );
+    // An invalidation reads current metadata for the watched target.
+    watchers[0]!.changed();
     const change = await frames.next();
     expect(change).toEqual({
       done: false,
       value: {
         kind: "change",
-        change: { absolutePath: `${SANDBOX_ROOT}/out.txt`, version: "7" },
+        change: {
+          absolutePath: `${SANDBOX_ROOT}/out.txt`,
+          version: `v-${SANDBOX_ROOT}/out.txt`,
+        },
       },
     });
     expect(initiators.every((seen) => seen === agent)).toBe(true);
@@ -280,15 +300,7 @@ describe("scopeToSession", () => {
   it("leaves the stock prototype and its remote markers alone, and undoes cleanly", async () => {
     const { service, undo, scope } = makeService(new Map());
 
-    const wrapped = [
-      "read",
-      "readBytes",
-      "readAll",
-      "readRelated",
-      "stat",
-      "list",
-      "changes",
-    ];
+    const wrapped = ["read", "readBytes", "stat", "list", "changes"];
     for (const method of wrapped) {
       expect(Object.hasOwn(service, method)).toBe(true);
     }

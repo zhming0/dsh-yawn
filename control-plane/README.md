@@ -301,25 +301,23 @@ Configuration is YAML in the profile's own layer,
     idleMs: 300000
 ```
 
-That layer is the **base**: the host also registers a `sandbox-manager`
-namespace with dsh's settings service, so everything in the table below that
-is marked _live_ can be changed at runtime — through the Web UI's
-**Settings → Sandboxes** page or by editing the settings document
-(`$DSH_HOME/settings.yaml`, hot-reloaded) — and applies without a restart.
-The settings document's section wins per field, a reset returns to this
-layer's value, and a change re-resolves the profiles (backends of unchanged
-profiles are kept), the default profile, and the idle and expiry timers,
-which take effect for the next armed countdown and the next hibernation.
-Sessions that already have a sandbox keep it; a profile whose sessions are
-still on record can be removed, and those sessions behave exactly as they do
-across a restart with the profile missing.
+That layer is the **base**: the live fields below are volatile row config,
+so everything marked _live_ can be changed at runtime through the Web UI's
+**Settings → Sandboxes** page and applies without a restart. Since dsh 0.1.7
+those edits persist back into the profile's own `cordis.patch.yml` (the same
+file the image seeds once), a reset returns to the value beneath the edit,
+and a change re-resolves the profiles (backends of unchanged profiles are
+kept), the default profile, and the idle and expiry timers, which take
+effect for the next armed countdown and the next hibernation. Sessions that
+already have a sandbox keep it; a profile whose sessions are still on record
+can be removed, and those sessions behave exactly as they do across a
+restart with the profile missing.
 
-Writes are validated where they land: the page refuses a save the host cannot
-apply (a `defaultProfile` no profile defines, a `controlPlaneUrl` that is not
-a WebSocket URL), and a stored section that turns invalid keeps the last good
-values with a warning rather than stopping the host. Every write carries the
-revision it read, so a concurrent editor or a direct document edit is refused
-as a conflict instead of being overwritten.
+Writes are validated where they land: the host keeps the last good values
+with a warning rather than stopping when a slice turns invalid (a
+`defaultProfile` no profile defines, a timer out of range), and every write
+carries the revision it read, so a concurrent editor is refused as a conflict
+instead of being overwritten.
 
 The settings page is writable by anyone the control plane admits, like the
 Secrets page: one control plane is one operator domain. The stock dsh

@@ -1,4 +1,5 @@
 import type { Context } from "@deepseek-ai/cordis";
+import { YAWN_MESSAGE_SOURCE } from "../message-source.js";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 
@@ -27,7 +28,6 @@ const WAKE_NOTICE_KEPT_FILESYSTEM: SandboxNotice = {
   ...WAKE_NOTICE,
   text: "This sandbox was suspended and woke on the same machine. Its files are intact, but the processes that were running before the suspension are gone. Restart what you need before continuing.",
 };
-const SANDBOX_NOTICE_SOURCE = "@zhming0/dsh-yawn:sandbox";
 
 export interface SandboxNoticesDependencies {
   /** The root session whose sandbox an agent's work shares. */
@@ -108,8 +108,7 @@ function noticeMessage(notice: SandboxNotice) {
   return createUserMessage({
     content: [{ type: "text" as const, text: notice.text }],
     source: {
-      kind: "plugin" as const,
-      plugin: SANDBOX_NOTICE_SOURCE,
+      kind: YAWN_MESSAGE_SOURCE,
       form: "notice" as const,
       summary: notice.summary,
     },

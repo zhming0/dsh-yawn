@@ -174,13 +174,13 @@ export const sandboxStatusDescriptors: InvocationDescriptor[] = [
       codec: {
         mode: "strict" as const,
         typeSymbol: `@zhming0/dsh-yawn#sandboxManager/getSandboxStatus:${name}`,
-        schema: stringSchema,
+        create: () => stringSchema,
       },
     })),
     result: {
       mode: "strict",
       typeSymbol: "@zhming0/dsh-yawn#sandboxManager/getSandboxStatus:result",
-      schema: viewSchema,
+      create: () => viewSchema,
     },
   },
 ];

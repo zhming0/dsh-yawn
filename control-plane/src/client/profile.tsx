@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import {
   Menu,
-  IconChevronDownOutline14,
+  IconChevronDownOutlineMedium,
 } from "@deepseek-ai/dsh-client-ui-primitives";
 // Type-only imports for the declaration merges that define the
 // `conversation.input.left` slot key and the session standard props.
@@ -157,7 +157,7 @@ export function SandboxProfileChip({
               transform: open ? "rotate(180deg)" : undefined,
             }}
           >
-            <IconChevronDownOutline14 />
+            <IconChevronDownOutlineMedium />
           </span>
         </button>
       }

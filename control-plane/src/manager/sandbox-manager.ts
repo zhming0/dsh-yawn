@@ -19,14 +19,10 @@ import {
 import { CheckpointStore } from "../checkpoint.js";
 import {
   configSchema,
-  resolveConfig,
+  resolveBootConfig,
   resolveRegistrationTokens,
-  resolveRuntime,
-  runtimeSettingsSchema,
   type Config,
   type ResolvedConfig,
-  type ResolvedRuntime,
-  type RuntimeConfig,
 } from "../config.js";
 import {
   FileIndexStore,
@@ -125,11 +121,13 @@ export class SandboxManager extends TypertRemoteService {
   private readonly agentLookup: (sessionId: string) => Agent | undefined;
   private readonly rootSessions = new Map<string, string>();
   /**
-   * The settings service's view of the runtime slice, once installed. While
-   * undefined (no settings service mounted, or not yet attached) the row's
-   * own config is the slice's source.
+   * The row config as the Loader mounted it. Its runtime fields are volatile
+   * references once settings forms can edit them, so reading through them
+   * sees every committed write without an event.
    */
-  private settingsSource: (() => RuntimeConfig) | undefined;
+  private readonly rawConfig: Config;
+  /** The profile map last applied to the registry, as JSON, for drift checks. */
+  private appliedProfilesJson = "";
   /** Test-supplied credential resolution; production reads the host service. */
   private readonly credentialsOverride: CredentialResolver | undefined;
 
@@ -139,7 +137,15 @@ export class SandboxManager extends TypertRemoteService {
     dependencies: ManagerDependencies = {},
   ) {
     super(ctx, "sandboxManager");
-    this.config = resolveConfig(config);
+    this.rawConfig = config;
+    // Settings-form writes land in the profile patch the Loader reads, so a
+    // schema-valid but unusable value must not take the whole row down on the
+    // next restart: degrade the editable slice, log why, keep booting.
+    const boot = resolveBootConfig(config);
+    for (const warning of boot.warnings) {
+      ctx.logger("sandbox").warn(warning);
+    }
+    this.config = boot.config;
     this.workspace = this.config.workspace;
     if (Object.keys(this.config.profiles).length === 0) {
       ctx
@@ -193,12 +199,26 @@ export class SandboxManager extends TypertRemoteService {
     }
     this.workspaceRegistry = dependencies.workspaceRegistry;
     this.credentialsOverride = dependencies.credentials;
-    this.runtime = new RuntimeSettings({
-      profiles: this.config.profiles,
-      defaultProfile: this.config.defaultProfile,
-      idleMs: this.config.idleMs,
-      expiresAfterMs: this.config.expiresAfterMs,
-    });
+    // The holder seeds its warning state from boot's, so the same degraded
+    // slice is not logged twice, and resolves through the same piece-by-piece
+    // logic: a broken profile never freezes the timers or later valid edits.
+    this.runtime = new RuntimeSettings(
+      {
+        profiles: this.config.profiles,
+        defaultProfile: this.config.defaultProfile,
+        idleMs: this.config.idleMs,
+        expiresAfterMs: this.config.expiresAfterMs,
+      },
+      boot.warnings,
+      () => this.rawConfig,
+      this.config.tunnel.port,
+      (warnings) => {
+        for (const warning of warnings) {
+          this.ctx.logger("sandbox").warn(warning);
+        }
+      },
+    );
+    this.appliedProfilesJson = JSON.stringify(this.runtime.profiles);
     this.profileChoice = new ProfileChoice(this.runtime, store);
     const runtime = this.runtime;
     const attachment = new RunnerAttachment({
@@ -314,43 +334,8 @@ export class SandboxManager extends TypertRemoteService {
       typertCtx.typert.register(yawnHost);
     });
 
-    // The mutable settings slice lives in the dsh settings document when the
-    // settings service is mounted — dsh-base mounts the file provider — with
-    // this row's config as the composition base, so the Web Sandboxes page
-    // and direct edits to the settings document both take effect live.
-    // Without the service (a bare test context, an unusual profile) the row
-    // config alone stays authoritative, exactly as before.
-    ctx.inject(["settings"], (settingsCtx) => {
-      try {
-        settingsCtx.settings.installSection(
-          settingsCtx,
-          "sandbox-manager",
-          runtimeSettingsSchema,
-          runtimeEntry(config),
-          {
-            setSource: (current) => {
-              this.settingsSource = current;
-            },
-            onChange: () => this.applyRuntimeSettings(),
-            // Refuse the write at save time rather than storing a section
-            // the host cannot act on, such as a defaultProfile no profile
-            // defines or a controlPlaneUrl that is not a WebSocket URL.
-            validate: (value) => {
-              resolveRuntime(value, this.config.tunnel.port);
-            },
-          },
-        );
-      } catch (error) {
-        settingsCtx
-          .logger("sandbox")
-          .warn(
-            `could not register the sandbox-manager settings namespace; the row configuration stays fixed: ${errorMessage(error)}`,
-          );
-      }
-    });
-
-    // Provisioning waits for the first prompt: `agent/session-start` fires as
-    // soon as a blank session exists, before the user has picked a profile.
+    // Provisioning waits for the first prompt: `agent/created` fires as soon
+    // as a blank session exists, before the user has picked a profile.
     // ManagedInstructions.install() calls ensureRunning at `agent/pre-step`.
     this.instructions.install();
     // After it, so the notice listener reads only when next() has already run
@@ -442,48 +427,34 @@ export class SandboxManager extends TypertRemoteService {
   }
 
   /**
-   * Re-resolve the runtime slice from its current source and apply it: the
-   * registry rebuilds first (atomic — a backend that cannot be built throws
-   * before anything swaps), then the holder follows with the timers, the
-   * default profile, and the profile list the composer chip reads. A failed
-   * rebuild keeps the previous settings whole rather than half-applied; the
-   * write was already valid, so the operator fixes the cause or removes the
-   * profile.
+   * Rebuild the profile registry when the profile map changed since the last
+   * applied one. Volatile config carries no change event, so this runs at
+   * the provisioning choke points — the earliest moment new profiles can
+   * matter. The registry rebuild is atomic: a backend that cannot be built
+   * throws before anything swaps, the previous settings stay applied, and
+   * the next call retries.
    */
-  private applyRuntimeSettings(): void {
-    const source = this.settingsSource;
-    if (source === undefined) {
+  private syncRuntimeSettings(): void {
+    const profiles = this.runtime.profiles;
+    const json = JSON.stringify(profiles);
+    if (json === this.appliedProfilesJson) {
       return;
     }
-    let next: ResolvedRuntime;
     try {
-      next = resolveRuntime(source(), this.config.tunnel.port);
+      this.registry.update(profiles);
     } catch (error) {
       this.ctx
         .logger("sandbox")
         .warn(
-          `keeping the previous sandbox settings; the settings document has values the host cannot apply: ${errorMessage(error)}`,
+          `keeping the previous sandbox profiles; one of the new profiles cannot start: ${errorMessage(error)}`,
         );
       return;
     }
-    try {
-      this.registry.update(next.profiles);
-    } catch (error) {
-      this.ctx
-        .logger("sandbox")
-        .warn(
-          `keeping the previous sandbox settings; one of the new profiles cannot start: ${errorMessage(error)}`,
-        );
-      return;
-    }
-    const before = Object.keys(this.runtime.profiles).sort().join(", ");
-    this.runtime.apply(next);
-    const after = Object.keys(next.profiles).sort().join(", ");
-    if (before !== after) {
-      this.ctx
-        .logger("sandbox")
-        .info(`sandbox profiles are now: ${after === "" ? "(none)" : after}`);
-    }
+    this.appliedProfilesJson = json;
+    const names = Object.keys(profiles).sort().join(", ");
+    this.ctx
+      .logger("sandbox")
+      .info(`sandbox profiles are now: ${names === "" ? "(none)" : names}`);
   }
 
   /** Resolve the current foreground agent and return its live runner. */
@@ -619,6 +590,7 @@ export class SandboxManager extends TypertRemoteService {
    */
   async ensureRunning(agent: Agent): Promise<RunnerClient> {
     await this.ready;
+    this.syncRuntimeSettings();
     const sessionId = this.rootSessionId(agent);
     this.idle.markActive(sessionId);
     // Resolve the repository through the root agent when it is live: the
@@ -774,20 +746,6 @@ export class SandboxManager extends TypertRemoteService {
       );
     }
   }
-}
-
-/** The runtime slice of a row config, used as the settings namespace's base. */
-function runtimeEntry(config: Config): RuntimeConfig {
-  return {
-    ...(config.profiles === undefined ? {} : { profiles: config.profiles }),
-    ...(config.defaultProfile === undefined
-      ? {}
-      : { defaultProfile: config.defaultProfile }),
-    ...(config.idleMs === undefined ? {} : { idleMs: config.idleMs }),
-    ...(config.expiresAfterMs === undefined
-      ? {}
-      : { expiresAfterMs: config.expiresAfterMs }),
-  };
 }
 
 function errorMessage(error: unknown): string {

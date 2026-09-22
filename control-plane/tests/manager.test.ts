@@ -478,8 +478,8 @@ describe("sandbox lifecycle", () => {
     // A blank session exists before the user has picked a profile, and every
     // UI action that resolves a cold session resumes it. Neither may schedule
     // a sandbox; the first pre-step does, through ensureRunning.
-    ctx.emit("agent/session-start", { agent, source: "startup" });
-    ctx.emit("agent/session-start", { agent, source: "resume" });
+    agentEvents(ctx, agent).emit("agent/created", { source: "startup" });
+    agentEvents(ctx, agent).emit("agent/created", { source: "resume" });
     await sleep(50);
     expect(backend.provisions).toBe(0);
     expect(backend.wakes).toBe(0);
@@ -489,7 +489,7 @@ describe("sandbox lifecycle", () => {
 
     // A resume of a hibernated session leaves it hibernated.
     await manager.hibernate("session-one");
-    ctx.emit("agent/session-start", { agent, source: "resume" });
+    agentEvents(ctx, agent).emit("agent/created", { source: "resume" });
     await sleep(50);
     expect(backend.wakes).toBe(0);
     const store = new SessionStore(join(directory, "sessions.json"));
@@ -585,8 +585,7 @@ describe("sandbox lifecycle", () => {
             },
           ],
           source: {
-            kind: "plugin",
-            plugin: "@zhming0/dsh-yawn:sandbox",
+            kind: "dsh-yawn",
             form: "notice",
           },
         },
@@ -652,8 +651,7 @@ describe("sandbox lifecycle", () => {
             },
           ],
           source: {
-            kind: "plugin",
-            plugin: "@zhming0/dsh-yawn:sandbox",
+            kind: "dsh-yawn",
             form: "notice",
             summary: "Sandbox woke from hibernation",
           },
@@ -716,8 +714,7 @@ describe("sandbox lifecycle", () => {
             },
           ],
           source: {
-            kind: "plugin",
-            plugin: "@zhming0/dsh-yawn:sandbox",
+            kind: "dsh-yawn",
             form: "notice",
             summary: "Sandbox woke from hibernation",
           },
@@ -984,8 +981,7 @@ describe("repository workspaces and instructions", () => {
             },
           ],
           source: {
-            kind: "plugin",
-            plugin: "@zhming0/dsh-yawn:instructions",
+            kind: "dsh-yawn",
             form: "instructions",
           },
         },

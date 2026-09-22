@@ -143,9 +143,10 @@ Yes. The control plane runs a stock dsh `web` profile on its data volume, so
   wires up nothing;
 - an image upgrade reseeds the profile's `package.json` and `node_modules`,
   dropping what you added, so re-add plugins after upgrading;
-- Web sessions mount their tools through agent presets, so a bundle patch that
-  renames a stock tool row changes nothing for sessions. The stock rows
-  already run inside the sandbox.
+- Web sessions mount their tools through agent presets. Since dsh 0.1.7 a
+  bundle patch *could* restate a preset, but this package does not: the stock
+  tool rows already run inside the sandbox, and staying off the preset rows
+  keeps that true across dsh upgrades.
 
 ## Documentation
 

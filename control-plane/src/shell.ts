@@ -4,10 +4,14 @@ import {
   type CollectedOutput,
   type ShellExecRequest,
   type ShellExecSpec,
-  type ShellProcess,
+  type ShellExecution,
   type ShellProcessRead,
   type ShellRunResult,
 } from "@deepseek-ai/dsh-shell";
+import type {
+  SubprocessOutputRead,
+  SubprocessOutputReader,
+} from "@deepseek-ai/dsh-subprocess";
 import z from "@deepseek-ai/schemastery";
 import { metrics } from "@opentelemetry/api";
 
@@ -80,6 +84,7 @@ export class SandboxShellExecutor extends ShellExecutor {
         this.config.cwd,
       ),
       timeoutMs,
+      onExpiry: request.onExpiry ?? "kill",
       stdoutMaxBytes: request.stdoutMaxBytes ?? this.config.outputMaxBytes,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
       ...(request.stdin === undefined ? {} : { stdin: request.stdin }),
@@ -89,71 +94,46 @@ export class SandboxShellExecutor extends ShellExecutor {
     };
   }
 
-  async run(spec: ShellExecSpec): Promise<ShellRunResult> {
-    const client = await this.ctx.sandboxManager.clientForCurrentAgent();
-    const timeout = new AbortController();
-    const combined = combineSignals(spec.signal, timeout.signal);
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      timeout.abort(new Error("shell timeout"));
-    }, spec.timeoutMs);
-    timer.unref();
-    const stdout = new TailBuffer(spec.stdoutMaxBytes);
-    const stderr = new TailBuffer(this.config.outputMaxBytes);
-    const started = Date.now();
-    try {
-      const outcome = await runShell(client, spec, combined, stdout, stderr);
-      return {
-        ...outcome,
-        timedOut,
-        aborted: !timedOut && spec.signal?.aborted === true,
-        timeoutMs: spec.timeoutMs,
-        stdout: stdout.collected(),
-        stderr: stderr.collected(),
-      };
-    } catch (error) {
-      if (!combined.aborted) {
-        throw error;
-      }
-      return {
-        exitCode: null,
-        signal: "SIGTERM",
-        timedOut,
-        aborted: !timedOut,
-        timeoutMs: spec.timeoutMs,
-        stdout: stdout.collected(),
-        stderr: stderr.collected(),
-      };
-    } finally {
-      clearTimeout(timer);
-      execDuration.record(Date.now() - started, { kind: "shell" });
-    }
-  }
-
-  start(spec: ShellExecSpec): ShellProcess {
+  /**
+   * Prepare and spawn under the resolved deadline. Preparation is the runner
+   * client, which may wake a hibernated sandbox; the deadline runs through
+   * it, so expiry during the wake settles as a timed-out handle with no
+   * output instead of a rejected execute.
+   */
+  async execute(spec: ShellExecSpec): Promise<ShellExecution> {
+    spec.signal?.throwIfAborted();
     const controller = new AbortController();
-    const process = new RemoteShellProcess(
-      controller,
-      spec.stdoutMaxBytes,
-      this.config.outputMaxBytes,
-    );
-    this.live.add(process);
-    void process.done.finally(() => this.live.delete(process));
-    void this.ctx.sandboxManager
-      .clientForCurrentAgent()
-      .then((client) =>
-        runShell(
-          client,
-          spec,
-          combineSignals(spec.signal, controller.signal),
-          process.stdout,
-          process.stderr,
-        ),
-      )
-      .then((outcome) => process.complete(outcome))
-      .catch((error: unknown) => process.fail(error));
-    return process;
+    let timedOut = false;
+    const timer =
+      spec.onExpiry === "none"
+        ? undefined
+        : setTimeout(() => {
+            timedOut = true;
+            controller.abort(new Error("shell timeout"));
+          }, spec.timeoutMs);
+    timer?.unref();
+    try {
+      const client = await this.ctx.sandboxManager.clientForCurrentAgent();
+      spec.signal?.throwIfAborted();
+      if (timedOut) {
+        return RemoteShellProcess.expired(spec);
+      }
+      const process = new RemoteShellProcess(
+        spec,
+        spec.stdoutMaxBytes,
+        this.config.outputMaxBytes,
+        { timedOut: () => timedOut, clearTimer: () => clearTimeout(timer) },
+        client,
+        controller,
+      );
+      this.live.add(process);
+      void process.done.finally(() => this.live.delete(process));
+      void process.spawn();
+      return process;
+    } catch (error) {
+      clearTimeout(timer);
+      throw error;
+    }
   }
 }
 
@@ -204,6 +184,7 @@ class TailBuffer {
   private text = "";
   private bytes = 0;
   private dropped = false;
+  private written = 0;
   private readonly decoder = new TextDecoder();
 
   constructor(private readonly maxBytes: number) {}
@@ -211,6 +192,7 @@ class TailBuffer {
   append(chunk: Uint8Array): void {
     const next = this.decoder.decode(chunk, { stream: true });
     this.text += next;
+    this.written += next.length;
     this.bytes += chunk.byteLength;
     if (this.bytes > this.maxBytes) {
       this.dropped = true;
@@ -227,56 +209,183 @@ class TailBuffer {
     return { text: this.text, truncated: this.dropped };
   }
 
-  readAndClear(): { text: string; lossy: boolean } {
-    const value = { text: this.text, lossy: this.dropped };
-    this.text = "";
-    this.bytes = 0;
-    this.dropped = false;
-    return value;
+  /** Whole-stream character offsets over the retained capture: the buffer is
+   * never cleared, so the observed readers, the foreground result, and the
+   * consuming cursor all see one capture instead of stealing from one
+   * another. A reader behind the retained tail gets the tail and a `lossy`
+   * flag, matching the seam's offset-reader contract. */
+  readFrom(fromChar: number): SubprocessOutputRead {
+    const base = this.written - this.text.length;
+    if (fromChar < base) {
+      return { text: this.text, nextOffset: this.written, lossy: true };
+    }
+    return {
+      text: this.text.slice(fromChar - base),
+      nextOffset: this.written,
+      lossy: false,
+    };
+  }
+
+  /** One consuming read since `fromChar` without touching the capture: the
+   * cursor belongs to the caller, so a drain cannot steal bytes the observed
+   * readers or a later foreground result still need. */
+  readSince(fromChar: number): {
+    text: string;
+    lossy: boolean;
+    nextCursor: number;
+  } {
+    const view = this.readFrom(fromChar);
+    return {
+      text: view.text,
+      lossy: view.lossy || this.dropped,
+      nextCursor: view.nextOffset,
+    };
   }
 }
 
-class RemoteShellProcess implements ShellProcess {
+class TailReader implements SubprocessOutputReader {
+  constructor(private readonly buffer: TailBuffer) {}
+  readFrom(fromByte: number): SubprocessOutputRead {
+    return this.buffer.readFrom(fromByte);
+  }
+}
+
+interface RemoteShellDeps {
+  /** Whether the executor's own timer fired first; the first-cause fact. */
+  timedOut: () => boolean;
+  clearTimer: () => void;
+}
+
+class RemoteShellProcess implements ShellExecution {
   status: "running" | "completed" | "killed" = "running";
   exitCode: number | null = null;
   signal: NodeJS.Signals | null = null;
   readonly stdout: TailBuffer;
   readonly stderr: TailBuffer;
+  /** Consuming-cursor positions for readOutput; the captures themselves are
+   * shared with the observed readers and result(). */
+  private stdoutCursor = 0;
+  private stderrCursor = 0;
+  readonly observed: {
+    stdout: SubprocessOutputReader;
+    stderr: SubprocessOutputReader;
+  };
   readonly done: Promise<void>;
   private finish!: () => void;
+  private failure: { error: unknown } | undefined;
+  private resultPromise: Promise<ShellRunResult> | undefined;
 
   constructor(
-    private readonly controller: AbortController,
+    private readonly spec: ShellExecSpec,
     stdoutMaxBytes: number,
     stderrMaxBytes: number,
+    private readonly deps: RemoteShellDeps | undefined,
+    private readonly client: RunnerClient | undefined,
+    private readonly controller: AbortController | undefined,
   ) {
     this.stdout = new TailBuffer(stdoutMaxBytes);
     this.stderr = new TailBuffer(stderrMaxBytes);
+    this.observed = {
+      stdout: new TailReader(this.stdout),
+      stderr: new TailReader(this.stderr),
+    };
     this.done = new Promise((resolve) => {
       this.finish = resolve;
     });
   }
 
-  complete(outcome: {
-    exitCode: number | null;
-    signal: NodeJS.Signals | null;
-  }): void {
-    this.exitCode = outcome.exitCode;
-    this.signal = outcome.signal;
-    this.status = outcome.signal === null ? "completed" : "killed";
-    this.finish();
+  /** The settled handle an expiry during preparation returns: timed out,
+   * empty output, and no process was ever spawned. */
+  static expired(spec: ShellExecSpec): RemoteShellProcess {
+    const process = new RemoteShellProcess(
+      spec,
+      0,
+      0,
+      undefined,
+      undefined,
+      undefined,
+    );
+    process.status = "completed";
+    process.resultPromise = Promise.resolve(process.depsResult(true));
+    process.finish();
+    return process;
   }
 
-  fail(error: unknown): void {
-    this.stderr.append(new TextEncoder().encode(`${String(error)}\n`));
-    this.status = "killed";
-    this.signal = "SIGTERM";
-    this.finish();
+  private depsResult(timedOut: boolean): ShellRunResult {
+    return {
+      exitCode: null,
+      signal: null,
+      timedOut,
+      aborted: false,
+      timeoutMs: this.spec.timeoutMs,
+      stdout: this.stdout.collected(),
+      stderr: this.stderr.collected(),
+    };
+  }
+
+  async spawn(): Promise<void> {
+    const started = Date.now();
+    try {
+      const outcome = await runShell(
+        this.client!,
+        this.spec,
+        combineSignals(this.spec.signal, this.controller!.signal),
+        this.stdout,
+        this.stderr,
+      );
+      this.exitCode = outcome.exitCode;
+      this.signal = outcome.signal;
+      this.status = outcome.signal === null ? "completed" : "killed";
+    } catch (error) {
+      if (!this.spec.signal?.aborted && !this.deps?.timedOut()) {
+        // Infrastructure failure: the read path carries the note, result()
+        // carries the rejection.
+        this.stderr.append(
+          new TextEncoder().encode(`spawn failed: ${String(error)}\n`),
+        );
+        this.failure = { error };
+      } else {
+        this.signal = "SIGTERM";
+      }
+      this.status = "killed";
+    } finally {
+      this.deps?.clearTimer();
+      execDuration.record(Date.now() - started, { kind: "shell" });
+      this.finish();
+    }
+  }
+
+  result(): Promise<ShellRunResult> {
+    this.resultPromise ??= new Promise((resolve, reject) => {
+      void this.done.then(() => {
+        if (this.failure !== undefined) {
+          reject(
+            this.failure.error instanceof Error
+              ? this.failure.error
+              : new Error(String(this.failure.error)),
+          );
+          return;
+        }
+        const timedOut = this.deps?.timedOut() ?? false;
+        resolve({
+          exitCode: this.exitCode,
+          signal: this.signal,
+          timedOut,
+          aborted: !timedOut && this.spec.signal?.aborted === true,
+          timeoutMs: this.spec.timeoutMs,
+          stdout: this.stdout.collected(),
+          stderr: this.stderr.collected(),
+        });
+      });
+    });
+    return this.resultPromise;
   }
 
   readOutput(): ShellProcessRead {
-    const stdout = this.stdout.readAndClear();
-    const stderr = this.stderr.readAndClear();
+    const stdout = this.stdout.readSince(this.stdoutCursor);
+    this.stdoutCursor = stdout.nextCursor;
+    const stderr = this.stderr.readSince(this.stderrCursor);
+    this.stderrCursor = stderr.nextCursor;
     return {
       delta: `${stdout.text}${stderr.text.length === 0 ? "" : `\n[stderr]\n${stderr.text}`}`,
       lossy: stdout.lossy || stderr.lossy,
@@ -287,7 +396,7 @@ class RemoteShellProcess implements ShellProcess {
     if (this.status !== "running") {
       return false;
     }
-    this.controller.abort(new Error("background process killed"));
+    this.controller?.abort(new Error("background process killed"));
     return true;
   }
 }
