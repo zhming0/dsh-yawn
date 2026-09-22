@@ -25,20 +25,47 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 
+import { artifactsDirectory } from "./artifacts.js";
+import type { BackendCapabilities } from "./types.js";
+
 /** Name of the environment section this module contributes. */
 export const SANDBOX_ENVIRONMENT_SECTION = "environment:sandbox";
 
 /**
  * The environment section text. `{{cwd}}` renders the sandbox workspace
- * through the shadowed prompt variable. One sentence carries the "this page
- * means the GUI" mapping from the Web GUI paragraph dsh composes: that mapping
- * stays true for a sandboxed session even though the URL does not, so dropping
- * the paragraph must not lose it. The rest states what the model can install,
- * so it reaches for mise, uv, or npm instead of a system package manager the
- * sandbox cannot run.
+ * through the shadowed prompt variable, `{{artifacts}}` the durable output
+ * folder beside it, and `{{tool_retention}}` what this backend keeps across a
+ * sleep. One sentence carries the "this page means the GUI" mapping from the
+ * Web GUI paragraph dsh composes: that mapping stays true for a sandboxed
+ * session even though the URL does not, so dropping the paragraph must not
+ * lose it. The rest states what the model can install, so it reaches for
+ * mise, uv, or npm instead of a system package manager the sandbox cannot
+ * run, and states the one rule for output that must outlive the sandbox: put
+ * it in the artifacts folder, because everything else outside the checkout is
+ * disposable. The checkpoint transfer cap is deliberately absent: it exists
+ * only on a backend that checkpoints, so the checkpoint docs and the restore
+ * notice carry it.
  */
 export const SANDBOX_ENVIRONMENT_PROMPT =
-  'You are working inside an isolated sandbox: file and shell tools resolve paths inside this sandbox, and the repository checkout is mounted at {{cwd}}. There is no DeepSeek Harness source checkout inside the sandbox; the DeepSeek Harness web UI runs on the host machine and is unreachable from here. When the user says "this page", "this GUI", or "this app", they mean that web UI. The sandbox runs as an unprivileged user with no sudo, so system package managers cannot install software. Install project tools with the preinstalled managers instead: `mise use -g` for toolchains, `uv tool install` for Python tools, and `npm install -g` for Node tools. Those write under $HOME on the persistent workspace volume, so they survive hibernation, while anything installed elsewhere in the container is discarded when the sandbox hibernates.';
+  'You are working inside an isolated sandbox: file and shell tools resolve paths inside this sandbox, and the repository checkout is mounted at {{cwd}}. There is no DeepSeek Harness source checkout inside the sandbox; the DeepSeek Harness web UI runs on the host machine and is unreachable from here. When the user says "this page", "this GUI", or "this app", they mean that web UI. The sandbox runs as an unprivileged user with no sudo, so system package managers cannot install software. Install project tools with the preinstalled managers instead: `mise use -g` for toolchains, `uv tool install` for Python tools, and `npm install -g` for Node tools. Those write under $HOME. {{tool_retention}} Anything the user should keep but that does not belong in the repository — screenshots, recordings, reports — goes in {{artifacts}}, which always comes back.';
+
+/**
+ * What the model is told about tools it installs under $HOME. The backend
+ * capabilities decide it, so a session is not told its tools may vanish on a
+ * backend that keeps them, or that they stay on one that rebuilds the
+ * machine. The mechanisms behind the answer stay out of the prompt.
+ */
+function toolRetention(capabilities: BackendCapabilities | undefined): string {
+  if (capabilities === undefined) {
+    return "A sleep may not keep them, so reinstall what you need.";
+  }
+  if (!capabilities.supportsHibernate) {
+    return "A sleep does not keep them, so reinstall what you need.";
+  }
+  return capabilities.wakeKeepsFilesystem === true
+    ? "A sleep keeps them: this sandbox stops and comes back with its files."
+    : "A sleep keeps them: files under /workspace come back with the new machine.";
+}
 
 /**
  * Fragments that identify dsh's host-only prompt sections (observed in
@@ -85,12 +112,16 @@ interface SystemPromptLike {
 }
 
 /**
- * Register the environment section and the sandbox `cwd` variable on one
- * agent's system prompt scope, shadowing the loop-supplied host cwd.
+ * Register the environment section and its variables on one agent's system
+ * prompt scope: the sandbox `cwd` (shadowing the loop-supplied host cwd), the
+ * artifacts folder beside it, and what this backend keeps across a sleep. The
+ * providers resolve on each assembly, so a profile chosen after the agent
+ * exists is reflected.
  */
 export function installSandboxContext(
   systemPrompt: SystemPromptLike,
   workspace: () => string,
+  capabilities: () => BackendCapabilities | undefined,
 ): void {
   systemPrompt.section({
     name: SANDBOX_ENVIRONMENT_SECTION,
@@ -98,6 +129,8 @@ export function installSandboxContext(
     text: SANDBOX_ENVIRONMENT_PROMPT,
   });
   systemPrompt.variable("cwd", () => workspace());
+  systemPrompt.variable("artifacts", () => artifactsDirectory(workspace()));
+  systemPrompt.variable("tool_retention", () => toolRetention(capabilities()));
 }
 
 export const name = "sandbox-context";
@@ -128,6 +161,7 @@ export function apply(ctx: Context): void {
       installSandboxContext(
         scope.systemPrompt,
         () => ctx.sandboxManager.workspace,
+        () => ctx.sandboxManager.sandboxCapabilitiesFor(agent),
       );
     });
     promptFibers.set(agent, fiber);

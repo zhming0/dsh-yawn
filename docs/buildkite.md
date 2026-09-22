@@ -9,7 +9,7 @@ The Buildkite backend runs one sandbox as one build on a pipeline you own. The
 control plane triggers the build through the Build API and tells the job which
 sandbox it is, where to dial, and which runner image to run; your pipeline
 supplies the registration token. The job then runs `dsh-yawn-runner` until the
-session goes idle, when the control plane saves the working tree as a checkpoint and
+session goes idle, when the control plane checkpoints the session and
 cancels the build. No agent, queue, or image is created on your behalf.
 
 This backend is a development path, like Docker. It is unit tested against a
@@ -50,28 +50,32 @@ skip or cancel a live one.
 ## Idle: checkpoint, cancel, restore
 
 A Buildkite job cannot pause, so there is no hibernation. Instead, when the
-session goes idle the control plane checkpoints the sandbox's Git working tree
-before it cancels the build: it commits the tree inside the sandbox (only if
-there are changes), writes the commits that `origin`'s default branch does not
-have to a Git bundle, and pulls that bundle out over the tunnel into the control plane's
-`stateDir/checkpoints/`. Nothing is pushed to the repository and no Git write
-access is needed. The build is cancelled only after the bundle is on the control plane;
-if the save fails the build keeps running and the idle timer retries. The
-session record stays, marked checkpointed, and `expiresAfterMs` starts
-counting.
+session goes idle the control plane checkpoints the sandbox before it cancels
+the build: it commits the Git working tree inside the sandbox (only if there
+are changes), writes the commits that `origin`'s default branch does not have
+to a Git bundle, and pulls that bundle out over the tunnel into the control
+plane's `stateDir/checkpoints/`. It then tars the session's artifacts folder,
+`/workspace/artifacts/`, and pulls that out too. Nothing is pushed to
+the repository and no Git write access is needed. The build is cancelled only
+after the checkpoint files are on the control plane; if the Git save fails the
+build keeps running and the idle timer retries. The session record stays,
+marked checkpointed, and `expiresAfterMs` starts counting.
 
 On the next prompt the control plane triggers a new build, the runner clones the
 repository and runs `.agents/setup` exactly as for a new session, and the
 control plane then unpacks the bundle and puts the session back where it was: the
 original branch at the same commit (or a detached `HEAD`), with the checkpoint
-commit undone so the changes are uncommitted once more.
+commit undone so the changes are uncommitted once more, and the artifacts
+folder unpacked into place.
 
-Only the Git working tree is saved. Ignored files, installed packages, tool
-versions from `mise install`, and anything outside the repository are gone when
-the build is cancelled. Put that setup in `.agents/setup` so the next build
-reproduces it. The full contract, including what a checkpoint does and does
-not keep and the 64 MiB bundle cap, is in the control plane README under "Idle and
-hibernation".
+The Git working tree and the artifacts folder are the only things saved.
+Ignored files, installed packages, tool versions from `mise install`, and
+everything else outside the repository are gone when the build is cancelled.
+Put that setup in `.agents/setup` so the next build reproduces it. An artifacts
+folder over 64 MiB, or one whose tar fails, is left behind rather than carried:
+the Git work still checkpoints, and the next prompt says the folder did not come
+back. The full contract, including what a checkpoint does and does not keep and
+the 64 MiB caps, is in the control plane README under "Idle and hibernation".
 
 The control plane polls the build state when a session resumes. A build that has
 finished or been cancelled outside dsh is reported as missing and the session
@@ -182,15 +186,17 @@ One control plane is one trust domain, and a Buildkite profile widens it:
   own cluster and queue rather than sharing them with unrelated CI.
 - The job runs with whatever the agent grants it. On hosted agents that is a
   Buildkite-managed VM; on self-hosted agents it is your infrastructure.
-- The idle checkpoint bundle lives in the control plane's state directory, next to the
-  credential store, so a checkpointed session's work has the same exposure as a
-  hibernated sandbox's disk.
+- The idle checkpoint files — the Git bundle and the artifacts tar — live in
+  the control plane's state directory, next to the credential store, so a
+  checkpointed session's work has the same exposure as a hibernated sandbox's
+  disk.
 
 ## Limits
 
-- No hibernation. Idle saves the Git working tree as a bundle on the control plane and
-  cancels the build; everything else in the sandbox is lost. The first prompt
-  after the restore tells the model what did not come back.
+- No hibernation. Idle saves the Git working tree and the artifacts folder on
+  the control plane and cancels the build; everything else in the sandbox is
+  lost. The first prompt after the restore tells the model what did not come
+  back.
 - A build is polled every two seconds while waiting for an agent. With a busy
   self-hosted queue, raise `readyTimeoutMs`.
 - `health` is a Build API read on every resume of a session whose tunnel has

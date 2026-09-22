@@ -569,6 +569,8 @@ describe("sandbox lifecycle", () => {
         ...bundle,
       ]),
     });
+    // The artifacts script runs after the Git save and finds nothing to carry.
+    backend.client.execReplies.push({ stdout: "0\n" });
     await manager.hibernate("session-one");
     expect(backend.destroys).toBe(1);
 
@@ -581,7 +583,7 @@ describe("sandbox lifecycle", () => {
           content: [
             {
               type: "text",
-              text: "This sandbox was recreated from a checkpoint. Your Git changes and commits are back, but anything not tracked by Git is gone: installed tools, ignored files, and files outside the repository. Previously staged changes are now unstaged. Re-run setup steps you need before continuing.",
+              text: "This sandbox was recreated. Your Git changes and commits are back. Installed tools, ignored files, and everything else outside the repository are gone. Previously staged changes are now unstaged. Re-run setup steps you need before continuing.",
             },
           ],
           source: {
@@ -597,6 +599,76 @@ describe("sandbox lifecycle", () => {
     // The turn after the restore reports nothing.
     const following = await preStep();
     expect(following).toEqual({ kind: "enter", messages: [prompt] });
+  });
+
+  it("tells the model when the checkpoint had to leave the artifacts behind", async () => {
+    const backend = new FakeBackend();
+    backend.capabilities.supportsHibernate = false;
+    const ctx = new Context();
+    const manager = new SandboxManager(
+      ctx,
+      {
+        profiles: { standard: { backend: "docker" } },
+        stateDir: directory,
+        repository: "https://github.com/example/public.git",
+        // A workspace that is not the default, so the notice proves it names
+        // the session's own artifacts folder rather than a fixed path.
+        workspace: "/custom/repository",
+        idleMs: 60_000,
+        expiresAfterMs: 60_000,
+      },
+      { backends: { standard: backend }, gateway: gatewayFor(backend) },
+    );
+    const agent = {
+      id: "session-one",
+      session: { header: {}, events: [], surface: { nodes: [] } },
+    } as unknown as Agent;
+    const prompt = createUserMessage({
+      content: [{ type: "text", text: "Continue the work." }],
+      source: { kind: "user" },
+    });
+    const preStep = () =>
+      agentEvents(ctx, agent).waterfall(
+        "agent/pre-step",
+        {
+          messages: [prompt],
+          turn: 1,
+          step: 1,
+          signal: new AbortController().signal,
+        },
+        () => Promise.resolve({ kind: "enter" as const, messages: [prompt] }),
+      );
+
+    await manager.ensureRunning(agent);
+    backend.client.execReplies.push({
+      stdout: new TextEncoder().encode(
+        "feature\n0123456789abcdef0123456789abcdef01234567\n",
+      ),
+    });
+    // The artifacts script fails after the Git save already came out.
+    backend.client.execReplies.push({ exitCode: 1 });
+    await manager.hibernate("session-one");
+
+    const restored = await preStep();
+    expect(restored).toMatchObject({
+      kind: "enter",
+      messages: [
+        {
+          content: [
+            {
+              type: "text",
+              text: "This sandbox was recreated. Your Git changes and commits are back, but the artifacts folder could not be brought back, so the files in /custom/artifacts are gone. Installed tools, ignored files, and everything else outside the repository are gone too. Previously staged changes are now unstaged. Re-run setup steps you need before continuing.",
+            },
+          ],
+          source: {
+            kind: "plugin",
+            plugin: "@zhming0/dsh-yawn:sandbox",
+            form: "notice",
+          },
+        },
+        prompt,
+      ],
+    });
   });
 
   it("tells the model its sandbox woke on a new machine, once", async () => {

@@ -167,8 +167,10 @@ The bundle also corrects the model-facing system prompt. dsh's stock opener
 names the session working directory in host coordinates — the anchor directory
 above — and adds paragraphs about the host's dsh implementation checkout and
 its Web GUI, none of which holds inside a sandbox. The `sandbox-context` row
-shadows the `cwd` prompt variable with the sandbox workspace, contributes a
-short environment section naming the sandbox mount and the GUI paragraph's
+shadows the `cwd` prompt variable with the sandbox workspace, answers the
+artifacts folder beside it and what the session's backend keeps across a sleep
+as two more prompt variables, contributes a short environment section naming
+the sandbox mount, the durable output folder, and the GUI paragraph's
 still-true claim about what "this page" means, and drops the host-only
 checkout and GUI sections from the assembled prompt. The drop matches those
 sections by their text, not by name or position, so it survives dsh refactors
@@ -209,9 +211,8 @@ draws with are larger than the rest of the image, so `install-browser` adds
 them on demand, into the workspace volume so a wake keeps them. The script
 ships in the image rather than in the skill body, which keeps the body short
 and pins the script to the image the session is running. The skill writes media
-to `/workspace/.agents/artifacts/`, on the workspace volume but outside the
-checkout, so reads reach it, a wake keeps it, and a capture never lands as an
-untracked file in a repository.
+to the session's artifacts folder, defined under
+[Idle and hibernation](#idle-and-hibernation).
 
 One module is not part of the bundle patch:
 `@zhming0/dsh-yawn/launch-token`. Mounted as a row, it serves
@@ -471,54 +472,69 @@ backend:
   Git working tree inside the sandbox (as `dsh <dsh@localhost>`, only if there
   are changes), writes the commits that `origin`'s default branch does not
   have to a Git bundle, stores that bundle under `stateDir/checkpoints/` on
-  the host, and then destroys the sandbox. Nothing is pushed. The next prompt
+  the host, tars the artifacts folder alongside it, and then destroys the
+  sandbox. Nothing is pushed. The next prompt
   provisions a fresh sandbox, clones and runs `.agents/setup` as for a new
   session, unpacks the bundle, checks the original branch out at the saved
-  commit, and undoes the checkpoint commit so the changes are uncommitted once
-  more. The bundle is deleted once the restore succeeds.
+  commit, undoes the checkpoint commit so the changes are uncommitted once
+  more, and unpacks the artifacts tar. The checkpoint files are deleted once
+  the restore succeeds.
 
-A checkpoint keeps the checked-out branch, its commits (pushed or not), and
-every tracked or untracked file that is not ignored. It does not keep ignored
-files, installed packages, anything outside the repository, other local
-branches, stashes, or which changes were staged: everything comes back
-unstaged. A merge or rebase that was stopped on conflicts comes back as the
-conflicted files with their markers, no longer mid-merge. `.agents/setup` runs
-before the restore, on the configured revision, as it does for a new session.
-The first prompt after a restore carries a notice that says the sandbox was
-recreated from a checkpoint: Git changes and commits are back, while installed
-tools, ignored files, and anything outside the repository are gone, and
+The one path outside the checkout that survives either kind of sleep is the
+session's artifacts folder, `/workspace/artifacts/`. It holds output the user
+should keep that does not belong in the repository — screenshots, recordings,
+reports. It sits on the workspace volume beside the checkout, so a capture
+never becomes an untracked file, a hibernation keeps it, and a checkpoint
+carries it into the machine it rebuilds. Nothing else outside the checkout
+survives both.
+
+A checkpoint keeps the checked-out branch, its commits (pushed or not), every
+tracked or untracked file that is not ignored, and the artifacts folder. It
+does not keep ignored files, installed packages, anything else outside the
+repository, other local branches, stashes, or which changes were staged:
+everything comes back unstaged. A merge or rebase that was stopped on conflicts
+comes back as the conflicted files with their markers, no longer mid-merge.
+`.agents/setup` runs before the restore, on the configured revision, as it does
+for a new session. The first prompt after a restore carries a notice that says
+the sandbox was recreated: Git changes and commits are back, while installed
+tools, ignored files, and everything else outside the repository are gone, and
 previously staged changes are now unstaged, so the model can re-run the setup
-steps it needs.
+steps it needs. A restore that had to leave the artifacts folder behind says so
+on that notice.
 
 A wake carries its own one-shot notice on the first prompt, worded for what the
 machine kept. On Kubernetes the new pod kept only the workspace volume, so the
 notice names running processes, `/tmp`, and anything installed outside
 `/workspace` as gone; the home directory lives on that volume and comes back
-with it. On Docker the files survived and the notice says only that the
-processes did not. Only a backend that hibernates sends this notice: a backend
-that checkpoints never wakes, so its first prompt after a restore is the only
-one that carries a note.
+with it. On Docker the files survived and the notice says
+only that the processes did not. Only a backend that hibernates sends this
+notice: a backend that checkpoints never wakes, so its first prompt after a
+restore is the only one that carries a note.
 
-The bundle lives in the host's state directory next to the credential store,
-with the same file permissions, so a checkpoint has the same exposure as a
-hibernated sandbox's disk and needs no write access to the repository. The
-bundle only carries commits the remote's default branch does not have; when
-the clone has no `origin/HEAD` it carries the whole history instead. A bundle
-over 64 MiB fails the checkpoint.
+The bundle and, when the session had one, the artifacts tar live in the host's
+state directory next to the credential store, with the same file permissions,
+so a checkpoint has the same exposure as a hibernated sandbox's disk and needs
+no write access to the repository. The bundle only carries commits the remote's
+default branch does not have; when the clone has no `origin/HEAD` it carries
+the whole history instead. A bundle over 64 MiB fails the checkpoint. An
+artifacts tar over 64 MiB, or one that cannot be made, is left behind instead:
+the Git work still checkpoints, and the restore notice says the folder did not
+come back.
 
-If the save fails the sandbox stays up, the host logs a warning, and the idle
-timer retries after another `idleMs`. If the restore fails, the new sandbox is
-destroyed and the next prompt tries again from the same bundle; a bundle that
-was removed from the state directory produces an error on every prompt until
-the session is released. A session that expires while checkpointed loses its
-bundle with its record.
+If the Git save fails the sandbox stays up, the host logs a warning, and the
+idle timer retries after another `idleMs`; a failed artifacts save only logs
+the warning and leaves the folder behind. If the restore fails, the new sandbox
+is destroyed and the next prompt tries again from the same checkpoint files; a
+bundle that was removed from the state directory produces an error on every
+prompt until the session is released. A session that expires while
+checkpointed loses its checkpoint files with its record.
 
-The session record says "checkpointed" from the moment the bundle is on host
-disk until a fresh sandbox has been provisioned and restored. A host crash
-inside either window therefore keeps the work: the next prompt restores from
-the bundle. The cost is a sandbox the host no longer knows about, the one it
-was about to destroy or the one it was restoring into. Only the backend's own
-limits, such as a job timeout, reclaim it.
+The session record says "checkpointed" from the moment the checkpoint files are
+on host disk until a fresh sandbox has been provisioned and restored. A host
+crash inside either window therefore keeps the work: the next prompt restores
+from the checkpoint files. The cost is a sandbox the host no longer knows
+about, the one it was about to destroy or the one it was restoring into. Only
+the backend's own limits, such as a job timeout, reclaim it.
 
 The Buildkite backend checkpoints; Docker and Kubernetes hibernate.
 

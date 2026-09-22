@@ -285,7 +285,8 @@ describe("apply", () => {
     // place media must go; those are the parts a session cannot guess.
     const browserSkill = await ctx.skills.get("using-agent-browser");
     expect(browserSkill?.content).toContain("install-browser");
-    expect(browserSkill?.content).toContain("/workspace/.agents/artifacts/");
+    expect(browserSkill?.content).toContain("/workspace/artifacts/");
+    expect(browserSkill?.content).toContain("keep the folder small");
   });
 
   it("serves an injected list, bodies included", async () => {

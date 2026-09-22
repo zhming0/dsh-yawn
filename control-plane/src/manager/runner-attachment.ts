@@ -61,8 +61,8 @@ export class RunnerAttachment {
    * Attach the record's runner: wait for its registration, then push secrets
    * and git credentials and run setup. With a checkpoint the sandbox is a
    * fresh one replacing one that was released: after the usual clone and
-   * `.agents/setup`, the restore puts the session's commits and working tree
-   * back. Registers the client in the cache.
+   * `.agents/setup`, the restore puts the session's commits, working tree,
+   * and artifacts folder back. Registers the client in the cache.
    */
   async attach(
     record: RunningRecord,
@@ -82,6 +82,7 @@ export class RunnerAttachment {
         this.deps.workspace,
         checkpoint.checkpoint,
         checkpoint.bundle,
+        checkpoint.artifacts,
       );
     }
     this.clients.set(record.sessionId, client);

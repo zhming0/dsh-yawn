@@ -1,17 +1,22 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { artifactsDirectory } from "../src/artifacts.js";
 import {
+  CheckpointStore,
+  parseArtifactsOutput,
   parseSaveOutput,
+  RESTORE_ARTIFACTS_SCRIPT,
   RESTORE_SCRIPT,
   restoreEnvironment,
+  SAVE_ARTIFACTS_SCRIPT,
   SAVE_SCRIPT,
-  type SavedCheckpoint,
+  type GitCheckpoint,
 } from "../src/checkpoint.js";
 import { IdleSchedule } from "../src/manager/idle.js";
 import { sleep } from "./fakes.js";
@@ -20,6 +25,16 @@ const execute = promisify(execFile);
 const COMMIT = "0123456789abcdef0123456789abcdef01234567";
 const encode = (text: string) => new TextEncoder().encode(text);
 const BUNDLE = encode("# v2 git bundle\nobjects");
+
+/**
+ * A minimal complete tar: a header block carrying the POSIX magic, closed by
+ * the two zero blocks a real `tar -cf` writes.
+ */
+function tarBytes(): Uint8Array {
+  const tar = new Uint8Array(2048);
+  tar.set(encode("ustar"), 257);
+  return tar;
+}
 
 describe("checkpoint", () => {
   it("reads the branch and commit lines the save script prints, then the bundle", () => {
@@ -42,6 +57,50 @@ describe("checkpoint", () => {
     expect(() =>
       parseSaveOutput(encode(`feature\n${COMMIT}\nnot a bundle`)),
     ).toThrow(/unexpected checkpoint output/);
+  });
+
+  it("reads the artifacts flag and the tar after it", () => {
+    const tar = tarBytes();
+    expect(
+      parseArtifactsOutput(new Uint8Array([...encode("1\n"), ...tar])),
+    ).toEqual(tar);
+    expect(parseArtifactsOutput(encode("0\n"))).toHaveLength(0);
+    expect(() => parseArtifactsOutput(encode(""))).toThrow(
+      /unexpected artifacts output/,
+    );
+    expect(() => parseArtifactsOutput(encode("2\n"))).toThrow(
+      /unexpected artifacts output/,
+    );
+    expect(() =>
+      parseArtifactsOutput(new Uint8Array([...encode("1\n"), 1, 2, 3])),
+    ).toThrow(/unexpected artifacts output/);
+    // A `1` with a buffer too short to hold a tar header is truncated, not a
+    // tar with a missing magic.
+    expect(() =>
+      parseArtifactsOutput(
+        new Uint8Array([...encode("1\n"), ...new Uint8Array(100)]),
+      ),
+    ).toThrow(/unexpected artifacts output/);
+  });
+
+  it("rejects a tar the output cap or the stream cut short", () => {
+    const tar = tarBytes();
+    const withFlag = (bytes: Uint8Array) =>
+      new Uint8Array([...encode("1\n"), ...bytes]);
+    // Cut inside the header: the closing zero blocks never arrive.
+    expect(() => parseArtifactsOutput(withFlag(tar.slice(0, 1024)))).toThrow(
+      /unexpected artifacts output/,
+    );
+    // Cut one byte short of a block boundary.
+    expect(() =>
+      parseArtifactsOutput(withFlag(tar.slice(0, tar.length - 1))),
+    ).toThrow(/unexpected artifacts output/);
+    // Whole blocks, but the archive never closed.
+    const unclosed = tarBytes();
+    unclosed.set(encode("x"), unclosed.length - 1);
+    expect(() => parseArtifactsOutput(withFlag(unclosed))).toThrow(
+      /unexpected artifacts output/,
+    );
   });
 
   it("hands the restore script everything it reads", () => {
@@ -82,7 +141,7 @@ describe("checkpoint scripts", () => {
     return stdout;
   }
 
-  async function save(cwd: string): Promise<SavedCheckpoint> {
+  async function save(cwd: string): Promise<GitCheckpoint> {
     const { stdout } = await execute("/bin/bash", ["-c", SAVE_SCRIPT], {
       cwd,
       encoding: "buffer",
@@ -91,13 +150,33 @@ describe("checkpoint scripts", () => {
     return parseSaveOutput(stdout);
   }
 
-  function restore(cwd: string, saved: SavedCheckpoint): Promise<unknown> {
-    const child = execFile("/bin/bash", ["-c", RESTORE_SCRIPT], {
-      cwd,
-      env: {
-        ...process.env,
-        ...restoreEnvironment(saved.checkpoint, saved.bundle),
+  async function saveArtifacts(cwd: string): Promise<Uint8Array> {
+    const { stdout } = await execute(
+      "/bin/bash",
+      ["-c", SAVE_ARTIFACTS_SCRIPT],
+      {
+        cwd,
+        env: {
+          ...process.env,
+          DSH_YAWN_ARTIFACTS_DIR: artifactsDirectory(cwd),
+        },
+        encoding: "buffer",
+        maxBuffer: 16 * 1024 * 1024,
       },
+    );
+    return parseArtifactsOutput(stdout);
+  }
+
+  function runScript(
+    cwd: string,
+    label: string,
+    script: string,
+    env: Record<string, string>,
+    stdin: Uint8Array,
+  ): Promise<unknown> {
+    const child = execFile("/bin/bash", ["-c", script], {
+      cwd,
+      env: { ...process.env, ...env },
     });
     const done = new Promise((resolve, reject) => {
       let stderr = "";
@@ -108,11 +187,21 @@ describe("checkpoint scripts", () => {
       child.on("close", (code) =>
         code === 0
           ? resolve(undefined)
-          : reject(new Error(`restore exited ${code}: ${stderr}`)),
+          : reject(new Error(`${label} exited ${code}: ${stderr}`)),
       );
     });
-    child.stdin?.end(saved.bundle);
+    child.stdin?.end(stdin);
     return done;
+  }
+
+  function restore(cwd: string, saved: GitCheckpoint): Promise<unknown> {
+    return runScript(
+      cwd,
+      "restore",
+      RESTORE_SCRIPT,
+      restoreEnvironment(saved.checkpoint, saved.bundle),
+      saved.bundle,
+    );
   }
 
   async function status(cwd: string): Promise<string[]> {
@@ -228,6 +317,73 @@ describe("checkpoint scripts", () => {
       (await git(replacement, "symbolic-ref", "--short", "HEAD")).trim(),
     ).toBe("main");
     expect(await status(replacement)).toEqual([]);
+  });
+
+  it("carries the artifacts folder into the replacement sandbox", async () => {
+    const artifacts = artifactsDirectory(work);
+    await mkdir(join(artifacts, "runs"), { recursive: true });
+    await writeFile(join(artifacts, "shot.png"), "png-bytes\n");
+    await writeFile(join(artifacts, "runs", "log.txt"), "run log\n");
+
+    const tar = await saveArtifacts(work);
+    expect(tar.byteLength).toBeGreaterThan(0);
+
+    // A second workspace under its own parent, so its artifacts folder is a
+    // different directory from the one the save read.
+    const target = join(directory, "target");
+    await mkdir(target);
+    const targetWorkspace = join(target, "repository");
+    await git(directory, "clone", "-q", origin, targetWorkspace);
+    const targetArtifacts = artifactsDirectory(targetWorkspace);
+    await runScript(
+      targetWorkspace,
+      "artifacts restore",
+      RESTORE_ARTIFACTS_SCRIPT,
+      { DSH_YAWN_ARTIFACTS_DIR: targetArtifacts },
+      tar,
+    );
+
+    expect(await readFile(join(targetArtifacts, "shot.png"), "utf8")).toBe(
+      "png-bytes\n",
+    );
+    expect(
+      await readFile(join(targetArtifacts, "runs", "log.txt"), "utf8"),
+    ).toBe("run log\n");
+  });
+
+  it("reports nothing to carry when the artifacts folder is missing or empty", async () => {
+    expect(await saveArtifacts(work)).toHaveLength(0);
+    await mkdir(artifactsDirectory(work), { recursive: true });
+    expect(await saveArtifacts(work)).toHaveLength(0);
+  });
+});
+
+describe("checkpoint store", () => {
+  it("removes a stale artifacts tar when a later save writes none", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "dsh-checkpoint-store-"));
+    try {
+      const store = new CheckpointStore(join(directory, "checkpoints"));
+      const tar = tarBytes();
+      await store.save("session-one", BUNDLE, tar);
+      expect(
+        new Uint8Array((await store.loadArtifacts("session-one")) ?? []),
+      ).toEqual(tar);
+
+      // A crash between the save and the record write leaves the record
+      // running, so the next save runs with the first attempt's files still
+      // on disk. An empty artifacts folder must not leave the old tar behind:
+      // a restore would unpack it while the notice says the folder survived.
+      await store.save("session-one", BUNDLE, new Uint8Array());
+      expect(await store.loadArtifacts("session-one")).toBeUndefined();
+
+      // A non-empty save still writes the tar.
+      await store.save("session-one", BUNDLE, tar);
+      expect(
+        new Uint8Array((await store.loadArtifacts("session-one")) ?? []),
+      ).toEqual(tar);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 
