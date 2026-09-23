@@ -75,9 +75,10 @@ then verifies:
    the reversed HTTP/2 tunnel;
 2. secrets reach commands, and the runner's bundled tools are installed,
    including Python, Node.js, jq, yq, and the Docker client without its daemon;
-3. `.agents/setup` runs exactly once (marked in `.git/.agents-setup-done`), and
+3. the sandbox user reaches root through passwordless sudo;
+4. `.agents/setup` runs exactly once (marked in `.git/.agents-setup-done`), and
    `.agents/resume` runs on wake;
-4. hibernate/wake reconnects the runner and preserves its setup marker,
+5. hibernate/wake reconnects the runner and preserves its setup marker,
    workspace files, home-directory files, and mise-managed tools.
 
 Success ends with:
@@ -105,6 +106,14 @@ production `TunnelServer` and `KasBackend` from the control-plane image as a Kub
 Job. Real warm runner pods dial that Job through the same in-cluster Service
 and registration-token path used by the supported deployment.
 
+The sudo probe stays off the network. A package install would need name
+resolution inside a sandbox pod, and kind's default CNI does not enforce the
+sandbox NetworkPolicy's cross-namespace rule that allows DNS to the CoreDNS
+pods, so a sandbox pod in this cluster cannot resolve anything. The probe
+therefore checks the privileged operations the pod template enables, and the
+Docker smoke checks sudo on the same image without a NetworkPolicy in front of
+it.
+
 The transport probe verifies:
 
 1. `KasBackend` claims a real warm Sandbox;
@@ -112,7 +121,10 @@ The transport probe verifies:
 3. secret injection, command streaming, and file RPCs cross the tunnel;
 4. commands receive `DOCKER_HOST` and `docker version` reaches the rootless
    daemon sidecar over the shared socket;
-5. hibernate/wake recreates the runner connection and preserves workspace and
+5. passwordless sudo reaches root, and root can chown a file, set its setuid
+   bit, and switch to another user, which is what the template's privilege
+   escalation and capability additions exist for;
+6. hibernate/wake recreates the runner connection and preserves workspace and
    home-directory data.
 
 It then runs the controller lifecycle smoke test, which additionally verifies

@@ -113,9 +113,21 @@ spec:
             initialDelaySeconds: 1
             periodSeconds: 2
           securityContext:
-            allowPrivilegeEscalation: false
+            # The image gives the sandbox user passwordless sudo so a repository
+            # setup hook can install the system packages its mise.toml declares.
+            # The setuid transition only happens with no_new_privs off, which is
+            # what this flag controls; it is the deliberate exception to the
+            # hardened profile. Seccomp stays RuntimeDefault, the pod still runs
+            # as UID 1000 with no host mounts, and the capabilities below stay
+            # narrow.
+            allowPrivilegeEscalation: true
             capabilities:
               drop: [ALL]
+              # The subset of the runtime's default set that apt, dpkg, and
+              # sudo use. The network, kill, and chroot capabilities stay out,
+              # and SYS_ADMIN above all, so the session still cannot mount a
+              # filesystem or rearrange its own root.
+              add: [AUDIT_WRITE, CHOWN, DAC_OVERRIDE, FOWNER, FSETID, MKNOD, SETFCAP, SETGID, SETPCAP, SETUID]
           volumeMounts:
             - name: workspace
               mountPath: /workspace

@@ -55,6 +55,7 @@ try {
 
   let client = await waitForRunner(tunnel, handle.sandboxId);
   await client.setSecrets({ KAS_RPC_SMOKE: "present" });
+  console.log("kas-smoke: command streaming");
   const first = await run(client, [
     "/bin/bash",
     "-lc",
@@ -65,6 +66,7 @@ try {
 
   // The runner forwards the template's DOCKER_HOST to commands, and the
   // rootless daemon sidecar answers on that socket.
+  console.log("kas-smoke: docker sidecar");
   const dockerHost = await run(client, ["/bin/bash", "-lc", 'printf %s "$DOCKER_HOST"']);
   assertEqual(
     dockerHost.stdout,
@@ -74,6 +76,35 @@ try {
   const docker = await run(client, ["docker", "version", "--format", "{{.Server.Os}}"]);
   assertEqual(docker.stdout.trim(), "linux", "Docker daemon reachable from a runner command");
 
+  // Passwordless sudo in the image needs the pod template to allow privilege
+  // escalation, and the capabilities it adds back are what turn that root into
+  // usable file operations. This stays off the network: a package install would
+  // need sandbox name resolution, which this cluster's CNI cannot give a pod
+  // behind the sandbox NetworkPolicy. Every step is announced and bounded,
+  // because the outer test prints this Job's log only after its wait is over:
+  // a step that hangs must not be able to eat the whole budget, and the last
+  // line printed has to name it.
+  console.log("kas-smoke: sudo");
+  const sudo = await run(client, ["/bin/bash", "-lc", "timeout 15 sudo -n id -u"]);
+  assertEqual(
+    sudo.stdout.trim(),
+    "0",
+    "passwordless sudo in a runner command",
+  );
+
+  console.log("kas-smoke: root file capabilities");
+  const capability = await run(client, [
+    "/bin/bash",
+    "-lc",
+    'set -e; file=/tmp/kas-capability-probe; : > "$file"; timeout 15 sudo -n chown 0:0 "$file"; test "$(stat -c %u "$file")" = 0; timeout 15 sudo -n chmod 4755 "$file"; test "$(stat -c %a "$file")" = 4755; test "$(timeout 15 sudo -n runuser -u nobody -- id -u)" = 65534; printf capabilities-ok',
+  ]);
+  assertEqual(
+    capability.stdout,
+    "capabilities-ok",
+    "root file capabilities in a runner command",
+  );
+
+  console.log("kas-smoke: file APIs");
   await client.writeFile({
     path: sentinelPath,
     content: new TextEncoder().encode("workspace survived"),
@@ -89,10 +120,12 @@ try {
 
   // Suspension removes the pod and its socket. Wake recreates the pod, whose
   // runner must dial back in while retaining the workspace volume.
+  console.log("kas-smoke: hibernate");
   await backend.hibernate(handle.reference);
   tunnel.drop(handle.sandboxId);
   handle = await backend.wake(handle.reference);
   client = await waitForRunner(tunnel, handle.sandboxId);
+  console.log("kas-smoke: awake");
   const awake = await run(client, ["printf", "awake"]);
   assertEqual(awake.stdout, "awake", "command output after wake");
   const sentinel = await client.readFile({

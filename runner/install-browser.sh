@@ -8,11 +8,12 @@
 # a page. This pays that cost once per sandbox, into the workspace volume so a
 # hibernation keeps it.
 #
-# It runs unprivileged. `sudo` does not exist in a sandbox and the system
-# package manager cannot be used to install anything, so the packages are
-# fetched with a user-owned apt state, unpacked into a private directory, and
-# reached through LD_LIBRARY_PATH. apt resolves whatever they pull in; the list
-# is a starting point, not a hand-maintained inventory.
+# It does not use the sandbox's sudo. The libraries have to live under $HOME to
+# survive a wake, and `apt-get` would put them in the container filesystem
+# instead, so the packages are fetched with a user-owned apt state, unpacked
+# into a private directory, and reached through LD_LIBRARY_PATH. apt resolves
+# whatever they pull in; the list is a starting point, not a hand-maintained
+# inventory.
 #
 # The font is not optional: a slim Debian ships none, and without one Chrome
 # draws no text at all, so a page renders blank and the browser can exit on its
@@ -61,10 +62,11 @@ else
   # --- Shared libraries ---------------------------------------------------
   #
   # Chrome links against a set of libraries a slim Debian does not carry.
-  # `agent-browser install --with-deps` would install them, but it shells out
-  # to `sudo apt-get`, which cannot work here. Instead, point apt at a state
-  # directory this user owns, ask it to resolve and download the same packages
-  # without installing them, and unpacks each into $lib_root.
+  # `agent-browser install --with-deps` would ask `sudo apt-get` for them, which
+  # puts them in the container filesystem where a wake does not keep them.
+  # Instead, point apt at a state directory this user owns, ask it to resolve and
+  # download the same packages without installing them, and unpack each into
+  # $lib_root.
   #
   # The sources use HTTPS because plain HTTP is commonly blocked from a
   # sandbox while HTTPS egress is allowed.
