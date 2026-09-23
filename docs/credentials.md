@@ -33,24 +33,27 @@ runner. No control-plane restart is needed.
 
 ## Credentials the control plane owns
 
-Two credentials belong to the control plane and must never reach a sandbox:
+Two credentials are the control plane's own, not entries in the Secrets store:
 
-- the **shared registration token**, in the `dsh-yawn-registration-token` Secret the
-  chart creates — warm pods must hold it before any session exists, and it only
-  lets a runner register a tunnel;
-- a **Buildkite API token** — it can create and cancel builds. Store it in a
-  Secret you own and read it into the control plane environment with
-  `controlPlane.extraEnv`, or enter it on **Settings → Sandboxes** when you
-  create a Buildkite profile: the page writes it write-only into the host
-  credential document (`$DSH_HOME/.credentials.yaml`) on the data volume, under
-  a name derived from the profile (`DSH_YAWN_BUILDKITE_<PROFILE>_TOKEN`, so two
-  profiles keep two tokens). A stored token is used before the environment
-  fallback. Either way it stays on the control plane and never reaches a
-  sandbox.
+- the **runner token**: the control plane generates it on first boot, keeps it
+  on its data volume, and writes it into the `dsh-yawn-registration-token`
+  Secret that warm pods mount before any session exists. It only lets a runner
+  register a tunnel, and it reaches only the runners this control plane starts.
+  **Settings → Sandboxes** shows and rotates it;
+- a **Buildkite API token** — it can create and cancel builds, so it must never
+  reach a sandbox. Store it in a Secret you own and read it into the control
+  plane environment with `controlPlane.extraEnv`, or enter it on **Settings →
+  Sandboxes** when you create a Buildkite profile: the page writes it
+  write-only into the host credential document (`$DSH_HOME/.credentials.yaml`)
+  on the data volume, under a name derived from the profile
+  (`DSH_YAWN_BUILDKITE_<PROFILE>_TOKEN`, so two profiles keep two tokens). A
+  stored token is used before the environment fallback. Either way it stays on
+  the control plane and never reaches a sandbox.
 
 [`installations-control-plane.md`](installations-control-plane.md#credentials)
-sets both up, and
-[`kubernetes.md`](kubernetes.md#the-in-cluster-control-plane) covers rotation.
+sets the Buildkite token up, and
+[`kubernetes.md`](kubernetes.md#the-in-cluster-control-plane) covers how the
+runner token reaches Kubernetes sandboxes and how to rotate it.
 
 ## Never write values down
 

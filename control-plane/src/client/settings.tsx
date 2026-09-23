@@ -6,6 +6,7 @@ import type { JsonValue } from "@deepseek-ai/dsh-util-values";
 
 import { defaultBuildkiteTokenCredential } from "../buildkite-credential.js";
 import type { SandboxSettingsView } from "../sandbox-settings-remote.js";
+import { RegistrationTokenCard } from "./registration-token.js";
 import { DefaultsCard } from "./settings-defaults.js";
 import { ProfileForm } from "./settings-form.js";
 import {
@@ -13,6 +14,7 @@ import {
   describeError,
   sectionHeadingStyle,
   type ProfileDraft,
+  type RegistrationTokenActions,
   type SandboxesSettingsActions,
 } from "./settings-shared.js";
 
@@ -20,7 +22,8 @@ import {
 const NS = "sandbox-manager";
 
 type SandboxesSettingsProps = SettingsSectionOwnerProps &
-  SandboxesSettingsActions;
+  SandboxesSettingsActions &
+  RegistrationTokenActions;
 
 /**
  * Settings page for sandbox profiles and lifecycle timers. The host sends one
@@ -37,6 +40,9 @@ export function SandboxesSettings({
   setCredential,
   unsetCredential,
   getSandboxSettings,
+  getRegistrationToken,
+  rotateRegistrationToken,
+  retireRegistrationToken,
 }: SandboxesSettingsProps) {
   const [view, setView] = useState<SandboxSettingsView>();
   const [error, setError] = useState<string>();
@@ -389,6 +395,12 @@ export function SandboxesSettings({
             onSetDefault={setDefaultProfile}
             onUnset={unsetField}
             onSetTimer={setTimer}
+          />
+
+          <RegistrationTokenCard
+            getRegistrationToken={getRegistrationToken}
+            rotateRegistrationToken={rotateRegistrationToken}
+            retireRegistrationToken={retireRegistrationToken}
           />
 
           {anyOverride ? (

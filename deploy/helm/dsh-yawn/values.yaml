@@ -1,5 +1,5 @@
-# The control plane only: one dsh host, its data volume, the tunnel Service
-# runners dial, and the shared registration token. The sandbox infrastructure
+# The control plane only: one dsh host, its data volume, and the tunnel Service
+# runners dial. The sandbox infrastructure
 # — SandboxTemplate and SandboxWarmPool — is the sandbox pool, a separate
 # kustomize base in `deploy/kubernetes/runner`. See
 # docs/installations-control-plane.md.
@@ -65,23 +65,11 @@ runner:
   # layout.
   controlPlaneUrl: ""
 
-# The shared registration token every runner presents when it dials the
-# control plane. By default the chart creates the dsh-yawn-registration-token
-# Secret with a generated token that stays stable across upgrades. To supply
-# your own, either set a value or point at an existing Secret holding it under
-# the key `token`.
-#
-# GitOps: Argo CD and Flux render without a live cluster, so the lookup that
-# keeps the generated token stable cannot see the existing Secret and every
-# sync invents a new one — the release sits OutOfSync forever and each sync
-# rotates the token out from under the warm pods. Set `value` (from your
-# secret store) or `existingSecret` on those installs.
-registrationToken:
-  # When set, the chart creates no Secret; the pool's SandboxTemplate defaults
-  # to `dsh-yawn-registration-token`, so patch that reference when you point
-  # this at another name.
-  existingSecret: ""
-  value: ""
+# The runner token is not configured here. The control plane generates it on
+# first boot, keeps it on its data volume, writes it into the
+# dsh-yawn-registration-token Secret the warm pool mounts, and hands it to
+# Docker and Buildkite sandboxes when it starts them. Settings → Sandboxes
+# shows the current value and can rotate it.
 
 # The distribution fronts dsh with oauth2-proxy: dsh binds pod loopback and
 # its only browser authentication is the startup `?token=` URL. The

@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 
-import { CustomObjectsApi, KubeConfig } from "@kubernetes/client-node";
+import {
+  CoreV1Api,
+  CustomObjectsApi,
+  KubeConfig,
+} from "@kubernetes/client-node";
 
 import { SandboxNotFoundError } from "../types.js";
 import type {
@@ -13,6 +17,13 @@ import type {
 const EXTENSION_GROUP = "extensions.agents.x-k8s.io";
 const CORE_GROUP = "agents.x-k8s.io";
 const API_VERSION = "v1beta1";
+
+/**
+ * The Secret a sandbox template mounts as DSH_YAWN_REGISTRATION_TOKEN. The
+ * control plane creates it when missing and patches it in place, so the value
+ * it generates is the only one the pool ever reads.
+ */
+export const REGISTRATION_TOKEN_SECRET = "dsh-yawn-registration-token";
 
 interface KasReference extends BackendReference {
   claimName: string;
@@ -48,11 +59,14 @@ export class KasBackend implements SandboxBackend {
     wakeKeepsFilesystem: false,
   };
   private readonly api: CustomObjectsApi;
+  /** Absent only when a test injects the custom-objects client alone. */
+  private readonly core: CoreV1Api | undefined;
   private readonly readyTimeoutMs: number;
 
   constructor(
     private readonly options: KasBackendOptions,
     api?: CustomObjectsApi,
+    core?: CoreV1Api,
   ) {
     if (api === undefined) {
       const config = new KubeConfig();
@@ -62,10 +76,57 @@ export class KasBackend implements SandboxBackend {
         config.loadFromFile(options.kubeconfig);
       }
       this.api = config.makeApiClient(CustomObjectsApi);
+      this.core = config.makeApiClient(CoreV1Api);
     } else {
       this.api = api;
+      this.core = core;
     }
     this.readyTimeoutMs = options.readyTimeoutMs ?? 180_000;
+  }
+
+  /**
+   * Write the current token into the Secret the warm pool's pods read at
+   * boot: patch it when it exists, create it when nothing owns it yet. The
+   * control plane owns this one object, so no Helm or GitOps apply can reset
+   * it out from under the pool. Runners that already booted keep their old
+   * value until they are recreated, which is why the control plane keeps
+   * accepting it until an operator retires it.
+   */
+  async publishRegistrationToken(token: string): Promise<void> {
+    const core = this.core;
+    if (core === undefined) {
+      throw new Error("the Kubernetes backend has no core API client");
+    }
+    const name = REGISTRATION_TOKEN_SECRET;
+    const namespace = this.options.namespace;
+    const body = {
+      metadata: { name, namespace },
+      stringData: { token },
+    };
+    try {
+      await core.patchNamespacedSecret({ name, namespace, body });
+      return;
+    } catch (error) {
+      if (!isKubernetesStatus(error, 404)) {
+        throw error;
+      }
+    }
+    try {
+      await core.createNamespacedSecret({
+        namespace,
+        body: { ...body, type: "Opaque" },
+      });
+    } catch (error) {
+      // Another writer created it between the patch and the create; its value
+      // is the one we were about to write, so patching it is enough.
+      if (!isKubernetesStatus(error, 409)) {
+        throw new Error(
+          `could not create Secret ${namespace}/${name} for the runner token: ${String(error)}`,
+          { cause: error },
+        );
+      }
+      await core.patchNamespacedSecret({ name, namespace, body });
+    }
   }
 
   async provision(spec: SandboxSpec): Promise<SandboxHandle> {

@@ -4,7 +4,7 @@
 top-level `sandboxManager` section as the base beneath the Web page's edits;
 the file is deliberately not a dsh patch layer, which would outrank the
 profile patch the page writes to. Only the runtime slice is rendered, so
-startup settings and the registration token never travel here. */}}
+startup settings never travel here. */}}
 apiVersion: v1
 kind: ConfigMap
 metadata:

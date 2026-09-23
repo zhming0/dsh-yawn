@@ -7,8 +7,9 @@ what the backend does and the limits it has.
 
 The Buildkite backend runs one sandbox as one build on a pipeline you own. The
 control plane triggers the build through the Build API and tells the job which
-sandbox it is, where to dial, and which runner image to run; your pipeline
-supplies the registration token. The job then runs `dsh-yawn-runner` until the
+sandbox it is, where to dial, and which runner image to run, and keeps the
+token the runner presents in the pipeline cluster's Buildkite secret. The job
+then runs `dsh-yawn-runner` until the
 session goes idle, when the control plane checkpoints the session and
 cancels the build. No agent, queue, or image is created on your behalf.
 
@@ -21,18 +22,21 @@ first build in your own organization.
 
 ```text
 control plane ──▶ Buildkite API
+  PUT  cluster secret {DSH_YAWN_REGISTRATION_TOKEN}
   POST /builds {DSH_YAWN_SANDBOX_ID, DSH_YAWN_CONTROL_PLANE_URL, DSH_YAWN_RUNNER_IMAGE}
   ◀── GET /builds/{n} until state == running
-  ◀── dsh-yawn-runner dials DSH_YAWN_CONTROL_PLANE_URL with DSH_YAWN_REGISTRATION_TOKEN ── agent
+  ◀── agent injects the secret, dsh-yawn-runner dials DSH_YAWN_CONTROL_PLANE_URL with it
 ```
 
 For each new session the control plane:
 
 1. looks for a live build tagged with the session (`meta_data[dsh-session]`),
    in case the control plane stopped after creating one and before saving its record;
-2. otherwise creates a build with `commit: HEAD` on one shared branch (`main`),
-   build env `DSH_YAWN_SANDBOX_ID`, `DSH_YAWN_CONTROL_PLANE_URL`, and `DSH_YAWN_RUNNER_IMAGE`, and
-   that session tag;
+2. otherwise stores the current runner token in the pipeline cluster's
+   `DSH_YAWN_REGISTRATION_TOKEN` secret, then creates a build with
+   `commit: HEAD` on one shared branch (`main`), build env `DSH_YAWN_SANDBOX_ID`,
+   `DSH_YAWN_CONTROL_PLANE_URL`, and `DSH_YAWN_RUNNER_IMAGE`, and that session
+   tag;
 3. polls the build until its state is `running`, giving up and cancelling the
    build after `readyTimeoutMs` (default 10 minutes); this covers queue wait and
    image pull, after which the runner has 60 seconds to register on the tunnel.
@@ -86,7 +90,6 @@ gets a replacement build under the same profile.
 ```yaml
 - id: sandbox-manager
   config:
-    registrationToken: <shared with the pipeline>
     tunnel:
       port: 8081
     profiles:
@@ -104,10 +107,13 @@ gets a replacement build under the same profile.
 | `controlPlaneUrl`        | required              | Tunnel endpoint the runner dials, `wss://host/tunnel` or `ws://host:port/tunnel` |
 | `image`          | matching release tag  | Runner image the job runs, sent to the build as `DSH_YAWN_RUNNER_IMAGE`       |
 | `readyTimeoutMs` | `600000`              | How long a build may sit `scheduled` before the control plane cancels it      |
+| `secretKey`      | `DSH_YAWN_REGISTRATION_TOKEN` | Cluster secret holding the token; only needed when profiles share a cluster |
 
 The control plane needs an [API access token](https://buildkite.com/docs/apis/managing-api-tokens)
-for the organization with the `read_builds` and `write_builds` scopes: enter it
-on **Settings → Sandboxes** when you create the profile, which stores it
+for the organization with these scopes: `read_builds` and `write_builds` for the
+builds, `read_pipelines` to find the pipeline's cluster, and
+`read_secrets_details` and `write_secrets` for the secret. Enter it on
+**Settings → Sandboxes** when you create the profile, which stores it
 write-only in the host credential document, or set `BUILDKITE_API_TOKEN` on the
 control plane. It is resolved per Buildkite request, so a changed token reaches
 the next call without a restart, and a profile whose token resolves nowhere
@@ -115,9 +121,13 @@ does not stop the host: its sessions fail at the first prompt with the setting
 to fix. The token stays in the control plane process; it is never sent to a
 build or a runner.
 
-The control plane also needs the registration token, in `registrationToken` or
-`DSH_YAWN_REGISTRATION_TOKEN`. The backend does not generate one because the
-pipeline must hold the same value.
+The control plane generates the runner token and keeps it in the pipeline
+cluster's Buildkite secret, created with an access policy for that pipeline, so
+the value never appears in the build environment the Builds API returns. The
+pipeline maps the key into the job once — see
+[the pipeline](#the-pipeline) — and Buildkite injects it at job start. A profile
+whose pipeline is not in a cluster fails to provision with that message: only
+clustered agents can read Buildkite secrets.
 
 `controlPlaneUrl` must be reachable from Buildkite agents, which are never on the control plane
 machine. The tunnel is a WebSocket on the control plane's plaintext tunnel port, so
@@ -136,6 +146,19 @@ The pipeline is one command step that runs the runner image the control plane na
 [`installations-buildkite.md`](installations-buildkite.md#create-the-pipeline)
 has the YAML and the setup steps. What matters to the backend:
 
+- The step declares the secret once, under the key the profile uses
+  (`DSH_YAWN_REGISTRATION_TOKEN` by default):
+
+  ```yaml
+  secrets:
+    - DSH_YAWN_REGISTRATION_TOKEN
+  ```
+
+  The agent injects the stored value into the job at start, so the runner finds
+  it in the environment without the value ever appearing in the build
+  environment the Builds API returns. Delete and re-create the secret by hand
+  and the control plane still owns its value: it re-creates it on the next
+  publish.
 - Hosted Linux agents use `image: "$DSH_YAWN_RUNNER_IMAGE"`, resolved from
   the build environment. Startup hooks run as root, then `runuser -u sandbox`
   launches the runner as UID 1000 with `HOME=/workspace/home`, retaining the
@@ -178,12 +201,17 @@ once and the job fails; it wastes an agent slot but never reaches the control pl
 
 One control plane is one trust domain, and a Buildkite profile widens it:
 
-- The API token can create and cancel builds on the pipeline. Anyone who can
-  read the control plane's environment can trigger jobs on your agents.
+- The API token can create and cancel builds on the pipeline, and its secrets
+  scopes let whoever owns the token write the cluster's secrets. Anyone who can
+  read the control plane's environment can trigger jobs on your agents and
+  rewrite cluster secrets. Keep the token to the control plane, and give the
+  pipeline its own cluster and queue rather than sharing them with unrelated
+  CI.
 - Every agent that can take the job, and every person who can edit the
   pipeline's steps, can read `DSH_YAWN_REGISTRATION_TOKEN` and the secrets the
-  control plane pushes to the runner after it registers. Give the pipeline its
-  own cluster and queue rather than sharing them with unrelated CI.
+  control plane pushes to the runner after it registers. The secret's access
+  policy scopes it to this pipeline, so a pipeline that should not have it
+  cannot fetch it.
 - The job runs with whatever the agent grants it. On hosted agents that is a
   Buildkite-managed VM; on self-hosted agents it is your infrastructure.
 - The idle checkpoint files — the Git bundle and the artifacts tar — live in

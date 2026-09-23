@@ -17,6 +17,13 @@ const SESSION_METADATA_KEY = "dsh-session";
  */
 const BUILD_BRANCH = "main";
 
+/**
+ * The cluster secret the pipeline maps into the job's
+ * DSH_YAWN_REGISTRATION_TOKEN. Buildkite secret keys are unique per cluster,
+ * so two profiles that share a cluster set different `secretKey` values.
+ */
+export const DEFAULT_REGISTRATION_TOKEN_SECRET = "DSH_YAWN_REGISTRATION_TOKEN";
+
 /** Build states after which no job of the build will run again. */
 const FINISHED_STATES = new Set([
   "passed",
@@ -40,6 +47,24 @@ interface Build {
   env?: Record<string, string>;
 }
 
+interface Pipeline {
+  id: string;
+  cluster_id?: string | null;
+}
+
+interface Secret {
+  id: string;
+  key: string;
+}
+
+/** Where this profile's runner token is stored, resolved on first publish. */
+interface SecretStorage {
+  clusterId: string;
+  pipelineId: string;
+  key: string;
+  secretId?: string;
+}
+
 export interface BuildkiteBackendOptions {
   organization: string;
   pipeline: string;
@@ -49,19 +74,31 @@ export interface BuildkiteBackendOptions {
   controlPlaneUrl: string;
   /** How long a build may sit in the queue before its job starts. */
   readyTimeoutMs: number;
-  /** API token with read_builds and write_builds on the pipeline. */
+  /**
+   * API token with read_builds, write_builds, read_pipelines,
+   * read_secrets_details, and write_secrets.
+   */
   token: () => Promise<string>;
+  /** The tunnel token runners present; stored in the cluster secret. */
+  registrationToken: () => string;
+  /** Secret key holding it; defaults to {@link DEFAULT_REGISTRATION_TOKEN_SECRET}. */
+  secretKey?: string;
 }
 
 /**
  * One sandbox is one Buildkite build. The control plane tells the job which
- * sandbox it is, where to dial, and which runner image to run; the pipeline
- * supplies the registration token, so the job needs nothing else from the host.
+ * sandbox it is, where to dial, and which runner image to run, and keeps the
+ * pipeline cluster's secret holding the token the runner presents, so the
+ * token never rides the build environment.
  */
 export class BuildkiteBackend implements SandboxBackend {
   readonly name = "buildkite";
   // A build cannot pause, so there is no wake to describe.
   readonly capabilities = { supportsHibernate: false };
+  /** Resolved on the first publish and reused while the profile lives. */
+  private storage: SecretStorage | undefined;
+  /** The token already stored, so an unchanged publish costs no API calls. */
+  private publishedToken: string | undefined;
 
   constructor(
     private readonly options: BuildkiteBackendOptions,
@@ -74,6 +111,9 @@ export class BuildkiteBackend implements SandboxBackend {
     let build = await this.findLiveBuild(spec.sessionId);
     let sandboxId = build?.env?.DSH_YAWN_SANDBOX_ID;
     if (build === undefined || sandboxId === undefined) {
+      // The job reads the token from the cluster secret, so it has to be
+      // current before any agent can start the build.
+      await this.publishRegistrationToken(this.options.registrationToken());
       sandboxId = sandboxName(spec.sessionId);
       // Every sandbox shares BUILD_BRANCH, so the pipeline must not enable its
       // intermediate-build settings: those would skip or cancel another live
@@ -92,6 +132,32 @@ export class BuildkiteBackend implements SandboxBackend {
     }
     await this.waitForRunning(build);
     return { sandboxId, reference: { buildNumber: build.number, sandboxId } };
+  }
+
+  /**
+   * Store the current token in the pipeline cluster's Buildkite secret. The
+   * pipeline maps that key into the job environment once, and Buildkite
+   * injects its value at job start, so the value never rides the build
+   * environment the Builds API returns. The secret is created scoped to this
+   * pipeline; an existing one only gets a new value, because an operator may
+   * have widened its access policy on purpose.
+   */
+  async publishRegistrationToken(token: string): Promise<void> {
+    if (this.publishedToken === token) {
+      return;
+    }
+    try {
+      await this.writeRegistrationToken(token);
+    } catch (error) {
+      // The secret vanished between the lookup and the write; find it again
+      // instead of failing a rotation.
+      if (!isStatus(error, 404)) {
+        throw error;
+      }
+      this.storage = undefined;
+      await this.writeRegistrationToken(token);
+    }
+    this.publishedToken = token;
   }
 
   async hibernate(): Promise<void> {
@@ -202,12 +268,88 @@ export class BuildkiteBackend implements SandboxBackend {
     }
   }
 
-  private async request<T = unknown>(
+  private async writeRegistrationToken(token: string): Promise<void> {
+    const storage = this.storage ?? (await this.locateStorage());
+    this.storage = storage;
+    const path = `/clusters/${encodeURIComponent(storage.clusterId)}/secrets`;
+    if (storage.secretId === undefined) {
+      const created = await this.organizationRequest<Secret>("POST", path, {
+        key: storage.key,
+        value: token,
+        description: `dsh-yawn runner token for ${this.options.pipeline}`,
+        policy: `- pipeline_id: ${storage.pipelineId}`,
+      });
+      this.storage = { ...storage, secretId: created.id };
+      return;
+    }
+    await this.organizationRequest(
+      "PUT",
+      `${path}/${encodeURIComponent(storage.secretId)}/value`,
+      { value: token },
+    );
+  }
+
+  /**
+   * The cluster the pipeline runs in, and the secret already holding the
+   * token's key. Buildkite resolves secrets by cluster, and a cluster's
+   * secret list is the only way to find one by key.
+   */
+  private async locateStorage(): Promise<SecretStorage> {
+    const key = this.options.secretKey ?? DEFAULT_REGISTRATION_TOKEN_SECRET;
+    const pipeline = await this.request<Pipeline>("GET", "");
+    const clusterId = pipeline.cluster_id;
+    if (clusterId === undefined || clusterId === null || clusterId === "") {
+      throw new Error(
+        `Buildkite pipeline ${this.options.pipeline} is not in a cluster, so it cannot read a Buildkite secret; move it to a cluster first`,
+      );
+    }
+    const secret = await this.findSecret(clusterId, key);
+    return {
+      clusterId,
+      pipelineId: pipeline.id,
+      key,
+      ...(secret === undefined ? {} : { secretId: secret.id }),
+    };
+  }
+
+  private async findSecret(
+    clusterId: string,
+    key: string,
+  ): Promise<Secret | undefined> {
+    const path = `/clusters/${encodeURIComponent(clusterId)}/secrets`;
+    for (let page = 1; ; page += 1) {
+      const secrets = await this.organizationRequest<Secret[]>(
+        "GET",
+        `${path}?per_page=100&page=${page}`,
+      );
+      const found = secrets.find((entry) => entry.key === key);
+      if (found !== undefined) {
+        return found;
+      }
+      if (secrets.length < 100) {
+        return undefined;
+      }
+    }
+  }
+
+  private request<T = unknown>(
     method: "GET" | "POST" | "PUT",
     path: string,
     body?: unknown,
   ): Promise<T> {
-    const url = `${API_URL}/organizations/${encodeURIComponent(this.options.organization)}/pipelines/${encodeURIComponent(this.options.pipeline)}${path}`;
+    return this.organizationRequest<T>(
+      method,
+      `/pipelines/${encodeURIComponent(this.options.pipeline)}${path}`,
+      body,
+    );
+  }
+
+  private async organizationRequest<T = unknown>(
+    method: "GET" | "POST" | "PUT",
+    path: string,
+    body?: unknown,
+  ): Promise<T> {
+    const url = `${API_URL}/organizations/${encodeURIComponent(this.options.organization)}${path}`;
     // Resolved per request, so a token entered in the Web UI reaches the next
     // call without rebuilding the backend.
     const token = await this.options.token();

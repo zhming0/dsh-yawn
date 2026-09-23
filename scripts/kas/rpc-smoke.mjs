@@ -25,7 +25,7 @@ const { CustomObjectsApi, KubeConfig } = await import(
 const tunnel = new TunnelServer({
   port: 8081,
   bind: "0.0.0.0",
-  tokens: [registrationToken],
+  tokens: () => [registrationToken],
   log: (message) => process.stdout.write(`${message}\n`),
 });
 const backend = new KasBackend({

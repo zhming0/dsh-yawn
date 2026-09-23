@@ -22,7 +22,8 @@ export interface DockerBackendOptions {
   binary?: string;
   /** The tunnel endpoint runners dial, such as ws://host.docker.internal:8081/tunnel. */
   controlPlaneUrl: string;
-  registrationToken: string;
+  /** The token to hand this container; read per provision so a rotation applies. */
+  registrationToken: () => string;
 }
 
 export class DockerBackend implements SandboxBackend {
@@ -60,7 +61,7 @@ export class DockerBackend implements SandboxBackend {
         "--env",
         `DSH_YAWN_CONTROL_PLANE_URL=${this.options.controlPlaneUrl}`,
         "--env",
-        `DSH_YAWN_REGISTRATION_TOKEN=${this.options.registrationToken}`,
+        `DSH_YAWN_REGISTRATION_TOKEN=${this.options.registrationToken()}`,
         this.options.image,
       ]);
       return {

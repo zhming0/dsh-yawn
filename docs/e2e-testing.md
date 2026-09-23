@@ -103,8 +103,8 @@ pnpm test:kas
 The test creates the disposable `dsh-kas-e2e` kind cluster and installs the
 pinned agent-sandbox controllers. It loads the development images and runs the
 production `TunnelServer` and `KasBackend` from the control-plane image as a Kubernetes
-Job. Real warm runner pods dial that Job through the same in-cluster Service
-and registration-token path used by the supported deployment.
+Job. Real warm runner pods dial that Job through the same in-cluster Service and
+mounted `dsh-yawn-registration-token` Secret the supported deployment uses.
 
 The sudo probe stays off the network. A package install would need name
 resolution inside a sandbox pod, and kind's default CNI does not enforce the

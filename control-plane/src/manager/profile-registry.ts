@@ -22,7 +22,8 @@ export class ProfileRegistry {
     profiles: Record<string, SandboxProfile>,
     /** Replacement backends by profile name; a missing one gets built here. */
     private readonly replacements: Record<string, SandboxBackend> | undefined,
-    private readonly registrationToken: string | undefined,
+    /** The control plane's current tunnel token, read per provision. */
+    private readonly registrationToken: () => string,
     /** Buildkite token resolution; defaults to the process environment. */
     private readonly buildkiteToken: (
       profile: BuildkiteProfile,
@@ -83,6 +84,11 @@ export class ProfileRegistry {
     return this.backends.get(name);
   }
 
+  /** Every built backend, for work that is not tied to one session. */
+  allBackends(): SandboxBackend[] {
+    return [...this.backends.values()];
+  }
+
   /** The backend that owns a record's sandbox, or undefined when orphaned. */
   findBackend(record: SessionRecord): SandboxBackend | undefined {
     const backend = this.backends.get(record.profile);
@@ -102,7 +108,7 @@ export class ProfileRegistry {
 function buildBackends(
   profiles: Record<string, SandboxProfile>,
   replacements: Record<string, SandboxBackend> | undefined,
-  registrationToken: string | undefined,
+  registrationToken: () => string,
   buildkiteToken: (profile: BuildkiteProfile) => Promise<string>,
 ): Map<string, SandboxBackend> {
   return new Map(
@@ -116,17 +122,12 @@ function buildBackends(
 
 function createBackend(
   profile: SandboxProfile,
-  registrationToken: string | undefined,
+  registrationToken: () => string,
   buildkiteToken: (profile: BuildkiteProfile) => Promise<string>,
 ): SandboxBackend {
   if (profile.backend === "docker") {
     const { name: _name, backend: _backend, ...options } = profile;
-    // The caller resolved tokens before building backends; a development
-    // Docker backend never reaches this without one.
-    return new DockerBackend({
-      ...options,
-      registrationToken: registrationToken as string,
-    });
+    return new DockerBackend({ ...options, registrationToken });
   }
   if (profile.backend === "buildkite") {
     // The token resolves per request from the host credential service or the
@@ -136,6 +137,7 @@ function createBackend(
     return new BuildkiteBackend({
       ...options,
       token: () => buildkiteToken(profile),
+      registrationToken,
     });
   }
   const { name: _name, backend: _backend, ...options } = profile;
@@ -148,10 +150,7 @@ function orphanedRecordMessage(record: SessionRecord): string {
 
 /** Internals the test suite reaches into. */
 export const testing = {
-  createBackend: (
-    profile: SandboxProfile,
-    registrationToken: string | undefined,
-  ) =>
+  createBackend: (profile: SandboxProfile, registrationToken: () => string) =>
     createBackend(profile, registrationToken, (p) =>
       resolveBuildkiteToken(p, undefined),
     ),

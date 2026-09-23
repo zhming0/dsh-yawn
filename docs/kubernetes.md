@@ -53,12 +53,12 @@ scripts/kas/dev-cluster.sh \
 ```
 
 `--load-runner-image` is for images already present in the local Docker daemon.
-Omit it when the images are pullable by the cluster. The script generates a
-registration token (or reads `--registration-token-file`) and stores it in the
-`dsh-yawn-registration-token` Secret, which both the control plane Deployment and the warm
-runner pods read. With `--control-plane-url`, hand the same token to the external control
-plane through `DSH_YAWN_REGISTRATION_TOKEN`, make the address reachable
-from pods, and widen the sandbox NetworkPolicy egress to it.
+Omit it when the images are pullable by the cluster. The runner token is the
+control plane's own: it generates one and writes it into the
+`dsh-yawn-registration-token` Secret the warm pods mount, so with
+`--control-plane-url` that external control plane has to be running before the
+pool's pods can register. Make the address reachable from pods and widen the
+sandbox NetworkPolicy egress to it.
 The script creates `kind-dsh-kas`,
 installs exactly the v1.0.2 release asset `sandbox-with-extensions.yaml`, waits
 for its CRDs and controllers, and applies both phases: the control plane from
@@ -125,7 +125,8 @@ kubectl -n agent-sandbox-system delete \
 ```
 
 The template contains no session-specific environment variables or Secrets;
-the registration token is the same for every runner by design. Claim `env` or
+the runner token is one value for the whole control plane, delivered by the
+Secret the template mounts. Claim `env` or
 `volumeClaimTemplates` overrides force a cold start instead of adopting a warm
 Sandbox, so both injection policies are deliberately `Disallowed`.
 
@@ -283,25 +284,22 @@ when more than one exists:
 The same cluster still owns every template; a repository or a session picks
 among the pools the operator published and nothing else.
 
-**The registration token** authenticates every runner tunnel. The control plane reads
-it from `DSH_YAWN_REGISTRATION_TOKEN`, and each runner pod reads the same
-`dsh-yawn-registration-token` Secret into that variable at start. To rotate it, set the
-new value in the Secret, restart the control plane, and recycle the warm pods so they
-pick it up:
+**The runner token** authenticates every runner tunnel. The control plane
+generates it, keeps it on its data volume, and writes it into the
+`dsh-yawn-registration-token` Secret each warm pod mounts. Rotate it on the Web
+UI's **Settings → Sandboxes** page. The new value becomes current at once:
+sandboxes started afterwards get it, and the previous value stays accepted
+until you retire it there.
+
+Retiring is what stops the old value working, so do it only when no live runner
+still holds it. A warm pod reads the Secret when it boots, and a hibernated
+sandbox reads it again when its pod is recreated on wake, so the stragglers are
+the sandboxes running at that moment. Recycle the unclaimed warm pods and let
+the running ones hibernate:
 
 ```sh
-kubectl -n dsh-yawn create secret generic dsh-yawn-registration-token \
-  --from-literal=token="$(openssl rand -hex 32)" \
-  --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n dsh-yawn rollout restart deployment/dsh-yawn-control-plane
-kubectl -n dsh-yawn delete sandbox --all
+kubectl -n dsh-yawn delete sandbox -l agents.x-k8s.io/warm-pool-sandbox
 ```
-
-For a gap-free rotation, first patch the control plane Deployment's
-`DSH_YAWN_REGISTRATION_TOKEN` to a literal `new,old` value (comma
-separated, new first — the control plane accepts every listed token), then update the
-Secret to the new token alone, recycle the warm pods, and finally drop the old
-token from the control plane.
 
 **Credentials and secrets** are in [`credentials.md`](credentials.md): which
 secrets sandbox commands receive, how to set them in the Web UI's
@@ -422,7 +420,7 @@ same sessions, credentials, and sandboxes. Restrict
 A Sandbox has no Service (`service: false`) and accepts no ingress at all. The
 runner opens a WebSocket to the control plane's `dsh-yawn-control-plane-tunnel` Service on port 8081
 (`ws://dsh-yawn-control-plane-tunnel.dsh-yawn.svc.cluster.local:8081/tunnel`),
-authenticates with the registration token, and all RPCs flow control-plane→runner over
+authenticates with the runner token the control plane generated, and all RPCs flow control-plane→runner over
 that runner-initiated tunnel. The claim's `status.sandbox.name` identifies the
 Sandbox; the runner presents the same name in its handshake and the control plane
 verifies it. In-cluster the tunnel is plaintext: control-plane authenticity rests on
@@ -491,7 +489,7 @@ listens on, 8443 here only as an example:
         controlPlaneUrl: tls://dsh.example.com:8443
 ```
 
-The registration token still authenticates every runner; exposure changes
+The runner token still authenticates every runner; exposure changes
 reachability, not trust.
 
 The template asks the extension controller to manage a default-deny

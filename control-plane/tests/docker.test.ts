@@ -63,7 +63,7 @@ if (args[0] === "inspect") process.stdout.write(JSON.stringify([{
       image: "runner:large",
       binary: docker,
       controlPlaneUrl: "ws://host.docker.internal:8081/tunnel",
-      registrationToken: "token-value",
+      registrationToken: () => "token-value",
     });
 
     const handle = await backend.provision({

@@ -97,7 +97,7 @@ describe("ProfileRegistry.update", () => {
     const registry = new ProfileRegistry(
       { standard },
       { standard: kept },
-      "token",
+      () => "token",
     );
 
     registry.update({

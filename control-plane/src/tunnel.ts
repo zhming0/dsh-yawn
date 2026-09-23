@@ -24,8 +24,12 @@ export interface RunnerGateway {
 export interface TunnelServerOptions {
   port: number;
   bind?: string;
-  /** Accepted registration tokens. Two entries allow a rolling rotation. */
-  tokens: string[];
+  /**
+   * Every token the tunnel admits, read on each handshake so a rotation
+   * applies without rebuilding the listener. The control plane owns the set;
+   * a retired token stops being accepted the moment it leaves this list.
+   */
+  tokens: () => string[];
   log?: (message: string) => void;
 }
 
@@ -50,10 +54,10 @@ const HEALTH_PROBE_TIMEOUT_MS = 10_000;
 
 /**
  * Accepts runner-initiated tunnel connections. A runner opens a WebSocket at
- * /tunnel, presenting the shared registration token as a bearer token and
- * its sandbox ID in a header. Once upgraded, the WebSocket carries plain
- * HTTP/2 with the roles reversed: this side is the HTTP/2 client, the runner
- * is the server.
+ * /tunnel, presenting a registration token the control plane issued as a
+ * bearer token and its sandbox ID in a header. Once upgraded, the WebSocket
+ * carries plain HTTP/2 with the roles reversed: this side is the HTTP/2
+ * client, the runner is the server.
  *
  * The listener itself is plaintext. Being WebSocket rather than a raw socket
  * is what lets an HTTPS proxy or Ingress terminate TLS in front of it with
@@ -68,14 +72,9 @@ export class TunnelServer implements RunnerGateway {
   });
   private readonly registrations = new Map<string, Registration>();
   private readonly waiters = new Map<string, Set<Waiter>>();
-  private readonly tokenDigests: Buffer[];
   private readonly log: (message: string) => void;
 
   constructor(private readonly options: TunnelServerOptions) {
-    if (options.tokens.length === 0 || options.tokens.some((t) => t === "")) {
-      throw new Error("the tunnel needs at least one non-empty token");
-    }
-    this.tokenDigests = options.tokens.map(digest);
     this.log = options.log ?? (() => {});
     this.server = createServer((request, response) =>
       this.handleRequest(request, response),
@@ -187,8 +186,11 @@ export class TunnelServer implements RunnerGateway {
       reject(socket, 400, "malformed handshake");
       return;
     }
+    const presented = digest(hello.token);
     if (
-      !this.tokenDigests.some((d) => timingSafeEqual(d, digest(hello.token)))
+      !this.options
+        .tokens()
+        .some((token) => timingSafeEqual(digest(token), presented))
     ) {
       this.log(`tunnel: rejected runner ${hello.sandboxId}: bad token`);
       reject(socket, 401, "invalid registration token");

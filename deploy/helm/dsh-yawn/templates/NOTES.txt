@@ -10,8 +10,10 @@ agent-sandbox v1.0.2 controllers are not installed by this chart:
 
   https://github.com/zhming0/dsh-yawn/blob/main/docs/installations-kas.md
 
-The pool reads two fixed names from this release: the `dsh-yawn-runner-config`
-ConfigMap holding DSH_YAWN_CONTROL_PLANE_URL, and the `dsh-yawn-registration-token` Secret.
+The pool reads one fixed name from this release: the `dsh-yawn-runner-config`
+ConfigMap holding DSH_YAWN_CONTROL_PLANE_URL. The `dsh-yawn-registration-token`
+Secret is created and kept current by the control plane itself, as soon as it
+starts.
 
 {{- if .Values.controlPlane.sandboxManager }}
 

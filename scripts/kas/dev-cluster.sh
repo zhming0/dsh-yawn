@@ -8,14 +8,12 @@ CLUSTER_NAME="dsh-kas"
 RUNNER_IMAGE=""
 CONTROL_PLANE_IMAGE=""
 DSH_YAWN_CONTROL_PLANE_URL=""
-TOKEN_FILE=""
 LOAD_IMAGE=false
 SKIP_WARM_POOL=false
 
 usage() {
   cat <<'EOF'
 Usage: dev-cluster.sh --runner-image IMAGE (--control-plane-image IMAGE | --control-plane-url URL)
-                      [--registration-token-file FILE]
                       [--load-runner-image] [--skip-warm-pool] [--name NAME]
 
 Creates/reuses a kind cluster, installs agent-sandbox v1.0.2, and applies the
@@ -29,10 +27,10 @@ dsh-yawn-control-plane-tunnel Service. With --control-plane-url, dsh runs outsid
 runners dial URL instead (ws://.../tunnel or wss://.../tunnel; the address must be
 reachable from pods, and the sandbox NetworkPolicy must be widened to it).
 
-The registration token is read from FILE when given, otherwise generated.
-Either way it lands in the dsh-yawn-registration-token Secret that both the
-control plane and the warm runners read. With --control-plane-url, pass the same
-token to the external control plane via DSH_YAWN_REGISTRATION_TOKEN.
+The runner token is the control plane's: it generates one on first boot and
+writes it into the dsh-yawn-registration-token Secret the warm pods mount. In
+external mode that control plane is a process this script does not start, so
+start it before the warm pool needs to register.
 EOF
 }
 
@@ -41,7 +39,6 @@ while (($#)); do
     --runner-image) [[ $# -ge 2 ]] || { echo "error: --runner-image needs a value" >&2; exit 2; }; RUNNER_IMAGE="$2"; shift 2 ;;
     --control-plane-image) [[ $# -ge 2 ]] || { echo "error: --control-plane-image needs a value" >&2; exit 2; }; CONTROL_PLANE_IMAGE="$2"; shift 2 ;;
     --control-plane-url) [[ $# -ge 2 ]] || { echo "error: --control-plane-url needs a value" >&2; exit 2; }; DSH_YAWN_CONTROL_PLANE_URL="$2"; shift 2 ;;
-    --registration-token-file) [[ $# -ge 2 ]] || { echo "error: --registration-token-file needs a value" >&2; exit 2; }; TOKEN_FILE="$2"; shift 2 ;;
     --load-runner-image) LOAD_IMAGE=true; shift ;;
     --skip-warm-pool) SKIP_WARM_POOL=true; shift ;;
     --name) [[ $# -ge 2 ]] || { echo "error: --name needs a value" >&2; exit 2; }; CLUSTER_NAME="$2"; shift 2 ;;
@@ -50,7 +47,7 @@ while (($#)); do
   esac
 done
 
-for command in kind kubectl sed od; do
+for command in kind kubectl; do
   command -v "$command" >/dev/null || { echo "error: required command not found: $command" >&2; exit 1; }
 done
 [[ -n "$RUNNER_IMAGE" ]] || { echo "error: --runner-image is required (the checked-in manifest intentionally has a placeholder)" >&2; exit 2; }
@@ -59,9 +56,6 @@ if [[ -n "$CONTROL_PLANE_IMAGE" && -n "$DSH_YAWN_CONTROL_PLANE_URL" ]]; then
 fi
 if [[ -z "$CONTROL_PLANE_IMAGE" && -z "$DSH_YAWN_CONTROL_PLANE_URL" ]]; then
   echo "error: either --control-plane-image or --control-plane-url is required (runners must know where to dial)" >&2; exit 2
-fi
-if [[ -n "$TOKEN_FILE" ]]; then
-  [[ -r "$TOKEN_FILE" ]] || { echo "error: cannot read token file: $TOKEN_FILE" >&2; exit 2; }
 fi
 kubectl version --client >/dev/null || { echo "error: kubectl is not usable" >&2; exit 1; }
 
@@ -130,25 +124,15 @@ if ((${#patches[@]})); then
   done
 fi
 
-# The namespace and the registration Secret both have to exist before the
-# control plane and warm pods start. The Secret never goes through the chart here, so
-# that its value stays under the script's control.
+# The namespace has to exist before the control plane starts in it. The
+# registration Secret does not: the control plane creates it on first boot and
+# keeps the generated token in it.
 kubectl apply -f - <<'EOF'
 apiVersion: v1
 kind: Namespace
 metadata:
   name: dsh-yawn
 EOF
-if [[ -n "$TOKEN_FILE" ]]; then
-  TOKEN="$(tr -d '[:space:]' <"$TOKEN_FILE")"
-  [[ -n "$TOKEN" ]] || { echo "error: token file is empty" >&2; exit 2; }
-else
-  TOKEN="$(od -vN 32 -An -tx1 /dev/urandom | tr -d ' \n')"
-fi
-kubectl -n dsh-yawn create secret generic dsh-yawn-registration-token \
-  --from-literal="token=$TOKEN" \
-  --dry-run=client -o yaml \
-  | kubectl apply -f -
 
 if [[ -n "$CONTROL_PLANE_IMAGE" ]]; then
   # In-cluster control plane: the whole chart, with the locally built images and the
@@ -156,7 +140,6 @@ if [[ -n "$CONTROL_PLANE_IMAGE" ]]; then
   # `profiles: {}`, so without it the control plane boots but cannot provision.
   helm template dsh-yawn-control-plane "$ROOT_DIR/deploy/helm/dsh-yawn" \
     --namespace dsh-yawn \
-    --set registrationToken.existingSecret=dsh-yawn-registration-token \
     --set "controlPlane.image.repository=${CONTROL_PLANE_IMAGE%%:*}" \
     --set "controlPlane.image.tag=${CONTROL_PLANE_IMAGE##*:}" \
     --set controlPlane.sandboxManager.profiles.standard.backend=kas \
@@ -167,19 +150,19 @@ else
   # runner-config ConfigMap DSH_YAWN_CONTROL_PLANE_URL comes from. dsh itself is elsewhere.
   helm template dsh-yawn-control-plane "$ROOT_DIR/deploy/helm/dsh-yawn" \
     --namespace dsh-yawn \
-    --set registrationToken.existingSecret=dsh-yawn-registration-token \
     --set "runner.controlPlaneUrl=$DSH_YAWN_CONTROL_PLANE_URL" \
     --show-only templates/control-plane-rbac.yaml \
     --show-only templates/runner-config-configmap.yaml \
     | kubectl apply -f -
 fi
-unset TOKEN
 
-kubectl kustomize "$overlay" | kubectl apply -f -
-
+# The in-cluster control plane becomes Ready (and writes the runner Secret)
+# before the pool's pods start, so they never crash-loop over a missing token.
 if [[ -n "$CONTROL_PLANE_IMAGE" ]]; then
   kubectl -n dsh-yawn rollout status deployment/dsh-yawn-control-plane --timeout=300s
 fi
+
+kubectl kustomize "$overlay" | kubectl apply -f -
 
 if ! $SKIP_WARM_POOL; then
   echo "Waiting for warm capacity..."

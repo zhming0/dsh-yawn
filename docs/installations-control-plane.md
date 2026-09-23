@@ -1,8 +1,8 @@
 # Control plane
 
 The `dsh-yawn` Helm chart installs the control plane: the dsh process, its data
-volume, the tunnel Service runners dial, the shared registration token, and the
-control plane's Kubernetes API access. Where sandboxes run is a separate install — see
+volume, the tunnel Service runners dial, and the control plane's Kubernetes API
+access. Where sandboxes run is a separate install — see
 [installation](installations.md).
 
 ## Prerequisites
@@ -48,12 +48,12 @@ helm install dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
   --values dsh-yawn.values.yaml
 ```
 
-The chart creates the `dsh-yawn-registration-token` Secret with a generated token
-that survives `helm upgrade`; `registrationToken.value` or
-`registrationToken.existingSecret` supplies your own. It also gives the control plane
-the `dsh-yawn-control-plane` identity — a ServiceAccount, a Role for `sandboxclaims` and
-`sandboxes` in the release namespace, and the RoleBinding between them — which
-is all a Kubernetes runner needs from you.
+The chart gives the control plane the `dsh-yawn-control-plane` identity — a
+ServiceAccount, a Role for `sandboxclaims`, `sandboxes`, and the runner-token
+Secret in the release namespace, and the RoleBinding between them — which is
+all a Kubernetes runner needs from you. The control plane generates the runner
+token itself and writes it into the `dsh-yawn-registration-token` Secret the
+warm pool mounts; no chart value configures it.
 
 The Service is a ClusterIP anchor by default. Set `service.type=LoadBalancer`
 or point your own Ingress or Gateway API route at it; whatever fronts dsh must
@@ -79,9 +79,10 @@ at the first tool call until a runner is set up, which is expected.
 Three credentials touch this install:
 
 - **The proxy's OIDC client secret** goes in the `dsh-yawn-oidc` Secret above.
-- **The shared registration token** is created by the chart. Supply your own
-  with `registrationToken.value` or `registrationToken.existingSecret`;
-  [`kubernetes.md`](kubernetes.md#the-in-cluster-control-plane) covers rotation.
+- **The runner token** is generated and kept by the control plane. Nothing
+  configures it, and no Kubernetes Secret of yours holds it; rotate it from
+  **Settings → Sandboxes**, which
+  [`kubernetes.md`](kubernetes.md#the-in-cluster-control-plane) covers.
 - **A credential the control plane uses itself** — a Buildkite API token, for example —
   goes in a Secret you own and reaches the control plane through `controlPlane.extraEnv`:
 

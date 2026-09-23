@@ -135,12 +135,18 @@ export class FakeBackend implements SandboxBackend {
   /** Thrown by the next destroy, then cleared. */
   destroyFailure: Error | undefined;
   readonly repositoryUrls: string[] = [];
+  /** Tokens this backend has been asked to publish, in order. */
+  readonly publishedTokens: string[] = [];
 
   async provision(spec: SandboxSpec) {
     this.provisions += 1;
     this.repositoryUrls.push(spec.repositoryUrl);
     this.running = true;
     return { sandboxId: "sandbox-one", reference: { id: "one" } };
+  }
+
+  async publishRegistrationToken(token: string) {
+    this.publishedTokens.push(token);
   }
 
   async hibernate() {

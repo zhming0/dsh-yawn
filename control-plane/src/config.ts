@@ -1,5 +1,3 @@
-import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -36,6 +34,7 @@ export type ProfileConfig =
       controlPlaneUrl: string;
       image?: string;
       readyTimeoutMs?: number;
+      secretKey?: string;
     };
 
 /**
@@ -79,7 +78,6 @@ export interface Config {
   workspace?: string;
   idleMs?: RuntimeSetting<number>;
   expiresAfterMs?: RuntimeSetting<number>;
-  registrationToken?: string;
   tunnel?: {
     port?: number;
     bind?: string;
@@ -110,7 +108,6 @@ export interface ResolvedConfig {
   workspace: string;
   idleMs: number;
   expiresAfterMs: number;
-  registrationToken?: string;
   tunnel: { port: number; bind: string };
   preview: { domain: string | undefined; port: number; bind: string };
 }
@@ -118,8 +115,7 @@ export interface ResolvedConfig {
 /**
  * The settings that can change while the host runs: sandbox profiles and the
  * idle and expiry timers. Everything else in {@link Config} shapes the boot
- * (state directories, the tunnel listener, the registration token) and is
- * read once.
+ * (state directories, the tunnel listener) and is read once.
  */
 export type RuntimeConfig = Pick<
   Config,
@@ -170,6 +166,7 @@ const runtimeFields = () => ({
             .number()
             .min(1)
             .default(DEFAULT_BUILDKITE_READY_TIMEOUT_MS),
+          secretKey: z.string(),
         }),
       ]),
     )
@@ -211,7 +208,6 @@ export const configSchema = z.object({
   repository: z.string(),
   revision: z.string().default(""),
   workspace: z.string().default("/workspace/repository"),
-  registrationToken: z.string(),
   tunnel: z.object({
     port: z.natural().min(1).max(65_535).default(8081),
     bind: z.string().default("0.0.0.0"),
@@ -226,8 +222,7 @@ export const configSchema = z.object({
 /**
  * The `sandboxManager` section of the deployment document: the runtime slice
  * alone — profiles, the default profile, and the two timers. Startup settings
- * and the registration token stay in the profile patch, where the
- * deployment's own values already are.
+ * stay in the profile patch, where the deployment's own values already are.
  *
  * The top-level key is part of the chart-to-image contract: people run an
  * image tag that is not the chart's, so a document may carry sections this
@@ -470,9 +465,6 @@ function assembleConfig(
       : { repository: config.repository }),
     revision: config.revision ?? "",
     workspace: config.workspace ?? "/workspace/repository",
-    ...(config.registrationToken === undefined
-      ? {}
-      : { registrationToken: config.registrationToken }),
     tunnel: {
       port: tunnelPort,
       bind: config.tunnel?.bind ?? "0.0.0.0",
@@ -560,6 +552,9 @@ function resolveProfile(
       controlPlaneUrl: checkControlPlaneUrl(name, profile.controlPlaneUrl),
       readyTimeoutMs:
         profile.readyTimeoutMs ?? DEFAULT_BUILDKITE_READY_TIMEOUT_MS,
+      ...(profile.secretKey === undefined
+        ? {}
+        : { secretKey: profile.secretKey }),
     };
   }
   return {
@@ -597,52 +592,4 @@ function checkControlPlaneUrl(
     );
   }
   return controlPlaneUrl;
-}
-
-const TOKEN_ENV = "DSH_YAWN_REGISTRATION_TOKEN";
-
-/**
- * The shared secret runners present when they dial the host tunnel. Accepts
- * a comma-separated list so a rotation can admit old and new tokens at once;
- * new sandboxes always receive the first entry.
- */
-export function resolveRegistrationTokens(
-  config: ResolvedConfig,
-  profiles: SandboxProfile[],
-): string[] {
-  const configured = config.registrationToken ?? process.env[TOKEN_ENV];
-  if (configured !== undefined) {
-    const tokens = configured
-      .split(",")
-      .map((token) => token.trim())
-      .filter((token) => token !== "");
-    if (tokens.length === 0) {
-      throw new Error("the configured registration token is empty");
-    }
-    return tokens;
-  }
-  const remote = profiles.find((profile) => profile.backend !== "docker");
-  if (remote !== undefined) {
-    throw new Error(
-      `the ${remote.backend} backend needs a registration token; set ${TOKEN_ENV} or the registrationToken config`,
-    );
-  }
-  // Docker development runs host and runners on one machine, so the control plane
-  // can mint its own token. Persisting it keeps sandboxes from an earlier
-  // control-plane process registerable after a restart.
-  const path = join(config.stateDir, "registration-token");
-  try {
-    const existing = readFileSync(path, "utf8").trim();
-    if (existing !== "") {
-      return [existing];
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw error;
-    }
-  }
-  mkdirSync(config.stateDir, { recursive: true, mode: 0o700 });
-  const token = randomBytes(32).toString("hex");
-  writeFileSync(path, `${token}\n`, { mode: 0o600 });
-  return [token];
 }

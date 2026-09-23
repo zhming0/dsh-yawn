@@ -126,11 +126,11 @@ Details:
 ### How does the runner talk to the control plane?
 
 It dials out. Every runner opens one WebSocket to the control plane's tunnel
-listener and authenticates with the shared registration token; all RPCs then
-flow control-plane → runner over that runner-initiated connection. Nothing
-ever connects into a sandbox, and sandboxes accept no ingress at all. Runners
-outside the cluster reach the same listener through a `/tunnel` path on the
-Ingress that fronts the Web UI.
+listener and authenticates with a runner token the control plane generated; all
+RPCs then flow control-plane → runner over that runner-initiated connection.
+Nothing ever connects into a sandbox, and sandboxes accept no ingress at all.
+Runners outside the cluster reach the same listener through a `/tunnel` path on
+the Ingress that fronts the Web UI.
 Details: [`docs/kubernetes.md`](docs/kubernetes.md#connectivity-and-isolation),
 [`control-plane/README.md`](control-plane/README.md#tunnel).
 

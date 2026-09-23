@@ -16,14 +16,14 @@ const PREVIEW_DOMAIN = "sandbox.localhost";
 const registrationToken = randomBytes(32).toString("hex");
 const tunnel = new TunnelServer({
   port: 0,
-  tokens: [registrationToken],
+  tokens: () => [registrationToken],
   log: (message) => process.stdout.write(`${message}\n`),
 });
 await tunnel.listen();
 const backend = new DockerBackend({
   image,
   controlPlaneUrl: `ws://host.docker.internal:${tunnel.port()}/tunnel`,
-  registrationToken,
+  registrationToken: () => registrationToken,
 });
 let handle;
 let previewServer;

@@ -1097,4 +1097,37 @@ describe("repository workspaces and instructions", () => {
     ).rejects.toThrow("Web profile");
     await expect(stat(join(directory, "workspace-anchors"))).rejects.toThrow();
   });
+
+  it("rotates the runner token and keeps the previous one accepted", async () => {
+    const backend = new FakeBackend();
+    const ctx = new Context();
+    const manager = new SandboxManager(
+      ctx,
+      {
+        profiles: { standard: { backend: "docker" } },
+        stateDir: directory,
+        repository: "https://github.com/example/public.git",
+      },
+      { backends: { standard: backend }, gateway: gatewayFor(backend) },
+    );
+
+    const first = await manager.getRegistrationToken();
+    expect(first.current).toMatch(/^[0-9a-f]{64}$/);
+    expect(first.retiring).toEqual([]);
+    // Boot publishes the token to every backend that stores it elsewhere.
+    expect(backend.publishedTokens).toContain(first.current);
+
+    const rotated = await manager.rotateRegistrationToken();
+    expect(rotated.current).not.toBe(first.current);
+    expect(rotated.retiring).toEqual([first.current]);
+    expect(backend.publishedTokens).toContain(rotated.current);
+
+    // The old token stays accepted until retired; new sandboxes already got
+    // the new one.
+    const retired = await manager.retireRegistrationToken();
+    expect(retired.current).toBe(rotated.current);
+    expect(retired.retiring).toEqual([]);
+
+    await ctx.fiber.dispose();
+  });
 });
