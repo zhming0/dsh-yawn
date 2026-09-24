@@ -291,6 +291,33 @@ For UI changes, record the browser state or capture a screenshot when useful,
 but also exercise the interaction and verify the resulting state. A screenshot
 alone does not prove persistence or model-context injection.
 
+### Verify Web plugin management
+
+Run this scenario for changes to the Plugins page, the bundle patch, or
+`dsh-yawn-seed`.
+
+1. The sidebar's **Plugins** page must list the official bundles the
+   installation ships switched off, the official plugins that carry a
+   configuration page, and `@zhming0/dsh-yawn` under **Installed**, switched
+   on.
+2. Pack a package that declares a bundle patch (`dsh.bundle.patch` naming a
+   `cordis.patch.yml`) and install it with **Add plugin** by absolute path,
+   then **Enable now**. The page must list it switched on, and the profile
+   manifest on the control plane volume must gain the dependency and the
+   bundle entry:
+
+   ```sh
+   kubectl -n dsh-yawn exec deploy/dsh-yawn-control-plane -c control-plane -- \
+     cat /data/.dsh/profiles/web/package.json
+   ```
+
+3. Roll the control plane onto a new image version (for a development build,
+   remove the version marker first, as the troubleshooting note below says).
+   After the restart the plugin must still be installed and switched on: this
+   is the `dsh-yawn-seed` carry-forward.
+4. Uninstall the test plugin from its page. The dependency and the bundle
+   entry must be gone, and a restart must come up without it.
+
 ## Troubleshooting
 
 - **Docker smoke imports fail:** run `pnpm build`; the script imports
@@ -301,9 +328,16 @@ alone does not prove persistence or model-context injection.
 - **A rebuilt control-plane image still runs the old bundle:** `dsh-yawn-seed`
   refreshes the profile on the control plane volume only when the image version
   changes, and every development build is `0.0.0-dev`. Remove the marker and
-  restart:
+  restart; the next boot merges the image's manifest fields into the profile
+  and runs `pnpm update @zhming0/dsh-yawn`, which picks up the rebuilt package
+  while the profile's other plugins stay:
   `kubectl -n dsh-yawn exec deploy/dsh-yawn-control-plane -c control-plane -- rm /data/.dsh/profiles/web/.dsh-yawn-image-version`,
   then `kubectl -n dsh-yawn rollout restart deploy/dsh-yawn-control-plane`.
+- **Plugins disappeared after a control-plane upgrade:** the refresh failed, and
+  the pod log says so. The manifest it was working from is kept at
+  `/data/.dsh/profiles/web/package.json.before-reseed`, and the next boot
+  merges it back in and retries. To recover by hand, copy that file over
+  `package.json` in the profile and run `pnpm install` there.
 - **The warm pool never becomes ready:** inspect agent-sandbox controller
   deployments, the `dsh-yawn-universal` `SandboxWarmPool`, and runner pod events.
 - **The browser stops loading after a rollout:** restart the port-forward.

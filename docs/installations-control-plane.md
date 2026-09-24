@@ -109,3 +109,11 @@ store, which is pushed into every sandbox —
 
 `helm upgrade` moves the control plane. It does not touch a runner; re-apply
 the runner's manifests at the same version to move its image.
+
+The data volume carries the profile across the upgrade. On the first boot of
+the new image the seed refreshes the control plane's own package and keeps
+whatever the profile holds, including plugins installed from the Web Plugins
+page. If that refresh fails it reseeds the profile from the image and writes a
+warning to the pod log, keeping the manifest it was working from as
+`package.json.before-reseed`; the next boot merges that manifest back in and
+retries, so a transient failure repairs itself.

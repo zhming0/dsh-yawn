@@ -191,7 +191,8 @@ daemon is reachable.
 The control plane chart runs the `ghcr.io/zhming0/dsh-yawn-control-plane` distribution image
 as a single-replica Deployment. Its home directory is the data volume, which
 carries everything durable: dsh sessions and storages, the seeded `web` profile
-with your `cordis.patch.yml`, and the control plane's session records. Deleting the
+with your `cordis.patch.yml` and any plugins installed from the Web Plugins
+page, and the control plane's session records. Deleting the
 pod loses nothing; deleting the PVC loses all of it.
 
 The pod sets `fsGroup` so uid 1000 can write the volume, which on block-CSI

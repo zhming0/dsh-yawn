@@ -289,6 +289,33 @@ On Kubernetes the `docker` row is the rootless `dockerd` sidecar; see
 [Docker inside a sandbox](../docs/kubernetes.md#docker-inside-a-sandbox) for
 the security trade it makes and how to remove it.
 
+## Plugins
+
+The Web sidebar's **Plugins** page manages the profile's bundles: it installs
+a package name, a Git address, a tarball, or a local path; enables, disables,
+and removes bundles; and switches individual plugin rows. The same operations
+are `dsh plugin --profile web ...` in the control-plane pod. The stock `cordis`
+agent preset also enables the `plugin_manager` tool, which asks for approval on
+each call.
+
+Bundles run in the control-plane process, outside every sandbox and with the
+control plane's access to sessions and credentials, so the page is operator
+access. The page also lists this package's own bundle: switching
+`@zhming0/dsh-yawn` off drops it from the profile's bundle list and unmounts
+the sandbox services until it is switched back on (the next image upgrade
+merges the image's bundle list back in).
+
+`dsh-yawn-seed` seeds the profile from `/opt/dsh-yawn/profile` on first boot.
+On an image upgrade it merges the image's manifest fields — the
+`@zhming0/dsh-yawn` dependency and the bundle selection the image ships — into
+the profile on the data volume and runs `pnpm update @zhming0/dsh-yawn`, so
+everything the user installed stays. `cordis.patch.yml` and
+`pnpm-workspace.yaml` are seeded once and then the user's; the workspace file
+is where pnpm records dependency build-script approvals. A refresh that fails
+reseeds the profile from the image and logs a warning, but keeps the manifest
+it was working from as `package.json.before-reseed` and leaves the version
+marker alone: the next boot merges that manifest back in and retries.
+
 ## Settings
 
 Configuration is YAML in the profile's own layer,

@@ -131,6 +131,11 @@ likely to mislead you.
   images are released together. Docker and checkout installs are development paths.
 - Only `dsh web` is supported. Headless mode exits before the idle lifecycle can
   run.
+- The `web` profile on the data volume is user data as well as image data: an
+  image upgrade merges the image's manifest fields and refreshes its own
+  package, and keeps plugins installed from the Web Plugins page. Installed
+  bundles run in the control-plane process, outside every sandbox, so the page
+  is operator access.
 - One control plane is one trust domain. Its sessions, credentials, and
   sandboxes are not isolated from other users admitted to that control plane.
 - Secrets are global to the control plane and are pushed to a runner before
