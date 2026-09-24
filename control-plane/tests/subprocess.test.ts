@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import { Code, ConnectError } from "@connectrpc/connect";
 import { Context } from "@deepseek-ai/cordis";
-import type { SubprocessSpawnSpec } from "@deepseek-ai/dsh-subprocess";
+import {
+  SubprocessExecutableNotFoundError,
+  type SubprocessSpawnSpec,
+} from "@deepseek-ai/dsh-subprocess";
 
 import type { RunnerClient } from "../src/runner-client.js";
 import { SandboxSubprocessRuntime, testing } from "../src/subprocess.js";
@@ -23,6 +27,8 @@ interface FakeRunnerOptions {
   existing?: string[];
   /** Bare names resolvable against the runner PATH, mapped to their paths. */
   onPath?: Record<string, string>;
+  /** What a lookup miss rejects with; the runner's own `not found` by default. */
+  miss?: Error;
 }
 
 function fakeRunnerClient(
@@ -39,7 +45,7 @@ function fakeRunnerClient(
       if ((options.onPath ?? {})[command] !== undefined) {
         return Promise.resolve({ path: options.onPath![command]! });
       }
-      return Promise.reject(new Error("executable not found"));
+      return Promise.reject(options.miss ?? new Error("executable not found"));
     },
     // RemoteProcess consumes one request per exec and only needs the exit.
     async *exec(request: ExecRequest) {
@@ -227,6 +233,26 @@ describe("sandbox subprocess seam", () => {
     await spawn(runtimeWith(client), { argv: ["rg", "--files"] });
     expect(resolves).toEqual([]);
     expect(requests[0]?.argv).toEqual(["rg", "--files"]);
+  });
+});
+
+describe("sandbox subprocess executable lookup", () => {
+  it("reports a lookup miss with the runtime's own error type", async () => {
+    const client = fakeRunnerClient([], [], {
+      miss: new ConnectError("executable not found", Code.NotFound),
+    });
+    await expect(
+      runtimeWith(client).resolveExecutable("/usr/bin/zsh"),
+    ).rejects.toBeInstanceOf(SubprocessExecutableNotFoundError);
+  });
+
+  it("keeps a transport failure distinct from a lookup miss", async () => {
+    const client = fakeRunnerClient([], [], {
+      miss: new ConnectError("runner unavailable", Code.Unavailable),
+    });
+    await expect(
+      runtimeWith(client).resolveExecutable("/usr/bin/zsh"),
+    ).rejects.toMatchObject({ code: Code.Unavailable });
   });
 });
 

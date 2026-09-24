@@ -1,7 +1,9 @@
 import { PassThrough, Writable, type Duplex, type Readable } from "node:stream";
 import { basename, isAbsolute } from "node:path";
 
+import { Code, ConnectError } from "@connectrpc/connect";
 import {
+  SubprocessExecutableNotFoundError,
   SubprocessRuntime,
   type SubprocessHandle,
   type SubprocessOutputReader,
@@ -35,11 +37,27 @@ export class SandboxSubprocessRuntime extends SubprocessRuntime {
     signal?: AbortSignal,
   ): Promise<string> {
     const client = await this.ctx.sandboxManager.clientForCurrentAgent();
-    const response = await client.resolveExecutable(
-      { command, env: { ...env } },
-      signal === undefined ? {} : { signal },
-    );
-    return response.path;
+    try {
+      const response = await client.resolveExecutable(
+        { command, env: { ...env } },
+        signal === undefined ? {} : { signal },
+      );
+      return response.path;
+    } catch (error) {
+      // The runner reports a completed lookup miss as `not found`, the way any
+      // other Connect service does. `SubprocessRuntime` promises its own error
+      // type for that case and its callers branch on it: terminal shell
+      // discovery drops a candidate it cannot find but rethrows anything else.
+      // Letting the transport error through would make one shell that is simply
+      // absent look like a failed lookup and reject the whole listing.
+      if (ConnectError.from(error).code === Code.NotFound) {
+        throw new SubprocessExecutableNotFoundError(
+          `sandbox: executable ${JSON.stringify(command)} was not found`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
   }
 
   spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
