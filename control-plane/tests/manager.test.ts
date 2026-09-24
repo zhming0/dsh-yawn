@@ -660,8 +660,7 @@ describe("sandbox lifecycle", () => {
             },
           ],
           source: {
-            kind: "plugin",
-            plugin: "@zhming0/dsh-yawn:sandbox",
+            kind: "dsh-yawn",
             form: "notice",
           },
         },
