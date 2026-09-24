@@ -28,7 +28,7 @@ steps:
   - label: dsh sandbox
     image: "$DSH_YAWN_RUNNER_IMAGE"
     command: |
-      exec runuser -u sandbox -- sh -c 'cd /workspace && exec dsh-yawn-runner'
+      cd /workspace && exec env HOME=/workspace/home dsh-yawn-runner
     checkout:
       skip: true
     secrets:
@@ -39,11 +39,13 @@ steps:
 ```
 
 Set `queue` to your hosted Linux queue. Hosted agents resolve `image` from the
-build environment. The agent and its startup hooks run as root with
-`HOME=/root`; the command then launches the runner as `sandbox` (UID 1000)
-with `HOME=/workspace/home`. Do not add `--login` or `--preserve-environment`
-to `runuser`: the command needs to retain the `DSH_YAWN_*` job variables while
-resetting `HOME` for the sandbox account.
+build environment. The job runs as root, runner and commands together: the
+agent is single-use, and the runner image already gives the `sandbox` account
+passwordless sudo, so dropping to UID 1000 would keep the friction without
+keeping a boundary. Keep `HOME=/workspace/home`, where the image's npm prefix,
+mise shims, and `uv` installs point; as root, `npm install -g` would otherwise
+write outside `PATH`. Running as root also puts the agent's root-owned Docker
+socket within reach of the sandbox.
 
 For self-hosted agents, use Docker instead:
 
@@ -62,6 +64,9 @@ steps:
     agents:
       queue: self-hosted
 ```
+
+Self-hosted agents keep `--user 1000:1000`: the container shares a host that
+outlives the sandbox, so root inside it is a different decision.
 
 - `DSH_YAWN_RUNNER_IMAGE`, `DSH_YAWN_SANDBOX_ID`, and `DSH_YAWN_CONTROL_PLANE_URL` come from the build
   environment the control plane sets, so the pipeline never pins a runner image and

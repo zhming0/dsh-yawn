@@ -27,12 +27,15 @@ idempotent `.agents/resume` hook on wake, and records setup completion in
 own `.git` directory so it never appears as an untracked file. Keeping
 the checkout beneath the persistent volume root prevents filesystem metadata
 such as `lost+found` from entering the repository. The file APIs operate with
-the container user's permissions; they are not a filesystem sandbox. Run the
-image as its non-root `sandbox` user (UID/GID 1000) and isolate its
-filesystem/network at the container platform boundary. The image leaves `USER`
-unset for Buildkite hosted agents, so a plain `docker run` defaults to root.
-The Docker backend and documented Buildkite command pass `--user 1000:1000`;
-the Kubernetes template sets the identity through its security context.
+the container user's permissions; they are not a filesystem sandbox. Prefer
+running the image as its non-root `sandbox` user (UID/GID 1000) and isolating
+its filesystem and network at the container platform boundary: the Docker
+backend and the self-hosted Buildkite command pass `--user 1000:1000`, and the
+Kubernetes template sets the identity through its security context. The hosted
+Buildkite step is the exception: the machine is single-use, so it runs the
+runner as root. The image leaves `USER` unset, as hosted agents require, which
+also means a plain `docker run` defaults to root; pass `--user` when the
+container is not disposable.
 
 The home directory is `/workspace/home`, also on the workspace volume, so
 package caches, tool configuration, and anything installed under `$HOME`
@@ -49,11 +52,12 @@ puts those directories back on `PATH` for login shells, which Debian's
 
 The `sandbox` user has passwordless sudo (`/etc/sudoers.d/90-sandbox`), so a
 repository whose own setup installs system packages, as `mise bootstrap
-packages apply` does for an `apt:` entry, needs no custom image. The
-Kubernetes template allows privilege escalation for that; what apt installs
-still lives outside `$HOME`, so a wake that rebuilds the machine starts over
-without it. Files under `$HOME`, the workspace volume, are the ones that
-survive.
+packages apply` does for an `apt:` entry, needs no custom image. That makes the
+account a default identity rather than a privilege boundary, which is why the
+hosted Buildkite step skips it and runs as root. The Kubernetes template allows
+privilege escalation for the sudo path; what apt installs still lives outside
+`$HOME`, so a wake that rebuilds the machine starts over without it. Files
+under `$HOME`, the workspace volume, are the ones that survive.
 
 `GET /health` on `ADDR` (default `:8080`) is an unauthenticated
 process-readiness probe for the kubelet; it is the only listener the runner

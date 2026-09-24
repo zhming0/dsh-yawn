@@ -137,9 +137,10 @@ The pipeline is one command step that runs the runner image the control plane na
 has the YAML and the setup steps. What matters to the backend:
 
 - Hosted Linux agents use `image: "$DSH_YAWN_RUNNER_IMAGE"`, resolved from
-  the build environment. Startup hooks run as root, then `runuser -u sandbox`
-  launches the runner as UID 1000 with `HOME=/workspace/home`, retaining the
-  `DSH_YAWN_*` job variables. There is no nested runner container.
+  the build environment. The job runs as root — hooks, runner, and the commands
+  the runner starts — and the step gives the runner `HOME=/workspace/home`,
+  where the image's npm prefix and tool shims point. There is no nested runner
+  container.
 - Self-hosted agents use `docker run --user 1000:1000`. Its `-e VAR` flags
   copy `DSH_YAWN_SANDBOX_ID`, `DSH_YAWN_CONTROL_PLANE_URL`, and
   `DSH_YAWN_REGISTRATION_TOKEN` from the job environment into the container.
@@ -147,7 +148,8 @@ has the YAML and the setup steps. What matters to the backend:
 - The image leaves `HOME` unset so the container runtime selects the starting
   user's home: `/root` for root, or `/workspace/home` for the sandbox account
   (UID 1000). This lets root-run hosted agent hooks create Docker credentials
-  under `/root/.docker` rather than the sandbox account's home.
+  under `/root/.docker` rather than the sandbox account's home, and lets the
+  hosted step give the runner the sandbox home explicitly.
 - The control plane sets `DSH_YAWN_RUNNER_IMAGE` to the tag matching its own version, so
   the pipeline never pins an image and cannot drift from the control plane.
 - `agents.queue` explicitly picks the fleet in the pipeline. Two fleets mean
@@ -185,7 +187,11 @@ One control plane is one trust domain, and a Buildkite profile widens it:
   control plane pushes to the runner after it registers. Give the pipeline its
   own cluster and queue rather than sharing them with unrelated CI.
 - The job runs with whatever the agent grants it. On hosted agents that is a
-  Buildkite-managed VM; on self-hosted agents it is your infrastructure.
+  Buildkite-managed VM, where the documented step runs the sandbox as root; on
+  self-hosted agents it is your infrastructure, where it keeps the `sandbox`
+  account. That account is not a privilege boundary on either one: the runner
+  image gives it passwordless sudo so repository setup hooks can install
+  system packages.
 - The idle checkpoint files — the Git bundle and the artifacts tar — live in
   the control plane's state directory, next to the credential store, so a
   checkpointed session's work has the same exposure as a hibernated sandbox's

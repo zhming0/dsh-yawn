@@ -38,9 +38,10 @@ export const SANDBOX_ENVIRONMENT_SECTION = "environment:sandbox";
  * sleep. One sentence carries the "this page means the GUI" mapping from the
  * Web GUI paragraph dsh composes: that mapping stays true for a sandboxed
  * session even though the URL does not, so dropping the paragraph must not
- * lose it. The rest states what the model can install: sudo works, so system
- * packages are reachable, but they live outside $HOME and go away with the
- * machine, so project tools belong to mise, uv, or npm instead. It also
+ * lose it. The rest states what the model can install: system package managers
+ * work, with `sudo` on a backend that runs an unprivileged user, but they
+ * install outside $HOME and go away with the machine, so project tools belong
+ * to mise, uv, or npm instead. It also
  * states the one rule for output that must outlive the sandbox: put
  * it in the artifacts folder, because everything else outside the checkout is
  * disposable. The checkpoint transfer cap is deliberately absent: it exists
@@ -48,7 +49,7 @@ export const SANDBOX_ENVIRONMENT_SECTION = "environment:sandbox";
  * notice carry it.
  */
 export const SANDBOX_ENVIRONMENT_PROMPT =
-  'You are working inside an isolated sandbox: file and shell tools resolve paths inside this sandbox, and the repository checkout is mounted at {{cwd}}. There is no DeepSeek Harness source checkout inside the sandbox; the DeepSeek Harness web UI runs on the host machine and is unreachable from here. When the user says "this page", "this GUI", or "this app", they mean that web UI. The sandbox user has passwordless sudo, so system package managers can install software, but what they install outside $HOME lasts only as long as this machine. Prefer the preinstalled managers for project tools: `mise use -g` for toolchains, `uv tool install` for Python tools, and `npm install -g` for Node tools. Those write under $HOME. {{tool_retention}} Anything the user should keep but that does not belong in the repository — screenshots, recordings, reports — goes in {{artifacts}}, which always comes back.';
+  'You are working inside an isolated sandbox: file and shell tools resolve paths inside this sandbox, and the repository checkout is mounted at {{cwd}}. There is no DeepSeek Harness source checkout inside the sandbox; the DeepSeek Harness web UI runs on the host machine and is unreachable from here. When the user says "this page", "this GUI", or "this app", they mean that web UI. System package managers can install software (`sudo` works), but what they install outside $HOME lasts only as long as this machine. Prefer the preinstalled managers for project tools: `mise use -g` for toolchains, `uv tool install` for Python tools, and `npm install -g` for Node tools. Those write under $HOME. {{tool_retention}} Anything the user should keep but that does not belong in the repository — screenshots, recordings, reports — goes in {{artifacts}}, which always comes back.';
 
 /**
  * What the model is told about tools it installs under $HOME. The backend
