@@ -40,8 +40,17 @@ try {
   await run(client, [
     "/bin/bash",
     "-lc",
-    'test "$SMOKE_VALUE" = present && git --version && jj --version && mise --version && python --version && uv --version && uvx --version && node --version && npm --version && jq --version && yq --version && docker --version && docker buildx version && docker compose version && for command in cc make pkg-config unzip zip xz file patch ssh rsync ps gh pnpm yarn agent-browser install-browser; do command -v "$command" || exit 1; done && ! command -v pip && ! command -v dockerd && ! command -v containerd',
+    'test "$SMOKE_VALUE" = present && git --version && jj --version && mise --version && python --version && uv --version && uvx --version && node --version && npm --version && jq --version && yq --version && docker --version && docker buildx version && docker compose version && for command in cc make pkg-config unzip zip xz file patch ssh rsync ps gh pnpm yarn agent-browser install-browser sudo; do command -v "$command" || exit 1; done && ! command -v pip && ! command -v dockerd && ! command -v containerd',
   ]);
+
+  // A repository setup hook may install system packages, so the sandbox user
+  // must reach root with sudo and no password. The Kubernetes smoke checks the
+  // same rule under its pod security context; this container checks the rule
+  // itself.
+  const sudoUid = (await run(client, ["sudo", "-n", "id", "-u"])).trim();
+  if (sudoUid !== "0") {
+    throw new Error(`sudo did not reach root: ${sudoUid}`);
+  }
 
   // The browser is deliberately not in the image; `install-browser`, which the
   // image does carry, adds it on demand. This runs that command for real and

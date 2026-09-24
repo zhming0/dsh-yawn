@@ -49,7 +49,7 @@ RUN set -eux; \
       bash build-essential ca-certificates curl file gh git jq \
       openssh-client patch pkg-config procps \
       python3 python3-venv python-is-python3 \
-      rsync unzip xz-utils zip; \
+      rsync sudo unzip xz-utils zip; \
     install -m 0755 -d /etc/apt/keyrings; \
     curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc; \
     chmod a+r /etc/apt/keyrings/docker.asc; \
@@ -94,6 +94,16 @@ RUN set -eux; \
     chmod 0755 /etc/profile.d/dsh-path.sh; \
     mkdir -p /workspace /run/dsh; \
     useradd --create-home --uid 1000 --home-dir /workspace/home sandbox; \
+    printf '%s\n' \
+      '# dsh-yawn: passwordless root for the sandbox user, so a repository setup' \
+      '# hook such as buildkite/agent .agents/setup can install system packages' \
+      '# with apt-get. On Kubernetes the pod template must allow privilege' \
+      '# escalation, because no_new_privs otherwise makes the setuid transition' \
+      '# a no-op; see deploy/kubernetes/runner/20-sandbox-template.yaml.' \
+      'sandbox ALL=(ALL:ALL) NOPASSWD: ALL' \
+      > /etc/sudoers.d/90-sandbox; \
+    chmod 0440 /etc/sudoers.d/90-sandbox; \
+    visudo -cf /etc/sudoers.d/90-sandbox; \
     chown -R sandbox:sandbox /workspace /run/dsh; \
     install -d "${AGENT_BROWSER_INSTALL_DIR}"; \
     npm install -g --prefix "${AGENT_BROWSER_INSTALL_DIR}" "agent-browser@${AGENT_BROWSER_VERSION}"; \

@@ -177,14 +177,41 @@ to the container, stay root-owned and unreadable to it. What privileged mode
 does remove is the kernel attack-surface reduction from seccomp and AppArmor
 for that one container. Because the pod has no cgroup delegation, the daemon
 also runs without cgroups: `docker run --memory` and similar limits are not
-enforced on nested containers. The runner
-container, where the model's commands run, keeps `RuntimeDefault` seccomp,
-dropped capabilities, and `allowPrivilegeEscalation: false` exactly as before.
+enforced on nested containers. The runner container, where the model's commands
+run, keeps `RuntimeDefault` seccomp and stays a non-root UID 1000, but it
+allows privilege escalation and adds back the capabilities apt, dpkg, and sudo
+need, because the image gives the sandbox user passwordless sudo and a
+repository's setup hook may install system packages. See
+[System packages in a sandbox](#system-packages-in-a-sandbox).
 The template no longer satisfies the `baseline` Pod Security Standard; a
 namespace enforcing it rejects the pod. If that trade is wrong for your
 cluster, delete the `docker` container and its two `emptyDir` volumes from the
 template and the runner's `DOCKER_HOST` entry; the CLI then reports that no
 daemon is reachable.
+
+## System packages in a sandbox
+
+The sandbox user has passwordless sudo, so an unmodified repository whose setup
+installs system packages, as `mise bootstrap packages apply` does for an
+`apt:` entry in `mise.toml`, works without a custom image. Two things bound
+what that buys:
+
+- **The privilege stays inside the runner container.** The template sets
+  `allowPrivilegeEscalation: true` (otherwise `no_new_privs` makes the setuid
+  transition a no-op) and adds `AUDIT_WRITE`, `CHOWN`, `DAC_OVERRIDE`,
+  `FOWNER`, `FSETID`, `MKNOD`, `SETFCAP`, `SETGID`, `SETPCAP`, and `SETUID`
+  back to a container that otherwise drops `ALL`. The network, kill, and chroot
+  capabilities stay out, `SYS_ADMIN` above all, so the session cannot mount a
+  filesystem, and seccomp stays `RuntimeDefault`. The pod is still UID 1000
+  with no host mounts, but code in the sandbox can now write anywhere in the
+  container, including over the runner's own files. Treat this as part of the
+  same trust decision as the privileged Docker sidecar, and drop the sudoers
+  file in a custom image if that is the wrong trade for a shared cluster.
+- **It does not survive a wake.** apt writes to `/usr` and `/var`, which come
+  from the image again when the pod is rebuilt; only the workspace volume
+  survives. A repository that needs the packages after a wake either re-runs
+  its bootstrap from `.agents/resume` or installs into `$HOME` instead, as
+  `install-browser` does with `dpkg-deb -x`.
 
 ## The in-cluster control plane
 
@@ -480,7 +507,9 @@ CIDRs or an FQDN-aware CNI policy and adapt DNS labels for their DNS provider.
 recipes. NetworkPolicy is connectivity control, not a sandbox boundary.
 
 The pod does not mount a service-account token and runs non-root. The runner
-container has dropped capabilities and RuntimeDefault seccomp; the `docker`
+container drops `ALL` capabilities and adds back only the subset apt, dpkg, and
+sudo use, with `RuntimeDefault` seccomp and privilege escalation allowed so
+passwordless sudo works; the `docker`
 sidecar is privileged for the reasons in
 [Docker inside a sandbox](#docker-inside-a-sandbox). The `dsh-yawn-control-plane` Role is
 namespace scoped: it manages claims and reads/patches Sandboxes for lifecycle

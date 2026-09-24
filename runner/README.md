@@ -45,9 +45,15 @@ Global installs need no root: `NPM_CONFIG_PREFIX` sends `npm install -g` to
 `$HOME/.local`, `uv tool install` uses `$HOME/.local/bin`, and mise keeps its
 default data directory at `$HOME/.local/share/mise`. A `/etc/profile.d` script
 puts those directories back on `PATH` for login shells, which Debian's
-`/etc/profile` would otherwise reset. The image has no `sudo` and no writable
-system directory for `sandbox`, so `apt-get` and other system package managers
-cannot install anything when running as that user.
+`/etc/profile` would otherwise reset.
+
+The `sandbox` user has passwordless sudo (`/etc/sudoers.d/90-sandbox`), so a
+repository whose own setup installs system packages, as `mise bootstrap
+packages apply` does for an `apt:` entry, needs no custom image. The
+Kubernetes template allows privilege escalation for that; what apt installs
+still lives outside `$HOME`, so a wake that rebuilds the machine starts over
+without it. Files under `$HOME`, the workspace volume, are the ones that
+survive.
 
 `GET /health` on `ADDR` (default `:8080`) is an unauthenticated
 process-readiness probe for the kubelet; it is the only listener the runner

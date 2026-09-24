@@ -163,8 +163,9 @@ describe("installSandboxContext", () => {
     expect(isHostOnlySection(SANDBOX_ENVIRONMENT_PROMPT)).toBe(false);
   });
 
-  it("tells the model how to install tools without root", () => {
-    expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("no sudo");
+  it("tells the model how to install tools, and that sudo is available", () => {
+    expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("passwordless sudo");
+    expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("outside $HOME");
     expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("mise use -g");
     expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("uv tool install");
     expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("npm install -g");
