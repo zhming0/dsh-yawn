@@ -136,14 +136,26 @@ Details: [`docs/kubernetes.md`](docs/kubernetes.md#connectivity-and-isolation),
 
 ### Can I still install plugins?
 
-Yes. The control plane runs a stock dsh `web` profile on its data volume, so
-`dsh plugin --profile web add <package>` works as anywhere else (on Kubernetes,
-`kubectl exec` into the control-plane pod, then restart it). Three caveats:
+Yes, from the Web sidebar's **Plugins** page, or with
+`dsh plugin --profile web add <package>` (on Kubernetes, `kubectl exec` into
+the control-plane pod). The page installs, enables, disables, and removes
+bundles, and lists the official bundles the installation ships switched off.
+Installed bundles live in the profile on the data volume; an image upgrade
+keeps them, refreshing only the control plane's own package. Caveats:
 
 - a package without `dsh.bundle.patch` installs as a plain dependency and
   wires up nothing;
-- an image upgrade reseeds the profile's `package.json` and `node_modules`,
-  dropping what you added, so re-add plugins after upgrading;
+- if the upgrade cannot refresh the profile, the seed keeps the manifest it
+  was working from as `package.json.before-reseed`, reseeds the profile from
+  the image so the pod still starts, and says so in the pod log. The next boot
+  merges that manifest back in and retries, so a transient failure repairs
+  itself; if the refresh keeps failing, copy the kept file over `package.json`
+  and run `pnpm install` in the profile;
+- installed bundles run in the control-plane process, outside every sandbox,
+  with the control plane's access to sessions and credentials. The Plugins
+  page is operator access: admit to the Web UI only people you would give
+  that to. The page can also switch this package's own bundle off; switch it
+  back on there if that happens;
 - Web sessions mount their tools through agent presets. Since dsh 0.1.7 a
   bundle patch *could* restate a preset, but this package does not: the stock
   tool rows already run inside the sandbox, and staying off the preset rows

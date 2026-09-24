@@ -76,16 +76,12 @@
   disabled: true
 
 # 0.1.7 mounts a Plugins page that installs, enables, and removes profile
-# bundles over npm from the Web UI. The supported Kubernetes product runs one
-# released control-plane image; letting the model-adjacent UI install
-# packages into that profile is an unreviewed change surface, so the page
-# stays off here. Re-enable deliberately if the distribution ever wants
-# in-UI plugin management.
-- id: plugin-manager
-  disabled: true
-
-- id: ui-plugin-manager
-  disabled: true
+# bundles from the Web UI. It stays on: the profile lives on the data volume,
+# so dsh-yawn-seed carries what the page installs across image upgrades (see
+# image/seed). Installed bundles run in the control-plane process, so the page
+# is an operator surface gated by the Web UI's own authentication. The page
+# also lists this bundle and can switch the control plane's own services off;
+# re-enable it from the same page if that happens.
 
 # 0.1.7 also mounts a Terminal tab over `spawnTerminal`. This package's
 # subprocess seam does not implement interactive terminals yet (its

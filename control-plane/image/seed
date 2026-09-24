@@ -1,28 +1,78 @@
 #!/bin/sh
 # Seed or refresh the image-managed web profile in the home volume.
 #
-# The profile (package.json, node_modules, lockfile) belongs to the image and
-# is replaced whenever the image version changes. Everything else under $HOME
-# — the user's cordis.patch.yml, dsh sessions and storages, the control plane's
-# ~/.dsh-yawn state — is never touched.
+# The first boot copies the image's profile (package.json, node_modules,
+# lockfile, pnpm settings) onto the volume. An image upgrade keeps that
+# profile and refreshes only what the image owns: the control-plane package
+# and the bundle selection the image ships. Plugins installed from the Web
+# Plugins page or `dsh plugin` are dependencies and bundle entries beside
+# them, so they survive the upgrade.
+#
+# A refresh that cannot complete reseeds the profile from the image, so the
+# pod still starts on the new image, but it first keeps the manifest it was
+# working from as `package.json.before-reseed` and leaves the version marker
+# alone: the next boot merges that manifest back in and retries, so a
+# transient failure repairs itself.
+#
+# `cordis.patch.yml` is seeded once and then the user's. `pnpm-workspace.yaml`
+# is left alone for the same reason: pnpm records dependency build-script
+# approvals there. Everything else under $HOME — dsh sessions and storages,
+# the control plane's ~/.dsh-yawn state — is never touched.
 set -eu
 
 : "${HOME:?HOME must be set}"
+# Overridable so the image scripts can run outside the container.
+image="${DSH_YAWN_IMAGE_ROOT:-/opt/dsh-yawn}"
 profile="$HOME/.dsh/profiles/web"
 marker="$profile/.dsh-yawn-image-version"
-version="$(cat /opt/dsh-yawn/version)"
+# The manifest a failed refresh kept; a retry merges it back in.
+carried="$profile/package.json.before-reseed"
+version="$(cat "$image/version")"
 
 if [ ! -e "$marker" ] || [ "$(cat "$marker")" != "$version" ]; then
   mkdir -p "$profile"
-  # Remove the image-owned entries before copying so a refresh cannot leave
-  # stale files from an older layout merged underneath the new one.
-  rm -rf "$profile/node_modules" "$profile/package.json" \
-    "$profile/pnpm-lock.yaml" "$profile/pnpm-workspace.yaml"
-  cp -a /opt/dsh-yawn/profile/. "$profile/"
-  printf '%s\n' "$version" >"$marker"
+  if [ ! -f "$profile/package.json" ] && [ ! -f "$carried" ]; then
+    # First boot: the image's own profile is the whole profile.
+    cp -a "$image/profile/." "$profile/"
+    printf '%s\n' "$version" >"$marker"
+  else
+    # Keep the manifest a failed refresh replaces, once: a later boot must not
+    # overwrite what the retry is trying to restore.
+    if [ ! -f "$carried" ] && [ -f "$profile/package.json" ]; then
+      cp "$profile/package.json" "$carried"
+    fi
+    [ -f "$profile/package.json" ] || cp "$carried" "$profile/package.json"
+
+    merged=0
+    if node "$image/profile-refresh.mjs" \
+        "$image/profile/package.json" "$profile/package.json" \
+        "$profile/package.json.new" "$carried" \
+      && mv "$profile/package.json.new" "$profile/package.json"; then
+      merged=1
+    fi
+
+    if [ "$merged" = 1 ] \
+      && { [ -e "$profile/pnpm-workspace.yaml" ] || cp "$image/profile/pnpm-workspace.yaml" "$profile/"; } \
+      && (cd "$profile" && pnpm update '@zhming0/dsh-yawn' --prefer-offline); then
+      rm -f "$carried"
+      printf '%s\n' "$version" >"$marker"
+    else
+      echo "dsh-yawn: could not refresh the web profile for image $version; reseeding it from the image for now. The plugins it held are kept in $carried, and the next boot retries the refresh." >&2
+      # Keep the most complete manifest: the merge result when the merge got
+      # that far, otherwise the manifest already kept.
+      if [ "$merged" = 1 ]; then
+        cp "$profile/package.json" "$carried"
+      fi
+      rm -f "$profile/package.json.new"
+      rm -rf "$profile/node_modules" "$profile/package.json" \
+        "$profile/pnpm-lock.yaml" "$profile/pnpm-workspace.yaml"
+      cp -a "$image/profile/." "$profile/"
+      # No version marker: the next boot retries the refresh from $carried.
+    fi
+  fi
 fi
 
 # The starter settings are seeded once; after that the file is the user's.
 if [ ! -e "$profile/cordis.patch.yml" ]; then
-  cp /opt/dsh-yawn/settings.patch.yml "$profile/cordis.patch.yml"
+  cp "$image/settings.patch.yml" "$profile/cordis.patch.yml"
 fi
