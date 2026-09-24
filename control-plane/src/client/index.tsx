@@ -204,51 +204,56 @@ export async function apply(ctx: Context) {
   // browser mirror, which keeps settings writes process-local on every
   // non-loopback page — every page of a deployed control plane. Credential
   // writes are write-only and land in the host document, never in a sandbox.
-  ctx.inject(["remote.settings", "remote.credentials"], (settingsCtx) => {
-    const settings = settingsCtx.remote.settings;
-    const credentials = settingsCtx.remote.credentials;
-    settingsCtx.slots.inject(
-      "settings.section",
-      function* registerSandboxesSection() {
-        yield settingsCtx.slots.register(
-          {
-            name: "settings.section",
-            id: "dsh-yawn.sandboxes",
-            order: 32,
-            label: "Sandboxes",
-            inject: () => ({
-              describeSettings: async () => unwrap(await settings.describe()),
-              updateSettings: async (
-                ns: string,
-                patch: Record<string, JsonValue>,
-                expectedRevision: number | undefined,
-              ) => unwrap(await settings.update(ns, patch, expectedRevision)),
-              mutateSettings: async (
-                ns: string,
-                ops: SettingsPathOpView[],
-                expectedRevision: number | undefined,
-              ) => unwrap(await settings.mutate(ns, ops, expectedRevision)),
-              replaceSettings: async (
-                ns: string,
-                section: Record<string, JsonValue>,
-                expectedRevision: number | undefined,
-              ) =>
-                unwrap(await settings.replace(ns, section, expectedRevision)),
-              describeCredentials: async (refs: string[]) =>
-                unwrap(await credentials.describe(refs)),
-              setCredential: async (ref: string, value: string) => {
-                unwrap(await credentials.set(ref, value));
-              },
-              unsetCredential: async (ref: string) => {
-                unwrap(await credentials.unset(ref));
-              },
-            }),
-          },
-          SandboxesSettings,
-        );
-      },
-    );
-  });
+  ctx.inject(
+    ["remote.settings", "remote.credentials", "remote.sandboxManager"],
+    (settingsCtx) => {
+      const settings = settingsCtx.remote.settings;
+      const credentials = settingsCtx.remote.credentials;
+      const sandboxManager = settingsCtx.remote.sandboxManager;
+      settingsCtx.slots.inject(
+        "settings.section",
+        function* registerSandboxesSection() {
+          yield settingsCtx.slots.register(
+            {
+              name: "settings.section",
+              id: "dsh-yawn.sandboxes",
+              order: 32,
+              label: "Sandboxes",
+              inject: () => ({
+                updateSettings: async (
+                  ns: string,
+                  patch: Record<string, JsonValue>,
+                  expectedRevision: number | undefined,
+                ) => unwrap(await settings.update(ns, patch, expectedRevision)),
+                mutateSettings: async (
+                  ns: string,
+                  ops: SettingsPathOpView[],
+                  expectedRevision: number | undefined,
+                ) => unwrap(await settings.mutate(ns, ops, expectedRevision)),
+                replaceSettings: async (
+                  ns: string,
+                  section: Record<string, JsonValue>,
+                  expectedRevision: number | undefined,
+                ) =>
+                  unwrap(await settings.replace(ns, section, expectedRevision)),
+                describeCredentials: async (refs: string[]) =>
+                  unwrap(await credentials.describe(refs)),
+                setCredential: async (ref: string, value: string) => {
+                  unwrap(await credentials.set(ref, value));
+                },
+                unsetCredential: async (ref: string) => {
+                  unwrap(await credentials.unset(ref));
+                },
+                getSandboxSettings: async () =>
+                  unwrap(await sandboxManager.getSandboxSettings()),
+              }),
+            },
+            SandboxesSettings,
+          );
+        },
+      );
+    },
+  );
 
   // Turn notifications read the browser's own session list feed, so they run
   // from any page and need no host round-trip. The `sessions` service comes

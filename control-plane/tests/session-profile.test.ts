@@ -1,12 +1,16 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SandboxManager } from "../src/manager/index.js";
+import {
+  dshHome,
+  missingImportedProfiles,
+} from "../src/deployment-settings.js";
 import { SessionStore } from "../src/state-store.js";
 import { FakeBackend, gatewayFor } from "./fakes.js";
 
@@ -185,5 +189,159 @@ describe("session profile choice", () => {
     await reopened.initialize();
     expect(reopened.get("session-one")?.state).toBe("hibernated");
     expect(reopened.get("session-two")?.state).toBe("hibernated");
+  });
+
+  it("combines deployment profiles with the page's own, and locks the deployment's", async () => {
+    const standard = new FakeBackend();
+    const hosted = new FakeBackend();
+    const manager = new SandboxManager(
+      new Context(),
+      {
+        // What the image seeds, plus a profile the page added. The deployment
+        // document supplies the rest.
+        profiles: {
+          local: { backend: "docker", image: "page:image" },
+        },
+        stateDir: directory,
+      },
+      {
+        backends: { standard, hosted, local: standard },
+        gateway: gatewayFor(hosted),
+        deploymentSettings: {
+          profiles: {
+            standard: { backend: "docker" },
+            hosted: {
+              backend: "buildkite",
+              organization: "acme",
+              pipeline: "dsh-yawn",
+              controlPlaneUrl: "wss://dsh.example.com/tunnel",
+            },
+          },
+          defaultProfile: "hosted",
+          idleMs: 300_000,
+        },
+      },
+    );
+
+    // The composer chip and the settings page see the same profile set:
+    // deployment profiles first, then the page's own.
+    expect(await manager.getSessionProfile("session-one")).toEqual({
+      profiles: [
+        { name: "standard", backend: "docker" },
+        { name: "hosted", backend: "buildkite" },
+        { name: "local", backend: "docker" },
+      ],
+      selected: "hosted",
+      locked: false,
+    });
+    const settings = manager.getSandboxSettings();
+    expect(settings.profiles).toEqual([
+      {
+        name: "standard",
+        backend: "docker",
+        fields: {},
+        locked: true,
+      },
+      {
+        name: "hosted",
+        backend: "buildkite",
+        fields: {
+          organization: "acme",
+          pipeline: "dsh-yawn",
+          controlPlaneUrl: "wss://dsh.example.com/tunnel",
+        },
+        locked: true,
+      },
+      {
+        name: "local",
+        backend: "docker",
+        fields: { image: "page:image" },
+        locked: false,
+      },
+    ]);
+    expect(settings.defaultProfile).toBe("hosted");
+    expect(settings.idleMs).toBe(300_000);
+    expect(settings.overridden).toEqual({
+      defaultProfile: false,
+      idleMs: false,
+      expiresAfterMs: false,
+    });
+    // No settings service is mounted in this bare context, so the page has
+    // nothing it could write with.
+    expect(settings.revision).toBe(0);
+    expect(settings.writable).toBe(false);
+
+    // A session pick still wins over the deployment's default.
+    await manager.setSessionProfile("session-one", "standard");
+    expect((await manager.getSessionProfile("session-one")).selected).toBe(
+      "standard",
+    );
+  });
+
+  it("keeps the deployment's definition when the page reuses a profile name", async () => {
+    const standard = new FakeBackend();
+    const manager = new SandboxManager(
+      new Context(),
+      {
+        profiles: { standard: { backend: "docker", image: "page:image" } },
+        stateDir: directory,
+      },
+      {
+        backends: { standard },
+        gateway: gatewayFor(standard),
+        deploymentSettings: {
+          profiles: { standard: { backend: "docker", image: "chart:image" } },
+        },
+      },
+    );
+
+    const settings = manager.getSandboxSettings();
+    expect(settings.profiles).toEqual([
+      {
+        name: "standard",
+        backend: "docker",
+        fields: { image: "chart:image" },
+        locked: true,
+      },
+    ]);
+    expect((await manager.getSessionProfile("session-one")).selected).toBe(
+      "standard",
+    );
+  });
+
+  it("warns when a renamed settings document still holds missing profiles", async () => {
+    await writeFile(
+      join(directory, "settings.yaml.imported"),
+      "sandbox-manager:\n  profiles:\n    hosted:\n      backend: docker\n",
+    );
+    expect(
+      missingImportedProfiles(join(directory, "settings.yaml.imported"), [
+        "standard",
+      ]),
+    ).toEqual(["hosted"]);
+    const previousHome = process.env.DSH_HOME;
+    process.env.DSH_HOME = directory;
+    expect(dshHome()).toBe(directory);
+    const write = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    try {
+      const backend = new FakeBackend();
+      new SandboxManager(
+        new Context(),
+        { profiles: { standard: { backend: "docker" } }, stateDir: directory },
+        { backends: { standard: backend }, gateway: gatewayFor(backend) },
+      );
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.DSH_HOME;
+      } else {
+        process.env.DSH_HOME = previousHome;
+      }
+    }
+    expect(write).toHaveBeenCalledWith(
+      expect.stringContaining("sandbox profile(s) hosted are only in"),
+    );
+    write.mockRestore();
   });
 });

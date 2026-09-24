@@ -67,25 +67,34 @@ control plane over `kubectl port-forward` and open `/launch-token`.
 | `service.type` | `ClusterIP` | Exposure type for the proxy Service |
 | `service.port` | `80` | Service port in front of the proxy's 4180 |
 | `service.annotations` | `{}` | Cloud/controller annotations for the Service |
-| `controlPlane.sandboxManager` | `{}` | The control plane's sandbox-manager settings, rendered verbatim; unset seeds no profile, so no sandbox can be provisioned |
+| `controlPlane.sandboxManager` | `{}` | The deployment base of the control plane's sandbox-manager settings; unset seeds no profile, so no sandbox can be provisioned |
 
 ## Sandbox-manager settings as values
 
-`controlPlane.sandboxManager` is the interface for the control plane's sandbox-manager
-settings on a chart install. The chart renders it into a read-only patch layer
-at `/data/.dsh/cordis.patch.yml`, which dsh applies after the seeded profile
-file, and an id-targeted patch row replaces the whole `sandbox-manager`
-config. So:
+`controlPlane.sandboxManager` is the deployment base of the control plane's
+sandbox-manager settings on a chart install. The chart renders the runtime
+slice — profiles, `defaultProfile`, `idleMs`, and `expiresAfterMs` — into the
+document's top-level `sandboxManager` section, as one ordinary file mounted at
+`/etc/dsh-yawn/sandbox-settings.yaml`. The control plane resolves the
+settings-form edits in the profile patch over that section. So:
 
-- a values change applies when `helm upgrade` restarts the pod (a checksum
-  annotation tracks it), not live;
+- a values change applies when `helm upgrade` rolls the pod (the chart stamps
+  the rendered values into a pod annotation), not live;
+- **Settings → Sandboxes** in the Web UI adds its own profiles and changes the
+  default profile and timers without a restart, and a reset returns them to
+  what the chart configures. The profiles the chart defines are locked there:
+  the page shows them as deployment and cannot edit or remove them;
 - a `kas` profile that names no namespace is rendered with the release
   namespace, because the control plane's own default is the fixed name
   `dsh-yawn`;
-- the row is otherwise rendered verbatim — the control plane's own validation is the
-  schema. The chart guard requires at least one profile and that every `kas`
-  profile targets the release namespace, where the control plane's Role and the tunnel
-  Service live.
+- the section layout is the chart-to-image contract, and the image tag can lag
+  the chart's, so a section this version does not know is ignored. It is not a
+  general settings layer for other dsh plugins;
+- the section is otherwise rendered verbatim — the control plane's own validation is
+  the schema. The chart guard requires at least one profile, rejects startup
+  settings in these values, and requires every `kas` profile to target the
+  release namespace, where the control plane's Role and the tunnel Service
+  live.
 
 For a Kubernetes pool, name it in the profile:
 
@@ -97,8 +106,9 @@ helm upgrade dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
   --set controlPlane.sandboxManager.profiles.standard.warmPool=dsh-yawn-universal
 ```
 
-See [control-plane settings](../../../control-plane/README.md#settings) for the full row
-schema.
+See [control-plane settings](../../../control-plane/README.md#settings) for the
+settings reference. Startup settings are not part of these values; set them in
+the profile's `cordis.patch.yml`.
 
 ## Notes
 

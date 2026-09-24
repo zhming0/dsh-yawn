@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import z from "@deepseek-ai/schemastery";
 import type { Volatile } from "@deepseek-ai/cosmokit";
+import { parse as parseYaml } from "yaml";
 
 import { DEFAULT_RUNNER_IMAGE } from "./runner-image.js";
 import type { SandboxProfile } from "./types.js";
@@ -223,6 +224,99 @@ export const configSchema = z.object({
 });
 
 /**
+ * The `sandboxManager` section of the deployment document: the runtime slice
+ * alone — profiles, the default profile, and the two timers. Startup settings
+ * and the registration token stay in the profile patch, where the
+ * deployment's own values already are.
+ *
+ * The top-level key is part of the chart-to-image contract: people run an
+ * image tag that is not the chart's, so a document may carry sections this
+ * image does not know yet, and they are ignored. It stays specific to this
+ * package; other plugins own their own settings.
+ */
+const deploymentSettingsSchema = z.object(runtimeFields());
+
+/**
+ * Parse one deployment settings document. A malformed document fails the row
+ * loudly: it is operator configuration, and a silent fallback to no profiles
+ * would look like the sandbox feature vanished.
+ *
+ * @param raw - The document text, or undefined when there is none.
+ * @param source - What to name the document in errors, usually its path.
+ */
+export function parseDeploymentSettings(
+  raw: string | undefined,
+  source = "the deployment settings",
+): RuntimeConfig {
+  if (raw === undefined || raw.trim() === "") {
+    return {};
+  }
+  let value: unknown;
+  try {
+    value = parseYaml(raw);
+  } catch (error) {
+    throw new Error(`${source} is not valid YAML: ${messageOf(error)}`, {
+      cause: error,
+    });
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${source} must be a YAML mapping`);
+  }
+  const section = Reflect.get(value, "sandboxManager") as unknown;
+  if (section === undefined) {
+    return {};
+  }
+  if (
+    typeof section !== "object" ||
+    section === null ||
+    Array.isArray(section)
+  ) {
+    throw new Error(
+      `${source}'s sandboxManager section must be a YAML mapping`,
+    );
+  }
+  try {
+    return deploymentSettingsSchema(section);
+  } catch (error) {
+    throw new Error(
+      `${source} does not match the sandbox-manager settings: ${messageOf(error)}`,
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * One runtime slice with the deployment settings as the base. The deployment
+ * owns its profile names: a page entry with the same name is ignored, because
+ * the page shows those profiles as locked. Profiles the deployment does not
+ * name are additions, and the page's scalars win over the deployment's.
+ */
+function withDeploymentBase(
+  config: RuntimeConfig,
+  base: RuntimeConfig,
+): {
+  profiles: Record<string, ProfileConfig>;
+  defaultProfile: string | undefined;
+  idleMs: number | undefined;
+  expiresAfterMs: number | undefined;
+} {
+  const profiles = { ...(readSetting(base.profiles) ?? {}) };
+  for (const [name, profile] of Object.entries(
+    readSetting(config.profiles) ?? {},
+  )) {
+    profiles[name] ??= profile;
+  }
+  return {
+    profiles,
+    defaultProfile:
+      readSetting(config.defaultProfile) ?? readSetting(base.defaultProfile),
+    idleMs: readSetting(config.idleMs) ?? readSetting(base.idleMs),
+    expiresAfterMs:
+      readSetting(config.expiresAfterMs) ?? readSetting(base.expiresAfterMs),
+  };
+}
+
+/**
  * Apply every default and check the runtime slice holds together. A
  * configuration with no profiles is valid: the host comes up without a
  * backend, and the first prompt explains what to add.
@@ -230,13 +324,11 @@ export const configSchema = z.object({
 export function resolveRuntime(
   config: RuntimeConfig,
   tunnelPort: number,
+  base: RuntimeConfig = {},
 ): ResolvedRuntime {
-  const rawProfiles = readSetting(config.profiles) ?? {};
-  const rawDefaultProfile = readSetting(config.defaultProfile);
-  const rawIdleMs = readSetting(config.idleMs);
-  const rawExpiresAfterMs = readSetting(config.expiresAfterMs);
+  const raw = withDeploymentBase(config, base);
   const profiles = Object.fromEntries(
-    Object.entries(rawProfiles).map(([name, profile]) => [
+    Object.entries(raw.profiles).map(([name, profile]) => [
       name,
       resolveProfile(name, profile, tunnelPort),
     ]),
@@ -246,7 +338,7 @@ export function resolveRuntime(
   // leftover name is ignored rather than stopping the host from booting; the
   // first prompt reports the missing profile instead.
   const defaultProfile =
-    configured.length === 0 ? undefined : (rawDefaultProfile ?? configured[0]);
+    configured.length === 0 ? undefined : (raw.defaultProfile ?? configured[0]);
   if (defaultProfile !== undefined && profiles[defaultProfile] === undefined) {
     throw new Error(
       `defaultProfile ${defaultProfile} is not a configured profile`,
@@ -255,8 +347,8 @@ export function resolveRuntime(
   const resolved: ResolvedRuntime = {
     profiles,
     defaultProfile,
-    idleMs: rawIdleMs ?? 10 * 60_000,
-    expiresAfterMs: rawExpiresAfterMs ?? 7 * 24 * 60 * 60_000,
+    idleMs: raw.idleMs ?? 10 * 60_000,
+    expiresAfterMs: raw.expiresAfterMs ?? 7 * 24 * 60 * 60_000,
   };
   for (const [name, value] of [
     ["idleMs", resolved.idleMs],
@@ -274,9 +366,12 @@ export function resolveRuntime(
  * with no profiles is valid: the host comes up without a backend, and the
  * first prompt explains what to add.
  */
-export function resolveConfig(config: Config): ResolvedConfig {
+export function resolveConfig(
+  config: Config,
+  base: RuntimeConfig = {},
+): ResolvedConfig {
   const tunnelPort = config.tunnel?.port ?? 8081;
-  return assembleConfig(config, resolveRuntime(config, tunnelPort));
+  return assembleConfig(config, resolveRuntime(config, tunnelPort, base));
 }
 
 /**
@@ -285,31 +380,22 @@ export function resolveConfig(config: Config): ResolvedConfig {
  * the Loader reads at boot — and the form validates against the row schema
  * alone, so a semantically bad but schema-valid value (a `defaultProfile`
  * naming no profile, a `controlPlaneUrl` that is not a WebSocket URL) can be
- * saved. This resolver degrades that slice instead of throwing: the bad
- * pieces drop with one warning each, the host still boots, and the operator
- * fixes the value in the form. Boot-authored fields (state directories, the
- * tunnel, the preview domain) stay strict — an image that ships them broken
- * must fail loudly.
- *
- * Every warning explains what was ignored, so a degraded boot is legible in
- * the control-plane log.
- */
-/**
- * The boot face of {@link resolveConfig}. Since dsh 0.1.7, settings-form
- * writes persist into the profile's own `cordis.patch.yml` — the same file
- * the Loader reads at boot — and the form validates against the row schema
- * alone, so a semantically bad but schema-valid value (a `defaultProfile`
- * naming no profile, a `controlPlaneUrl` that is not a WebSocket URL) can be
  * saved. The boot resolver degrades that slice instead of throwing; see
- * {@link resolveDegradingRuntime}.
+ * {@link resolveDegradingRuntime}. Boot-authored fields (state directories,
+ * the tunnel, the preview domain) stay strict — an image that ships them
+ * broken must fail loudly.
  */
-export function resolveBootConfig(config: Config): {
+export function resolveBootConfig(
+  config: Config,
+  base: RuntimeConfig = {},
+): {
   config: ResolvedConfig;
   warnings: string[];
 } {
   const { runtime, warnings } = resolveDegradingRuntime(
     config,
     config.tunnel?.port ?? 8081,
+    base,
   );
   return { config: assembleConfig(config, runtime), warnings };
 }
@@ -319,17 +405,20 @@ export function resolveBootConfig(config: Config): {
  * warning, a `defaultProfile` naming no remaining profile falls back to the
  * first, and an out-of-range timer restores its default. Boot and the
  * running host both read through this, so a value that survives a restart
- * also applies live -- only the pieces that cannot work are ignored.
+ * also applies live -- only the pieces that cannot work are ignored. The
+ * deployment settings sit beneath the row config, so the chart's profiles
+ * still apply when the Web page has never written anything.
  */
 export function resolveDegradingRuntime(
   config: RuntimeConfig,
   tunnelPort: number,
+  base: RuntimeConfig = {},
 ): { runtime: ResolvedRuntime; warnings: string[] } {
   const warnings: string[] = [];
 
-  const rawProfiles = readSetting(config.profiles) ?? {};
+  const raw = withDeploymentBase(config, base);
   const profiles: Record<string, SandboxProfile> = {};
-  for (const [name, profile] of Object.entries(rawProfiles)) {
+  for (const [name, profile] of Object.entries(raw.profiles)) {
     try {
       profiles[name] = resolveProfile(name, profile, tunnelPort);
     } catch (error) {
@@ -343,12 +432,11 @@ export function resolveDegradingRuntime(
   // The unset case matches the strict resolver: the first configured profile
   // is the default, so a fresh installation with profiles picks one without
   // an explicit setting.
-  const named = readSetting(config.defaultProfile);
   let defaultProfile =
-    configured.length === 0 ? undefined : (named ?? configured[0]);
+    configured.length === 0 ? undefined : (raw.defaultProfile ?? configured[0]);
   if (defaultProfile !== undefined && profiles[defaultProfile] === undefined) {
     warnings.push(
-      `defaultProfile ${named} names no configured profile; using ${configured[0]}`,
+      `defaultProfile ${raw.defaultProfile} names no configured profile; using ${configured[0]}`,
     );
     defaultProfile = configured[0];
   }
@@ -356,9 +444,9 @@ export function resolveDegradingRuntime(
   const runtime: ResolvedRuntime = {
     profiles,
     defaultProfile,
-    idleMs: bootTimer(config, "idleMs", 10 * 60_000, warnings),
+    idleMs: bootTimer(raw.idleMs, "idleMs", 10 * 60_000, warnings),
     expiresAfterMs: bootTimer(
-      config,
+      raw.expiresAfterMs,
       "expiresAfterMs",
       7 * 24 * 60 * 60_000,
       warnings,
@@ -423,12 +511,11 @@ function checkPreviewDomain(domain: string | undefined): string | undefined {
  * the form, a hand-edited patch may still carry one, and resolution degrades
  * with a note instead of failing the whole slice. */
 function bootTimer(
-  config: RuntimeConfig,
+  value: number | undefined,
   key: "idleMs" | "expiresAfterMs",
   fallback: number,
   warnings: string[],
 ): number {
-  const value = readSetting(config[key]);
   if (value === undefined) {
     return fallback;
   }

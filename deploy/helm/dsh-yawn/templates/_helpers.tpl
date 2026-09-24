@@ -60,16 +60,23 @@ the tunnel Service is. */}}
 {{- .Values.registrationToken.existingSecret | default "dsh-yawn-registration-token" }}
 {{- end }}
 
-{{/* The home-level patch layer the chart owns: exactly the sandbox-manager
-row, stated in full, because dsh applies an id-targeted patch by replacing the
-row's whole config. Rendered into a ConfigMap mounted at
-/data/.dsh/cordis.patch.yml.
+{{/* The deployment's sandbox-manager settings, rendered as one ordinary file
+mounted at /etc/dsh-yawn/sandbox-settings.yaml. It is a base, not a patch
+layer: dsh 0.1.7 lets a home patch outrank the profile patch the Web page
+writes to, and the page could then neither save nor reset a deployment
+profile. The runtime slice sits under the document's top-level
+`sandboxManager` section; startup settings and the registration token stay in
+the profile patch and the chart's own values.
+
+The section is the chart-to-image contract, and the image tag can differ from
+the chart's, so a future version can add a second section without breaking
+this one. It is not a general settings layer for other dsh plugins.
 
 A Kubernetes profile that names no namespace is rendered with the release
 namespace: the control plane's own default for that field is the fixed name
 `dsh-yawn`, which points at the wrong namespace wherever else the chart is
 installed. */}}
-{{- define "dsh-yawn.settingsPatch" -}}
+{{- define "dsh-yawn.sandboxSettings" -}}
 {{- $managed := deepCopy .Values.controlPlane.sandboxManager -}}
 {{- with $managed.profiles -}}
 {{- range $name, $profile := . -}}
@@ -78,9 +85,8 @@ installed. */}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
-- id: sandbox-manager
-  config:
-{{ toYaml $managed | indent 4 }}
+sandboxManager:
+{{ pick $managed "profiles" "defaultProfile" "idleMs" "expiresAfterMs" | toYaml | indent 2 }}
 {{- end }}
 
 {{/* Fails the render on combinations that cannot work, so `helm install`
@@ -94,6 +100,12 @@ cannot produce a control plane that never becomes Ready. */}}
 {{- if and $managed (not $managed.profiles) -}}
 {{- fail "controlPlane.sandboxManager needs at least one profile; the control plane rejects an empty profile map at runtime." }}
 {{- end -}}
+{{- $runtimeKeys := list "profiles" "defaultProfile" "idleMs" "expiresAfterMs" }}
+{{- range $key, $_ := $managed }}
+{{- if not (has $key $runtimeKeys) }}
+{{- fail (printf "controlPlane.sandboxManager.%s is not a runtime setting; the chart carries profiles, defaultProfile, idleMs, and expiresAfterMs. Put startup settings in the profile's cordis.patch.yml." $key) }}
+{{- end }}
+{{- end }}
 {{- if and $managed $managed.profiles -}}
 {{- /* The pool manifests own the warm pools, so the chart cannot check that a
 pool exists; what it can check is that a Kubernetes profile targets the

@@ -1,0 +1,17 @@
+{{- include "dsh-yawn.validate" . }}
+{{- /* The deployment's sandbox-manager settings, mounted as an ordinary file at
+/etc/dsh-yawn/sandbox-settings.yaml. The control plane reads the document's
+top-level `sandboxManager` section as the base beneath the Web page's edits;
+the file is deliberately not a dsh patch layer, which would outrank the
+profile patch the page writes to. Only the runtime slice is rendered, so
+startup settings and the registration token never travel here. */}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dsh-yawn.fullname" . }}-sandbox-settings
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dsh-yawn.labels" . | nindent 4 }}
+data:
+  sandbox-settings.yaml: |
+{{ include "dsh-yawn.sandboxSettings" . | indent 4 }}

@@ -26,6 +26,8 @@ export class RuntimeSettings {
     private readonly source: () => RuntimeConfig,
     private readonly tunnelPort: number,
     private readonly onWarnings: (warnings: string[]) => void = () => undefined,
+    /** The deployment settings beneath the row config; see config.ts. */
+    private readonly deployment: RuntimeConfig = {},
   ) {
     this.lastGood = initial;
     this.warnedSignature = initialWarnings.join("\n");
@@ -36,6 +38,7 @@ export class RuntimeSettings {
       const { runtime, warnings } = resolveDegradingRuntime(
         this.source(),
         this.tunnelPort,
+        this.deployment,
       );
       if (warnings.length === 0) {
         this.warnedSignature = "";

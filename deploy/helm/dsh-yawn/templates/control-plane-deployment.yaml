@@ -22,17 +22,14 @@ spec:
         {{- with .Values.controlPlane.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- if or .Values.controlPlane.podAnnotations .Values.controlPlane.sandboxManager }}
       annotations:
         {{- with .Values.controlPlane.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-        {{- if .Values.controlPlane.sandboxManager }}
-        # Restarts the pod when the rendered settings change; dsh watches the
-        # mounted file, but a ConfigMap subPath mount only updates on rollout.
-        checksum/settings: {{ include "dsh-yawn.settingsPatch" . | sha256sum }}
-        {{- end }}
-      {{- end }}
+        # A ConfigMap mount updates in place but does not restart a pod, and
+        # the control plane reads the settings once at boot, so stamp the
+        # rendered values here: a change rolls the pod.
+        checksum/sandbox-settings: {{ include "dsh-yawn.sandboxSettings" . | sha256sum }}
     spec:
       # The Kubernetes backend claims sandboxes with this ServiceAccount's
       # automounted token. The Role and RoleBinding ship with it, in
@@ -55,12 +52,9 @@ spec:
       # the document does not exist yet; if the chmod cannot succeed, dsh fails
       # on the same rule with an actionable error.
       #
-      # The mkdir matters on a fresh volume with controlPlane.sandboxManager set:
-      # the main container's subPath mount needs /data/.dsh to exist, and a
-      # container runtime that has to create the mountpoint does so as root —
-      # after the fsGroup walk, so nothing would ever chown it back and the
-      # seed step could not write under it. Creating it here, as uid 1000,
-      # gives the runtime an existing directory to mount onto.
+      # The mkdir gives the runtime an existing /data/.dsh to hand to the
+      # container, created as uid 1000 rather than by the runtime as root
+      # after the fsGroup walk.
       initContainers:
         - name: fix-credentials-mode
           image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag | default .Chart.AppVersion }}"
@@ -139,14 +133,14 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-          {{- if .Values.controlPlane.sandboxManager }}
-            # The chart-owned settings layer; dsh applies it after the seeded
-            # profile file, so these values outrank hand edits for the
-            # sandbox-manager row.
-            - name: settings
-              mountPath: /data/.dsh/cordis.patch.yml
-              subPath: cordis.patch.yml
-          {{- end }}
+            # The deployment's sandbox settings, as one ordinary file the
+            # control plane reads at boot. Never /data/.dsh/cordis.patch.yml:
+            # a dsh patch layer there would outrank the profile patch the Web
+            # page writes to.
+            - name: sandbox-settings
+              mountPath: /etc/dsh-yawn/sandbox-settings.yaml
+              subPath: sandbox-settings.yaml
+              readOnly: true
         {{- if .Values.oidc.enabled }}
         - name: oauth2-proxy
           image: {{ .Values.oidc.image | quote }}
@@ -198,8 +192,6 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
-        {{- if .Values.controlPlane.sandboxManager }}
-        - name: settings
+        - name: sandbox-settings
           configMap:
-            name: {{ include "dsh-yawn.fullname" . }}-settings
-        {{- end }}
+            name: {{ include "dsh-yawn.fullname" . }}-sandbox-settings

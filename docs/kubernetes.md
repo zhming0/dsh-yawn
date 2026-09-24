@@ -242,12 +242,13 @@ each attempt 3 s while keeping dual-stack failover.
 The control plane starts with no sandbox profile: it serves the Web UI, and sessions
 provision once the pool exists and the settings name it. On a chart install the
 sandbox-manager settings come from `controlPlane.sandboxManager` values, which the
-chart renders into a read-only patch layer at `/data/.dsh/cordis.patch.yml`,
-applied after the image's seeded profile file. A values change restarts the pod.
-That layer is also the base of the runtime settings namespace: **Settings →
-Sandboxes** in the Web UI overrides it per field without a restart — adding a
-profile for a new warm pool needs no `helm upgrade` and no pod restart — and a
-reset returns to what the chart configures.
+chart mounts as the `/etc/dsh-yawn/sandbox-settings.yaml` deployment base. The
+control plane resolves the profile-patch edits over that base, so **Settings →
+Sandboxes** in the Web UI adds its own profiles and changes the default and
+timers without a restart — adding a profile for a new warm pool needs no
+`helm upgrade` and no pod restart — while the profiles the chart defines stay
+locked, and a reset returns the rest to what the chart configures. A values
+change rolls the pod.
 
 The control plane talks to the API server with the automounted `dsh-yawn-control-plane`
 ServiceAccount token; the chart's Role and RoleBinding are what give it

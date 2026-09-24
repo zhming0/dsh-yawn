@@ -15,9 +15,11 @@ ConfigMap holding DSH_YAWN_CONTROL_PLANE_URL, and the `dsh-yawn-registration-tok
 
 {{- if .Values.controlPlane.sandboxManager }}
 
-This release owns the control plane's sandbox-manager settings: they are mounted
-read-only at /data/.dsh/cordis.patch.yml, a dsh patch layer that outranks the
-seeded profile file. `helm upgrade` changes them, and the pod restarts.
+This release owns the deployment base of the control plane's sandbox-manager
+settings: the chart mounts them at /etc/dsh-yawn/sandbox-settings.yaml, and the
+Web UI's Settings → Sandboxes page adds its own profiles and changes the
+default and timers over that base. The profiles named in the values are locked
+there. `helm upgrade` changes the base, and the pod restarts.
 
 {{- else }}
 

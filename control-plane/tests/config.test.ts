@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   configSchema,
+  parseDeploymentSettings,
   readSetting,
   resolveBootConfig,
   resolveConfig,
@@ -161,5 +162,119 @@ describe("sandbox provider settings", () => {
         "must be a bare host",
       );
     }
+  });
+
+  it("merges the deployment base under the row config", () => {
+    const base = parseDeploymentSettings(
+      `
+sandboxManager:
+  profiles:
+    standard:
+      backend: kas
+      warmPool: dsh-yawn-universal
+    hosted:
+      backend: docker
+      image: runner:base
+  defaultProfile: hosted
+  idleMs: 300000
+`,
+      "the test document",
+    );
+
+    const resolved = resolveConfig(
+      {
+        profiles: {
+          // The deployment owns its profile names, so this same-name entry is
+          // ignored; the other deployment profile stays.
+          standard: { backend: "kas", warmPool: "dsh-team" },
+          local: { backend: "docker" },
+        },
+        idleMs: 60_000,
+      },
+      base,
+    );
+    expect(Object.keys(resolved.profiles).sort()).toEqual([
+      "hosted",
+      "local",
+      "standard",
+    ]);
+    expect(resolved.profiles.standard).toMatchObject({
+      backend: "kas",
+      warmPool: "dsh-yawn-universal",
+    });
+    expect(resolved.profiles.hosted).toMatchObject({
+      backend: "docker",
+      image: "runner:base",
+    });
+    // Scalars the row config sets win; the ones it never mentions come from
+    // the deployment.
+    expect(resolved.defaultProfile).toBe("hosted");
+    expect(resolved.idleMs).toBe(60_000);
+
+    // The sandboxManager section is the runtime slice alone: a startup field
+    // there never reaches boot resolution.
+    const bootFields = parseDeploymentSettings(
+      "sandboxManager:\n  workspace: /workspace/base\n  tunnel:\n    port: 9001\n",
+    );
+    const defaults = resolveConfig({}, bootFields);
+    expect(defaults.workspace).toBe("/workspace/repository");
+    expect(defaults.tunnel.port).toBe(8081);
+
+    // A profile the deployment supplies but that the host cannot apply
+    // degrades with a warning, exactly as a row-config profile does.
+    const degraded = resolveBootConfig(
+      {},
+      {
+        profiles: {
+          broken: {
+            backend: "docker",
+            controlPlaneUrl: "tcp://10.0.0.1:8081",
+          },
+        },
+      },
+    );
+    expect(degraded.warnings).toEqual([
+      expect.stringContaining("ignoring sandbox profile broken"),
+    ]);
+    expect(Object.keys(degraded.config.profiles)).toEqual([]);
+  });
+
+  it("reads the deployment base from its YAML document", () => {
+    expect(parseDeploymentSettings(undefined)).toEqual({});
+    expect(parseDeploymentSettings("  ")).toEqual({});
+    expect(
+      parseDeploymentSettings(
+        "sandboxManager:\n  profiles:\n    standard:\n      backend: docker\n",
+      ).profiles,
+    ).toMatchObject({ standard: { backend: "docker" } });
+    // JSON is YAML, so a document written either way reads the same.
+    expect(
+      parseDeploymentSettings(
+        '{"sandboxManager":{"profiles":{"standard":{"backend":"docker"}}}}',
+      ).profiles,
+    ).toMatchObject({ standard: { backend: "docker" } });
+
+    // The document is a chart-to-image contract and the image tag can lag the
+    // chart, so sections this image does not know are ignored, not fatal.
+    expect(parseDeploymentSettings("someFutureSection:\n  a: 1\n")).toEqual({});
+    expect(
+      parseDeploymentSettings(
+        "someFutureSection:\n  a: 1\nsandboxManager:\n  profiles:\n    standard:\n      backend: docker\n",
+      ).profiles,
+    ).toMatchObject({ standard: { backend: "docker" } });
+
+    // Operator configuration fails loudly: a silent empty base would look
+    // like the sandbox profiles vanished.
+    expect(() => parseDeploymentSettings("sandboxManager: [")).toThrow(
+      "is not valid YAML",
+    );
+    expect(() => parseDeploymentSettings("- one")).toThrow(
+      "must be a YAML mapping",
+    );
+    expect(() =>
+      parseDeploymentSettings(
+        '{"sandboxManager":{"profiles":{"x":{"backend":"nope"}}}}',
+      ),
+    ).toThrow("does not match the sandbox-manager settings");
   });
 });
