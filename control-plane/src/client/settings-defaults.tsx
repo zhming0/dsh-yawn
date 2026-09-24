@@ -6,17 +6,22 @@ import {
   cardStyle,
   controlStyle,
   sectionHeadingStyle,
-  type RuntimeWire,
 } from "./settings-shared.js";
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
 
 export interface DefaultsCardProps {
-  /** Resolved runtime values, defaults already applied. */
-  resolved: RuntimeWire;
-  /** The user layer alone: which values this page has overridden. */
-  overrides: RuntimeWire;
+  /** The effective values: deployment settings with the page's edits applied. */
+  defaultProfile?: string;
+  idleMs: number;
+  expiresAfterMs: number;
+  /** Which scalars the page overrides; those get a reset control. */
+  overridden: {
+    defaultProfile: boolean;
+    idleMs: boolean;
+    expiresAfterMs: boolean;
+  };
   profileNames: string[];
   writable: boolean;
   pending: boolean;
@@ -27,8 +32,10 @@ export interface DefaultsCardProps {
 
 /** The default profile and the two lifecycle timers, each one reset away. */
 export function DefaultsCard({
-  resolved,
-  overrides,
+  defaultProfile,
+  idleMs,
+  expiresAfterMs,
+  overridden,
   profileNames,
   writable,
   pending,
@@ -62,7 +69,7 @@ export function DefaultsCard({
           <span style={{ flex: "0 0 200px" }}>Default profile</span>
           <select
             aria-label="Default profile"
-            value={resolved.defaultProfile ?? ""}
+            value={defaultProfile ?? ""}
             disabled={disabled || profileNames.length === 0}
             onChange={(event) => onSetDefault(event.currentTarget.value)}
             style={{ ...controlStyle, width: 200 }}
@@ -73,7 +80,7 @@ export function DefaultsCard({
               </option>
             ))}
           </select>
-          {overrides.defaultProfile !== undefined ? (
+          {overridden.defaultProfile ? (
             <Button
               type="button"
               size="sm"
@@ -90,10 +97,8 @@ export function DefaultsCard({
         <TimerRow
           label="Idle delay before hibernating"
           unit="minutes"
-          current={
-            resolved.idleMs !== undefined ? resolved.idleMs / MINUTE : undefined
-          }
-          overridden={overrides.idleMs !== undefined}
+          current={idleMs / MINUTE}
+          overridden={overridden.idleMs}
           disabled={disabled}
           onSave={(minutes) => onSetTimer("idleMs", minutes * MINUTE)}
           onReset={() => onUnset(["idleMs"], "reset the idle delay")}
@@ -101,12 +106,8 @@ export function DefaultsCard({
         <TimerRow
           label="Retention of hibernated workspaces"
           unit="days"
-          current={
-            resolved.expiresAfterMs !== undefined
-              ? resolved.expiresAfterMs / DAY
-              : undefined
-          }
-          overridden={overrides.expiresAfterMs !== undefined}
+          current={expiresAfterMs / DAY}
+          overridden={overridden.expiresAfterMs}
           disabled={disabled}
           onSave={(days) => onSetTimer("expiresAfterMs", days * DAY)}
           onReset={() =>

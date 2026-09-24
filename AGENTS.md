@@ -91,6 +91,17 @@ likely to mislead you.
 - A plugin reaches the Web settings surfaces through the volatile fields of
   its row Config (dsh 0.1.7's Config forms) plus, for a hand-written page, the
   `settings.section` slot. Namespace registration no longer exists.
+- A settings-form write lands in the profile patch, but a home patch
+  (`$DSH_HOME/cordis.patch.yml`) or `--patch` overlay outranks it, and the
+  config editor refuses a write they would override. So a chart cannot deliver
+  the sandbox-manager row as a home patch: the Web page cannot save, and the
+  legacy `settings.yaml` import silently skips that row (renaming the file to
+  `settings.yaml.imported`). Deployment values instead arrive as an ordinary
+  base file the control plane reads, `/etc/dsh-yawn/sandbox-settings.yaml`,
+  whose top-level `sandboxManager` section is the chart-to-image contract:
+  the image tag can lag the chart's, so unknown sections are ignored and the
+  file stays specific to this package. The deployment owns the profile names
+  it defines; see control-plane/README.md.
 - A patch entry's `name:` is an assertion, not a rename. When it differs from
   the matched row's module, `dsh-app-boot` skips the entry with a warning and
   the stock row stays as it was.

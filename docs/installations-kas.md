@@ -135,7 +135,7 @@ when it bumps `?ref=`: the path is gone, and the render fails until then.
 
 ```yaml
 # dsh-yawn.values.yaml
-provider:
+controlPlane:
   sandboxManager:
     profiles:
       standard:
@@ -149,10 +149,12 @@ helm upgrade dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
   --values dsh-yawn.values.yaml
 ```
 
-Values are the interface for this row: the chart mounts a read-only patch layer
-over the seeded settings and restarts the pod when they change. A `kas` profile
-that omits `namespace` is rendered with the release namespace, which is where
-the pool and the control plane's Role live.
+Values are the deployment base for this row: the chart mounts them as
+`/etc/dsh-yawn/sandbox-settings.yaml`, the Web UI's **Settings → Sandboxes**
+page adds its own profiles and changes the default and timers over them, and a
+values change rolls the pod. The profiles the values name are locked on that
+page. A `kas` profile that omits `namespace` is rendered with the release
+namespace, which is where the pool and the control plane's Role live.
 
 Then run a session and send a prompt: a warm pod is claimed, the repository is
 cloned into it, and the tools run there.

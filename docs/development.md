@@ -74,8 +74,9 @@ checks the controller lifecycle against it. See
 ## Running from a checkout (laptop + Docker)
 
 Instead of the released images, a checkout installs into a dsh you run
-yourself. This needs `@deepseek-ai/dsh` 0.1.5-rc.2 on your PATH. Build first,
-then install the control plane directory:
+yourself. This needs the pinned `@deepseek-ai/dsh` version from
+`control-plane/package.json` (0.1.7-rc.1) on your PATH. Build first, then
+install the control plane directory:
 
 ```sh
 docker buildx bake dev --load

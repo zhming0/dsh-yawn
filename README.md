@@ -70,9 +70,9 @@ Then add that profile in the Web UI — **Settings → Sandboxes → New profile
 with `name: standard` and `backend: docker`; it applies without a restart. Open
 <http://localhost:3000/launch-token>, choose **New session**, use
 **Add workspace…** with a repository URL, and send a message. The first message
-needs a model credential; add one in the Web UI settings. The settings document
-lives at `/data/.dsh/settings.yaml` inside the container if you would rather
-edit it directly.
+needs a model credential; add one in the Web UI settings. The page's edits
+persist into `/data/.dsh/profiles/web/cordis.patch.yml` inside the container if
+you would rather edit them directly.
 
 To clean up: `docker rm -f dsh-yawn`.
 

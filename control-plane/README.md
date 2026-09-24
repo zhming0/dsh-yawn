@@ -331,17 +331,32 @@ Configuration is YAML in the profile's own layer,
     idleMs: 300000
 ```
 
-That layer is the **base**: the live fields below are volatile row config,
-so everything marked _live_ can be changed at runtime through the Web UI's
-**Settings → Sandboxes** page and applies without a restart. Since dsh 0.1.7
-those edits persist back into the profile's own `cordis.patch.yml` (the same
-file the image seeds once), a reset returns to the value beneath the edit,
-and a change re-resolves the profiles (backends of unchanged profiles are
-kept), the default profile, and the idle and expiry timers, which take
-effect for the next armed countdown and the next hibernation. Sessions that
-already have a sandbox keep it; a profile whose sessions are still on record
-can be removed, and those sessions behave exactly as they do across a
-restart with the profile missing.
+The live fields below are volatile row config, so everything marked _live_ can
+be changed at runtime through the Web UI's **Settings → Sandboxes** page and
+applies without a restart. Since dsh 0.1.7 those edits persist back into the
+profile's own `cordis.patch.yml` (the same file the image seeds once), a reset
+returns to the value beneath the edit, and a change re-resolves the profiles
+(backends of unchanged profiles are kept), the default profile, and the idle
+and expiry timers, which take effect for the next armed countdown and the next
+hibernation. Sessions that already have a sandbox keep it; a profile whose
+sessions are still on record can be removed, and those sessions behave exactly
+as they do across a restart with the profile missing.
+
+A deployment can supply a **base** beneath that row config in the top-level
+`sandboxManager` section of `/etc/dsh-yawn/sandbox-settings.yaml`: the same
+runtime slice as one ordinary file. The chart renders
+`controlPlane.sandboxManager` there. It is a file and not a dsh patch layer on
+purpose: dsh gives a home patch precedence over the profile patch, which would
+make the Web page's writes fail as overridden. The base merges under the row
+config field by field. A profile the deployment defines is locked: the page
+shows it as deployment and cannot edit or remove it, and the deployment's
+definition wins if a page entry reuses its name. The page's default profile
+and timers win over the deployment's, and a reset returns to them. An absent
+file means the deployment sets nothing.
+
+The section layout is the chart-to-image contract, and the image tag can lag
+the chart's, so a section this package does not know is ignored. The file
+stays specific to this package; other plugins own their own settings.
 
 Writes are validated where they land: the host keeps the last good values
 with a warning rather than stopping when a slice turns invalid (a
@@ -357,7 +372,8 @@ API directly instead of through it.
 
 Fields marked _boot_ are read once at startup — the state directory must
 exist before any settings store could, and the tunnel listener binds before
-the Web UI is up — so they stay in this layer.
+the Web UI is up. They live in the profile patch; the deployment base carries
+the runtime slice only.
 
 `profiles` may be empty. The host then boots and serves sessions normally,
 but the first prompt fails with `no sandbox profile is configured` until a

@@ -2,19 +2,17 @@ import { useEffect, useState } from "react";
 
 import { Button, Tag } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { SettingsSectionOwnerProps } from "@deepseek-ai/dsh-client-ui-settings/client";
-import type { SettingsNamespaceView } from "@deepseek-ai/dsh-api-remotes/client";
 import type { JsonValue } from "@deepseek-ai/dsh-util-values";
 
 import { defaultBuildkiteTokenCredential } from "../buildkite-credential.js";
+import type { SandboxSettingsView } from "../sandbox-settings-remote.js";
 import { DefaultsCard } from "./settings-defaults.js";
 import { ProfileForm } from "./settings-form.js";
 import {
   cardStyle,
   describeError,
   sectionHeadingStyle,
-  stringFields,
   type ProfileDraft,
-  type RuntimeWire,
   type SandboxesSettingsActions,
 } from "./settings-shared.js";
 
@@ -25,23 +23,22 @@ type SandboxesSettingsProps = SettingsSectionOwnerProps &
   SandboxesSettingsActions;
 
 /**
- * Settings page for sandbox profiles and lifecycle timers. Reads the layered
- * view the settings service serves — deployment base, user overrides, resolved
- * value — and writes only the user layer, so everything the deployment
- * configures stays one reset away and edits apply on the host without a
- * restart.
+ * Settings page for sandbox profiles and lifecycle timers. The host sends one
+ * combined view — the deployment's settings with the page's edits applied —
+ * and this page only displays it and writes the page's own layer, so profiles
+ * the deployment configures stay locked and every editable field stays one
+ * reset away.
  */
 export function SandboxesSettings({
-  describeSettings,
   updateSettings,
   mutateSettings,
   replaceSettings,
   describeCredentials,
   setCredential,
   unsetCredential,
+  getSandboxSettings,
 }: SandboxesSettingsProps) {
-  const [view, setView] = useState<SettingsNamespaceView>();
-  const [writable, setWritable] = useState(true);
+  const [view, setView] = useState<SandboxSettingsView>();
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [pending, setPending] = useState(false);
@@ -56,18 +53,11 @@ export function SandboxesSettings({
 
   useEffect(() => {
     let cancelled = false;
-    describeSettings()
-      .then((described) => {
-        if (cancelled) {
-          return;
+    getSandboxSettings()
+      .then((settings) => {
+        if (!cancelled) {
+          setView(settings);
         }
-        setWritable(described.writable);
-        const found = described.namespaces.find((entry) => entry.ns === NS);
-        if (found === undefined) {
-          setError("the host did not register its sandbox-manager settings");
-          return;
-        }
-        setView(found);
       })
       .catch((reason) => {
         if (!cancelled) {
@@ -77,44 +67,47 @@ export function SandboxesSettings({
     return () => {
       cancelled = true;
     };
-  }, [describeSettings]);
+  }, [getSandboxSettings]);
 
+  /** Re-read the host's view; callers decide what a failure means. */
+  const load = async (): Promise<void> => {
+    setView(await getSandboxSettings());
+  };
+
+  /**
+   * Run one settings write and re-read the combined view. A write failure is
+   * reported and the view is re-read anyway, because the revision may have
+   * moved under us: a concurrent editor, or a direct edit of the settings
+   * document.
+   */
   const write = async (
-    action: (revision: number | undefined) => Promise<SettingsNamespaceView>,
-  ): Promise<SettingsNamespaceView | undefined> => {
+    action: (revision: number) => Promise<unknown>,
+  ): Promise<boolean> => {
     if (view === undefined || pending) {
-      return undefined;
+      return false;
     }
+    const revision = view.revision;
     setPending(true);
     setError(undefined);
     setNotice(undefined);
     try {
-      const next = await action(view.revision);
-      setView(next);
-      return next;
+      await action(revision);
     } catch (reason) {
       setError(describeError(reason));
-      // The revision may have moved under us (a concurrent editor, or a
-      // direct edit of the settings document): re-read so the page shows
-      // what actually landed.
-      describeSettings()
-        .then((described) => {
-          const found = described.namespaces.find((entry) => entry.ns === NS);
-          if (found !== undefined) {
-            setView(found);
-          }
-        })
-        .catch(() => {});
-      return undefined;
+      await load().catch(() => {});
+      return false;
     } finally {
       setPending(false);
     }
+    // The write landed; a failed re-read only leaves the last view in place.
+    await load().catch(() => {});
+    return true;
   };
 
-  const value = (view?.value ?? {}) as RuntimeWire;
-  const user = (view?.user ?? {}) as RuntimeWire;
-  const profiles = value.profiles ?? {};
-  const profileNames = Object.keys(profiles).sort();
+  const profileNames = view?.profiles.map((profile) => profile.name) ?? [];
+  const lockedNames = (view?.profiles ?? [])
+    .filter((profile) => profile.locked)
+    .map((profile) => profile.name);
 
   /**
    * Write the profile first, then the token under the name derived from it.
@@ -126,6 +119,14 @@ export function SandboxesSettings({
     profile: Record<string, JsonValue>,
     token: string,
   ): Promise<boolean> => {
+    // Deployment profile names are reserved: the host keeps the deployment's
+    // definition for them, so a page entry under one would never apply.
+    if (lockedNames.includes(name)) {
+      setError(
+        `profile ${name} is configured by the deployment; pick another name`,
+      );
+      return false;
+    }
     const saved = await write((revision) =>
       mutateSettings(
         NS,
@@ -133,7 +134,7 @@ export function SandboxesSettings({
         revision,
       ),
     );
-    if (saved === undefined) {
+    if (!saved) {
       return false;
     }
     if (profile.backend === "buildkite" && token !== "") {
@@ -212,11 +213,13 @@ export function SandboxesSettings({
     });
   };
 
+  const writable = view?.writable ?? false;
   const anyOverride =
-    user.profiles !== undefined ||
-    user.defaultProfile !== undefined ||
-    user.idleMs !== undefined ||
-    user.expiresAfterMs !== undefined;
+    view !== undefined &&
+    (view.overridden.defaultProfile ||
+      view.overridden.idleMs ||
+      view.overridden.expiresAfterMs ||
+      view.profiles.some((profile) => !profile.locked));
 
   return (
     <section style={{ maxWidth: 760, color: "var(--dsw-alias-label-primary)" }}>
@@ -229,9 +232,9 @@ export function SandboxesSettings({
         }}
       >
         Sandbox profiles and lifecycle timers. Changes apply on the host without
-        a restart; sessions that already have a sandbox keep it. Fields the
-        deployment configures are marked <em>deployment</em>, and a reset
-        returns to them.
+        a restart; sessions that already have a sandbox keep it. Profiles the
+        deployment configures are locked, and a reset returns every field to the
+        deployment's value.
       </p>
 
       {view === undefined && error === undefined ? (
@@ -267,7 +270,7 @@ export function SandboxesSettings({
             ) : null}
           </div>
 
-          {profileNames.length === 0 ? (
+          {view.profiles.length === 0 ? (
             <p
               style={{
                 ...cardStyle,
@@ -280,17 +283,12 @@ export function SandboxesSettings({
             </p>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {profileNames.map((name) => {
-                const profile = profiles[name];
-                const backend =
-                  typeof profile?.backend === "string" ? profile.backend : "";
-                const custom = user.profiles?.[name] !== undefined;
-                const fields = stringFields(profile);
-                const summary = Object.entries(fields)
+              {view.profiles.map((profile) => {
+                const summary = Object.entries(profile.fields)
                   .map(([key, entry]) => `${key}: ${entry}`)
                   .join(", ");
                 return (
-                  <div key={name} style={cardStyle}>
+                  <div key={profile.name} style={cardStyle}>
                     <div
                       style={{
                         display: "flex",
@@ -308,43 +306,43 @@ export function SandboxesSettings({
                           minWidth: 0,
                         }}
                       >
-                        <span style={{ fontWeight: 600 }}>{name}</span>
-                        <Tag tone="neutral">{backend}</Tag>
-                        <Tag tone={custom ? "info" : "quiet"}>
-                          {custom ? "custom" : "deployment"}
+                        <span style={{ fontWeight: 600 }}>{profile.name}</span>
+                        <Tag tone="neutral">{profile.backend}</Tag>
+                        <Tag tone={profile.locked ? "quiet" : "info"}>
+                          {profile.locked ? "deployment" : "custom"}
                         </Tag>
-                        {value.defaultProfile === name ? (
+                        {view.defaultProfile === profile.name ? (
                           <Tag tone="outline">default</Tag>
                         ) : null}
                       </div>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={pending || !writable}
-                          onClick={() =>
-                            openEditor({
-                              name,
-                              backend: backend === "" ? "docker" : backend,
-                              fields: { ...fields },
-                            })
-                          }
-                        >
-                          Edit
-                        </Button>
-                        {custom ? (
+                      {profile.locked ? null : (
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={pending || !writable}
+                            onClick={() =>
+                              openEditor({
+                                name: profile.name,
+                                backend: profile.backend,
+                                fields: { ...profile.fields },
+                              })
+                            }
+                          >
+                            Edit
+                          </Button>
                           <Button
                             type="button"
                             size="sm"
                             variant="ghost"
                             disabled={pending || !writable}
-                            onClick={() => removeProfile(name)}
+                            onClick={() => removeProfile(profile.name)}
                           >
                             Reset
                           </Button>
-                        ) : null}
-                      </div>
+                        </div>
+                      )}
                     </div>
                     {summary !== "" ? (
                       <div
@@ -379,8 +377,12 @@ export function SandboxesSettings({
           ) : null}
 
           <DefaultsCard
-            resolved={value}
-            overrides={user}
+            {...(view.defaultProfile === undefined
+              ? {}
+              : { defaultProfile: view.defaultProfile })}
+            idleMs={view.idleMs}
+            expiresAfterMs={view.expiresAfterMs}
+            overridden={view.overridden}
             profileNames={profileNames}
             writable={writable}
             pending={pending}
@@ -446,10 +448,12 @@ export function SandboxesSettings({
           lineHeight: 1.5,
         }}
       >
-        Profiles are layered over the deployment's configuration: a reset
-        returns a field to what the chart or the settings file configures. The
-        settings document is <code>$DSH_HOME/settings.yaml</code>, editable by
-        hand and hot-reloaded.
+        Deployment profiles come from{" "}
+        <code>/etc/dsh-yawn/sandbox-settings.yaml</code> and are locked here;
+        this page can add its own profiles and change the default and timers.
+        Edits persist into the profile patch,{" "}
+        <code>$DSH_HOME/profiles/web/cordis.patch.yml</code>, which is also
+        editable by hand.
       </p>
     </section>
   );

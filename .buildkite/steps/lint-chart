@@ -42,14 +42,15 @@ for expected in "name: BUILDKITE_API_TOKEN" "name: dsh-buildkite"; do
 done
 # Every install names a sandbox pool through controlPlane.sandboxManager, and the
 # in-cluster dev control plane (dev-cluster.sh --control-plane-image) is no
-# exception. The render has to carry the settings layer and the mount, or it boots with the
-# seeded `profiles: {}` and cannot provision.
+# exception. The render has to carry the settings file and the mount, or it boots
+# with the seeded `profiles: {}` and cannot provision.
 render --set controlPlane.sandboxManager.profiles.standard.backend=kas \
   --set controlPlane.sandboxManager.profiles.standard.warmPool=dsh-yawn-universal \
   >/tmp/chart-profile.yaml
-for expected in "dsh-yawn-control-plane-settings" "/data/.dsh/cordis.patch.yml" \
+for expected in "name: dsh-yawn-control-plane-sandbox-settings" \
+  "/etc/dsh-yawn/sandbox-settings.yaml" "sandboxManager:" \
   "warmPool: dsh-yawn-universal"; do
-  grep -q "$expected" /tmp/chart-profile.yaml \
+  grep -qF "$expected" /tmp/chart-profile.yaml \
     || { echo "chart profile render lost: $expected" >&2; exit 1; }
 done
 # A kas profile with no namespace has to render the release namespace: the
@@ -60,9 +61,8 @@ helm template dsh-yawn-control-plane "$CHART" --namespace platform \
   --set registrationToken.value=ci-token \
   --set controlPlane.sandboxManager.profiles.standard.backend=kas \
   --set controlPlane.sandboxManager.profiles.standard.warmPool=dsh-yawn-universal \
-  --show-only templates/control-plane-settings-configmap.yaml >/tmp/chart-profile-ns.yaml
-awk '/^  cordis.patch.yml:/{found=1} found' /tmp/chart-profile-ns.yaml \
-  | grep -q "namespace: platform" \
+  --show-only templates/control-plane-sandbox-settings-configmap.yaml >/tmp/chart-profile-ns.yaml
+grep -qF "namespace: platform" /tmp/chart-profile-ns.yaml \
   || { echo "chart profile does not default the namespace to the release namespace" >&2; exit 1; }
 
 echo "--- :helm: Checking the chart guards"
@@ -83,6 +83,9 @@ expect_fail "a kas profile in a foreign namespace" --set registrationToken.value
   --set controlPlane.sandboxManager.profiles.standard.namespace=elsewhere
 expect_fail "managed settings without profiles" --set registrationToken.value=x \
   --set controlPlane.sandboxManager.defaultProfile=standard
+expect_fail "a startup setting under sandboxManager" --set registrationToken.value=x \
+  --set controlPlane.sandboxManager.profiles.standard.backend=kas \
+  --set controlPlane.sandboxManager.workspace=/tmp/elsewhere
 expect_fail "oidc without hostname" --set registrationToken.value=x --set oidc.enabled=true
 expect_fail "LoadBalancer without the proxy" --set registrationToken.value=x \
   --set service.type=LoadBalancer

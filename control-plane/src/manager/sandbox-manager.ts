@@ -20,11 +20,19 @@ import {
 import { CheckpointStore } from "../checkpoint.js";
 import {
   configSchema,
+  readSetting,
   resolveBootConfig,
   resolveRegistrationTokens,
   type Config,
+  type ProfileConfig,
   type ResolvedConfig,
+  type RuntimeConfig,
 } from "../config.js";
+import {
+  dshHome,
+  missingImportedProfiles,
+  readDeploymentSettings,
+} from "../deployment-settings.js";
 import {
   FileIndexStore,
   type FileIndex,
@@ -37,6 +45,7 @@ import { yawnHost } from "../remote-contributions.js";
 import { PLACEHOLDER_PREVIEW_PORT, previewHost } from "../preview.js";
 import { PreviewServer } from "../preview-server.js";
 import type { RunnerClient } from "../runner-client.js";
+import type { SandboxSettingsView } from "../sandbox-settings-remote.js";
 import type { SandboxStatusView } from "../sandbox-status-remote.js";
 import type { SessionProfileView } from "../session-profile-remote.js";
 import { SessionStore } from "../state-store.js";
@@ -76,6 +85,11 @@ export interface ManagerDependencies {
   credentials?: CredentialResolver;
   /** Resolves a session id to its live agent; defaults to the agent registry. */
   agentLookup?: (sessionId: string) => Agent | undefined;
+  /**
+   * The deployment's own runtime settings, beneath the row config; defaults
+   * to the file the chart mounts at /etc/dsh-yawn/sandbox-settings.yaml.
+   */
+  deploymentSettings?: RuntimeConfig;
 }
 
 interface WorkspaceRegistryLike {
@@ -131,6 +145,13 @@ export class SandboxManager extends TypertRemoteService {
    * sees every committed write without an event.
    */
   private readonly rawConfig: Config;
+  /**
+   * The deployment's own runtime settings, beneath the row config. They come
+   * from an ordinary file rather than a patch layer: dsh 0.1.7 lets a home
+   * patch shadow the profile patch, and the Web page could then neither save
+   * nor restore a deployment profile.
+   */
+  private readonly deployment: RuntimeConfig;
   /** The profile map last applied to the registry, as JSON, for drift checks. */
   private appliedProfilesJson = "";
   /** Test-supplied credential resolution; production reads the host service. */
@@ -143,10 +164,12 @@ export class SandboxManager extends TypertRemoteService {
   ) {
     super(ctx, "sandboxManager");
     this.rawConfig = config;
+    this.deployment =
+      dependencies.deploymentSettings ?? readDeploymentSettings();
     // Settings-form writes land in the profile patch the Loader reads, so a
     // schema-valid but unusable value must not take the whole row down on the
     // next restart: degrade the editable slice, log why, keep booting.
-    const boot = resolveBootConfig(config);
+    const boot = resolveBootConfig(config, this.deployment);
     for (const warning of boot.warnings) {
       ctx.logger("sandbox").warn(warning);
     }
@@ -159,6 +182,7 @@ export class SandboxManager extends TypertRemoteService {
           "no sandbox profiles configured; add one to the sandbox-manager settings or no session can start a sandbox",
         );
     }
+    this.warnAboutUnimportedProfiles();
     const store =
       dependencies.store ??
       new SessionStore(join(this.config.stateDir, "sessions.json"));
@@ -222,6 +246,7 @@ export class SandboxManager extends TypertRemoteService {
           this.ctx.logger("sandbox").warn(warning);
         }
       },
+      this.deployment,
     );
     this.appliedProfilesJson = JSON.stringify(this.runtime.profiles);
     this.profileChoice = new ProfileChoice(this.runtime, store);
@@ -565,6 +590,87 @@ export class SandboxManager extends TypertRemoteService {
   }
 
   /**
+   * The Sandboxes page's read model: the deployment's profiles and the page's
+   * own edits combined here, so the page never merges the two. Deployment
+   * profiles come first and are locked; the page's profiles follow. The page's
+   * default profile and timers win over the deployment's, and the revision is
+   * the one a write must carry.
+   */
+  getSandboxSettings(): SandboxSettingsView {
+    const chart = readSetting(this.deployment.profiles) ?? {};
+    const page = readSetting(this.rawConfig.profiles) ?? {};
+    const profiles: Record<string, ProfileConfig> = { ...chart };
+    for (const [name, profile] of Object.entries(page)) {
+      profiles[name] ??= profile;
+    }
+    const form = this.settingsForm();
+    // The scalars come from the resolved runtime slice, so the page shows
+    // what the host actually applies: a page default that names a removed
+    // profile, for example, reads as the fallback the runtime picked.
+    const defaultProfile = this.runtime.defaultProfile;
+    return {
+      profiles: Object.entries(profiles).map(([name, profile]) => ({
+        name,
+        backend: profile.backend,
+        fields: stringFields(profile),
+        locked: chart[name] !== undefined,
+      })),
+      ...(defaultProfile === undefined ? {} : { defaultProfile }),
+      idleMs: this.runtime.idleMs,
+      expiresAfterMs: this.runtime.expiresAfterMs,
+      overridden: {
+        defaultProfile:
+          readSetting(this.rawConfig.defaultProfile) !== undefined,
+        idleMs: readSetting(this.rawConfig.idleMs) !== undefined,
+        expiresAfterMs:
+          readSetting(this.rawConfig.expiresAfterMs) !== undefined,
+      },
+      revision: form?.revision ?? 0,
+      writable: form?.writable ?? false,
+    };
+  }
+
+  /**
+   * The settings form a write goes through: its entry revision and whether
+   * the profile accepts writes. Absent when no settings service is mounted,
+   * which leaves the page read-only.
+   */
+  private settingsForm(): { revision: number; writable: boolean } | undefined {
+    const settings = this.ctx.get("settings");
+    if (settings === undefined) {
+      return undefined;
+    }
+    const descriptor = settings
+      .describe()
+      .find((row) => row.ns === "sandbox-manager");
+    return descriptor === undefined
+      ? undefined
+      : { revision: descriptor.revision, writable: settings.writable };
+  }
+
+  /**
+   * A settings document renamed to `settings.yaml.imported` can still hold
+   * sandbox profiles the host does not have: a boot that mounted the sandbox
+   * settings as a home patch had dsh's one-time import refused for this row.
+   * Say so loudly, because the alternative is an operator wondering where the
+   * profiles went. This goes to stderr, not the plugin logger: the startup
+   * logger's warnings reach the operator only when boot fails.
+   */
+  private warnAboutUnimportedProfiles(): void {
+    const importedPath = join(dshHome(), "settings.yaml.imported");
+    const missing = missingImportedProfiles(
+      importedPath,
+      Object.keys(this.config.profiles),
+    );
+    if (missing.length === 0) {
+      return;
+    }
+    process.stderr.write(
+      `dsh-yawn: sandbox profile(s) ${missing.join(", ")} are only in ${importedPath}; the boot that renamed that file could not import them. Rename it back to settings.yaml and restart to restore them.\n`,
+    );
+  }
+
+  /**
    * Facts for the session's Sandbox tab. Reading is inert: see SandboxStatus,
    * which holds no lifecycle engine and so cannot provision or wake.
    */
@@ -769,6 +875,17 @@ export class SandboxManager extends TypertRemoteService {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** The scalar profile fields, `backend` aside, as the settings page edits them. */
+function stringFields(profile: ProfileConfig): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const [key, value] of Object.entries(profile)) {
+    if (key !== "backend" && typeof value !== "object") {
+      fields[key] = String(value);
+    }
+  }
+  return fields;
 }
 
 export default SandboxManager;

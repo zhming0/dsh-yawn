@@ -1,16 +1,16 @@
 import type { CSSProperties } from "react";
 
 import type {
-  SettingsDescribeValue,
   SettingsNamespaceView,
   SettingsPathOpView,
 } from "@deepseek-ai/dsh-api-remotes/client";
 import type { CredentialInfo } from "@deepseek-ai/dsh-credentials/types";
 import type { JsonValue } from "@deepseek-ai/dsh-util-values";
 
+import type { SandboxSettingsView } from "../sandbox-settings-remote.js";
+
 /** What the Sandboxes page calls on the host: settings and write-only credentials. */
 export interface SandboxesSettingsActions {
-  describeSettings: () => Promise<SettingsDescribeValue>;
   updateSettings: (
     ns: string,
     patch: Record<string, JsonValue>,
@@ -31,6 +31,8 @@ export interface SandboxesSettingsActions {
   ) => Promise<Record<string, CredentialInfo>>;
   setCredential: (ref: string, value: string) => Promise<void>;
   unsetCredential: (ref: string) => Promise<void>;
+  /** The combined read model: deployment values with the page's edits on top. */
+  getSandboxSettings: () => Promise<SandboxSettingsView>;
 }
 
 /** One profile as the form edits it: a backend plus its scalar fields. */
@@ -38,14 +40,6 @@ export interface ProfileDraft {
   name: string;
   backend: string;
   fields: Record<string, string>;
-}
-
-/** The runtime slice as it rides the wire, defaults already applied. */
-export interface RuntimeWire {
-  profiles?: Record<string, Record<string, JsonValue>>;
-  defaultProfile?: string;
-  idleMs?: number;
-  expiresAfterMs?: number;
 }
 
 // The settings page's own vocabulary, matching the cards this package already
@@ -84,20 +78,4 @@ export const sectionHeadingStyle: CSSProperties = {
 
 export function describeError(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
-}
-
-/** The scalar fields of a wire profile, `backend` aside, for display and edit. */
-export function stringFields(
-  profile: Record<string, JsonValue> | undefined,
-): Record<string, string> {
-  const fields: Record<string, string> = {};
-  for (const [key, entry] of Object.entries(profile ?? {})) {
-    if (
-      key !== "backend" &&
-      (typeof entry === "string" || typeof entry === "number")
-    ) {
-      fields[key] = String(entry);
-    }
-  }
-  return fields;
 }
