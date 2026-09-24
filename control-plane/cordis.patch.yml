@@ -27,6 +27,15 @@
 - id: permission
   disabled: true
 
+# The General-settings Permission row goes with the service. Since 0.1.7 the
+# row reads a `permissionPresets` catalog Remote, and dsh-api-remotes mounts
+# that Remote client whether or not its host plugin loaded, so the call answers
+# HTTP 404 and the row renders the error instead of hiding. The row also
+# carries the composer's permission picker, which needs the same catalog.
+# Web-only, like directory-picker.
+- id: ui-permission
+  disabled: true
+
 # dsh's sandbox policy describes the host's own file sandbox: a per-session
 # mode switch, a host directory the agent may write under, and a line in every
 # model request ("Current DSH file policy: workspace-write ... may modify files

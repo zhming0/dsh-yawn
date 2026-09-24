@@ -135,7 +135,11 @@ when a sandbox is provisioned, woken, or replaced.
 
 The bundle also disables dsh's local shell permission presets and its file
 policy line. The remote shell uses one fixed container boundary and does not
-claim to enforce those per-command sandbox modes. The policy line would tell
+claim to enforce those per-command sandbox modes. Both halves of the preset
+surface go: since 0.1.7 the Web settings row reads the presets through a
+`permissionPresets` catalog Remote that the client mounts whether or not the
+host row loaded, so with the service off the row would render an error rather
+than disappear. The policy line would tell
 the model it may write under the session workspace and name that workspace by
 its host anchor path, which does not exist inside the sandbox; the model only
 ever needs sandbox paths, and it finds its working directory the way any shell
