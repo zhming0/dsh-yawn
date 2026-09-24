@@ -1,60 +1,77 @@
-import type { ResolvedRuntime } from "../config.js";
-import type { SandboxProfile } from "../types.js";
+import {
+  resolveDegradingRuntime,
+  type ResolvedRuntime,
+  type RuntimeConfig,
+} from "../config.js";
 
 /**
- * The slice of sandbox-manager settings that can change while the host runs.
- * The manager re-resolves it from the settings service after every committed
- * change; the idle scheduler and the lifecycle read through this holder, so
- * new timers apply to the next armed countdown and the next hibernation
- * without restarting anything.
+ * The slice of sandbox-manager settings that can change while the host runs,
+ * read through the row's volatile config. Every access re-resolves piece by
+ * piece (see `resolveDegradingRuntime`), so a settings-form write applies to
+ * the next armed countdown and the next hibernation without an event and
+ * without a restart — and one broken piece, such as a profile with a bad
+ * controlPlaneUrl, degrades alone instead of freezing the whole slice on its
+ * last good values. Boot resolves through the same logic, so a running host
+ * and a restart agree on what the current settings mean.
  */
 export class RuntimeSettings {
-  private current: ResolvedRuntime;
+  private lastGood: ResolvedRuntime;
+  /** The warning set already reported for the current slice: a bad piece
+   * warns once, not once per read, and a changed slice warns again. */
+  private warnedSignature: string;
 
-  constructor(initial: ResolvedRuntime) {
-    this.current = initial;
+  constructor(
+    initial: ResolvedRuntime,
+    initialWarnings: readonly string[] = [],
+    private readonly source: () => RuntimeConfig,
+    private readonly tunnelPort: number,
+    private readonly onWarnings: (warnings: string[]) => void = () => undefined,
+  ) {
+    this.lastGood = initial;
+    this.warnedSignature = initialWarnings.join("\n");
   }
 
-  get profiles(): Record<string, SandboxProfile> {
-    return this.current.profiles;
+  private current(): ResolvedRuntime {
+    try {
+      const { runtime, warnings } = resolveDegradingRuntime(
+        this.source(),
+        this.tunnelPort,
+      );
+      if (warnings.length === 0) {
+        this.warnedSignature = "";
+      } else {
+        const signature = warnings.join("\n");
+        if (signature !== this.warnedSignature) {
+          this.warnedSignature = signature;
+          this.onWarnings(warnings);
+        }
+      }
+      this.lastGood = runtime;
+    } catch (error) {
+      // The degrading resolver does not throw by construction; if the source
+      // itself explodes, keep the previous values and say so once.
+      const message = `keeping the previous sandbox settings: ${error instanceof Error ? error.message : String(error)}`;
+      if (this.warnedSignature !== message) {
+        this.warnedSignature = message;
+        this.onWarnings([message]);
+      }
+    }
+    return this.lastGood;
+  }
+
+  get profiles(): ResolvedRuntime["profiles"] {
+    return this.current().profiles;
   }
 
   get defaultProfile(): string | undefined {
-    return this.current.defaultProfile;
+    return this.current().defaultProfile;
   }
 
   get idleMs(): number {
-    return this.current.idleMs;
+    return this.current().idleMs;
   }
 
   get expiresAfterMs(): number {
-    return this.current.expiresAfterMs;
+    return this.current().expiresAfterMs;
   }
-
-  /**
-   * Swap in the next resolved slice. Answers whether the profile map changed,
-   * because that is the change whose reaction is expensive: rebuilding
-   * backends. Timer changes need no reaction beyond this holder.
-   */
-  apply(next: ResolvedRuntime): boolean {
-    const profilesChanged = !sameProfiles(this.current.profiles, next.profiles);
-    this.current = next;
-    return profilesChanged;
-  }
-}
-
-/** Profiles are plain data built in a fixed field order, so JSON is equality. */
-function sameProfiles(
-  a: Record<string, SandboxProfile>,
-  b: Record<string, SandboxProfile>,
-): boolean {
-  const names = Object.keys(a);
-  if (names.length !== Object.keys(b).length) {
-    return false;
-  }
-  return names.every(
-    (name) =>
-      b[name] !== undefined &&
-      JSON.stringify(a[name]) === JSON.stringify(b[name]),
-  );
 }

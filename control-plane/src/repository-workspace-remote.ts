@@ -35,7 +35,7 @@ const descriptor: InvocationDescriptor = {
         mode: "strict",
         typeSymbol:
           "@zhming0/dsh-yawn#sandboxManager/createRepositoryWorkspace:repositoryUrl",
-        schema: stringSchema,
+        create: () => stringSchema,
       },
     },
   ],
@@ -43,7 +43,7 @@ const descriptor: InvocationDescriptor = {
     mode: "strict",
     typeSymbol:
       "@zhming0/dsh-yawn#sandboxManager/createRepositoryWorkspace:result",
-    schema: stringSchema,
+    create: () => stringSchema,
   },
 };
 

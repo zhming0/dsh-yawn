@@ -155,6 +155,7 @@ export class SandboxFileReferenceService extends FileReferenceService {
     }
     ctx.on("agent/created", ({ agent }) => {
       installPrompt(agent);
+      return undefined;
     });
     ctx.on("agent/disposed", ({ agent }) => {
       this.snapshots.delete(agent);

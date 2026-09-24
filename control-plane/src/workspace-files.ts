@@ -44,14 +44,7 @@ import type {
 } from "@deepseek-ai/dsh-api-workspace-files";
 
 /** The stock request methods. Each takes the session scope first. */
-const REQUEST_METHODS = [
-  "read",
-  "readBytes",
-  "readAll",
-  "readRelated",
-  "stat",
-  "list",
-] as const;
+const REQUEST_METHODS = ["read", "readBytes", "stat", "list"] as const;
 
 type RequestMethod = (typeof REQUEST_METHODS)[number];
 
@@ -64,6 +57,7 @@ type ScopedRequest = (
 type ScopedChanges = (
   this: WorkspaceFiles,
   workspaceFileScope: WorkspaceFileScope,
+  path: string,
   signal: AbortSignal,
 ) => AsyncIterable<WorkspaceFileWatchFrame>;
 
@@ -124,10 +118,11 @@ export function scopeToSession(
   const stockChanges = Reflect.get(files, "changes") as ScopedChanges;
   const scopedChanges: ScopedChanges = async function* (
     workspaceFileScope,
+    path,
     signal,
   ) {
     const agent = await agentFor(workspaceFileScope);
-    const frames = stockChanges.call(this, workspaceFileScope, signal);
+    const frames = stockChanges.call(this, workspaceFileScope, path, signal);
     const inner = frames[Symbol.asyncIterator]();
     try {
       for (;;) {

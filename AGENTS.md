@@ -12,15 +12,15 @@ READMEs are unusually detailed and precise. Read them directly:
 
 ```sh
 cd "$(mktemp -d)"
-npm pack @deepseek-ai/dsh-base@0.1.5-rc.2
+npm pack @deepseek-ai/dsh-base@0.1.7-rc.1
 tar xzf *.tgz
 # package/README.md is the spec. package/lib/*.js is the built source, which is
 # readable and worth grepping when a README leaves a detail open. A bundle also
 # carries package/cordis.patch.yml, the rows it contributes.
 ```
 
-This repository pins `0.1.5-rc.2`. Match it, because the surface moves between
-release candidates.
+This repository pins `0.1.7-rc.1`. Match it, because the surface moves between
+releases.
 
 ### The model
 
@@ -35,7 +35,7 @@ tools use a sandbox without knowing one exists.
 | **Profile**       | One installed tree, at `$DSH_HOME/profiles/<name>/` (`$DSH_HOME` defaults to `~/.dsh`). Holds `package.json` with the ordered `dsh.profile.bundles` list, plus your `cordis.patch.yml`.                               |
 | **Bundle**        | An npm package declaring `dsh.bundle.patch`. Its patch file becomes a layer. This package is one.                                                                                                                     |
 | **Patch layer**   | A YAML list of `{id, name, config}` rows plus `insert:` and `disabled:`. Layers apply over an empty list: bundles in order, then the profile's `cordis.patch.yml`, then `$DSH_HOME/cordis.patch.yml`, then `--patch`. |
-| **Agent preset**  | A per-session composition at `$DSH_HOME/.agent-presets/<id>/agent.cordis.yml`, picked in the Web UI. Different from a profile.                                                                                        |
+| **Agent preset**  | A per-session composition, picked in the Web UI. Since dsh 0.1.7 presets are ordinary patch rows (`dsh-web-app/presets/*.patch.yml`). Different from a profile.                                                                                        |
 | **Isolate realm** | `cordis:group` with `isolate:` gives a subtree its own copy of named services. A preset must use one for any service it publishes.                                                                                    |
 
 ### Which package answers which question
@@ -46,8 +46,8 @@ tools use a sandbox without knowing one exists.
 | Patch layer precedence, `$DSH_HOME`, boot         | `@deepseek-ai/dsh-app-boot`                             |
 | Which row ids exist, and their defaults           | `@deepseek-ai/dsh-base` (read `cordis.patch.yml`)       |
 | What each surface changes                         | `@deepseek-ai/dsh-web-app`, `@deepseek-ai/dsh-headless` |
-| Per-session compositions                          | `@deepseek-ai/dsh-agent-presets`                        |
-| User settings document and namespaces             | `@deepseek-ai/dsh-settings`                             |
+| Per-session compositions (preset rows)             | `@deepseek-ai/dsh-web-app` (`presets/*.patch.yml`)      |
+| Config forms over row Configs                      | `@deepseek-ai/dsh-settings`                             |
 | The interfaces this repo implements               | `@deepseek-ai/dsh-fs`, `-shell`, `-subprocess`          |
 | How a Web session is created, including its `cwd` | `@deepseek-ai/dsh-api-session-controller`               |
 
@@ -79,15 +79,18 @@ likely to mislead you.
   translates the workdir, session-frame argv paths, and host-only executables
   so the stock row runs inside the sandbox.
 - On the Web surface, tool rows are mounted by agent presets, and a preset
-  row's `name:` is the module that loads. A bundle patch that renames a tool
-  row (`tool-fs-search: name: ...`) is not what Web sessions run: the shipped
-  presets restate the row by its stock name, and the launcher force-sets the
-  preset roots after every patch layer, so a bundle cannot add, remove, or
-  patch presets. Make stock rows work through the three capability seams
-  instead of replacing them.
-- A plugin appears in the Web Plugins settings tab only if it both registers a
-  settings namespace on the host and ships a hand-written browser card. A
-  namespace alone renders nothing.
+  row's `name:` is the module that loads. Since dsh 0.1.7 presets are ordinary
+  patch rows (`preset-standard` and friends, shipped as
+  `dsh-web-app/presets/*.patch.yml` behind an `agent-preset-registry` row), a
+  bundle patch *can* restate one — but this repository still does not: the
+  shipped presets restate tool rows by their stock names, and working through
+  the three capability seams keeps that true. Web-editor preset changes
+  persist into the profile's own `cordis.patch.yml`, the same file the image
+  seeds once, and a session pinned to a preset id that no longer exists fails
+  to resume — keep preset ids stable.
+- A plugin reaches the Web settings surfaces through the volatile fields of
+  its row Config (dsh 0.1.7's Config forms) plus, for a hand-written page, the
+  `settings.section` slot. Namespace registration no longer exists.
 - A patch entry's `name:` is an assertion, not a rename. When it differs from
   the matched row's module, `dsh-app-boot` skips the entry with a warning and
   the stock row stays as it was.

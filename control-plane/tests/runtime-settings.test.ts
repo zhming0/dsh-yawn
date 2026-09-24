@@ -1,21 +1,41 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Context } from "@deepseek-ai/cordis";
-import FileSettingsProvider from "@deepseek-ai/dsh-settings-file";
-import type { SettingsProvider } from "@deepseek-ai/dsh-settings";
+import type { Volatile } from "@deepseek-ai/cosmokit";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import {
+  resolveDegradingRuntime,
+  resolveRuntime,
+  type ProfileConfig,
+  type RuntimeConfig,
+} from "../src/config.js";
 import { SandboxManager } from "../src/manager/index.js";
 import { ProfileRegistry } from "../src/manager/profile-registry.js";
 import { RuntimeSettings } from "../src/manager/runtime-settings.js";
-import { FakeBackend, gatewayFor, sleep } from "./fakes.js";
+import { FakeBackend, gatewayFor } from "./fakes.js";
+
+/** A stand-in for the Loader's volatile reference over one field. */
+function setting<T>(initial: T | undefined): {
+  ref: Volatile<T | undefined>;
+  set(value: T | undefined): void;
+} {
+  let current = initial;
+  return {
+    ref: { get: () => current } as Volatile<T | undefined>,
+    set(value) {
+      current = value;
+    },
+  };
+}
 
 /**
- * The runtime settings slice over the real settings service: the file-backed
- * provider, the `sandbox-manager` namespace the manager installs, and the
- * live re-resolve a committed change triggers.
+ * The runtime settings slice over the row's volatile config: the settings
+ * form writes through the Loader's volatile update, so a write is a new
+ * value behind the same references, and the manager sees it on its next
+ * read.
  */
 describe("sandbox-manager settings", () => {
   let directory: string;
@@ -28,164 +48,40 @@ describe("sandbox-manager settings", () => {
     await rm(directory, { recursive: true, force: true });
   });
 
-  async function managerOver(settingsFile: string): Promise<{
-    manager: SandboxManager;
-    settings: SettingsProvider;
-    standard: FakeBackend;
-  }> {
+  it("applies a profile added through the settings form without a restart", async () => {
     const ctx = new Context();
-    ctx.plugin(FileSettingsProvider, { path: settingsFile });
     const standard = new FakeBackend();
     // An empty credential store: Buildkite tokens resolve per request, so a
     // profile can be added and applied before its token is entered.
     const credentials = { resolve: async () => undefined };
+    const profiles = setting<Record<string, ProfileConfig>>({
+      standard: { backend: "docker" },
+    });
     const manager = new SandboxManager(
       ctx,
       {
-        profiles: { standard: { backend: "docker" } },
+        profiles: profiles.ref,
+        defaultProfile: setting<string>(undefined).ref,
+        idleMs: setting<number>(60_000).ref,
+        expiresAfterMs: setting<number>(60_000).ref,
         stateDir: directory,
-        idleMs: 60_000,
-        expiresAfterMs: 60_000,
       },
       { backends: { standard }, gateway: gatewayFor(standard), credentials },
     );
-    const settings = await new Promise<SettingsProvider>((resolve) => {
-      ctx.inject(["settings"], (settingsCtx) => {
-        resolve(settingsCtx.settings);
-      });
+
+    const names = async () =>
+      (await manager.getSessionProfile("session-one")).profiles
+        .map((profile) => profile.name)
+        .sort();
+    expect(await names()).toEqual(["standard"]);
+
+    profiles.set({
+      standard: { backend: "docker" },
+      large: { backend: "docker", image: "dsh-runner:dev" },
     });
-    return { manager, settings, standard };
-  }
-
-  /** Poll until the probe passes, so watcher-settled changes are stable. */
-  async function until(
-    probe: () => Promise<boolean>,
-    what: string,
-  ): Promise<void> {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      if (await probe()) {
-        return;
-      }
-      await sleep(20);
-    }
-    expect(await probe(), what).toBe(true);
-  }
-
-  const names = async (manager: SandboxManager, sessionId: string) =>
-    (await manager.getSessionProfile(sessionId)).profiles
-      .map((profile) => profile.name)
-      .sort();
-
-  it("applies a profile added through the settings service without a restart", async () => {
-    const { manager, settings } = await managerOver(
-      join(directory, "settings.yaml"),
-    );
-    expect(await names(manager, "session-one")).toEqual(["standard"]);
-
-    await settings.update("sandbox-manager", {
-      profiles: {
-        standard: { backend: "docker" },
-        large: { backend: "docker", image: "dsh-runner:dev" },
-      },
-    });
-
-    await until(
-      async () => (await names(manager, "session-one")).includes("large"),
-      "the new profile appears in the composer chip's options",
-    );
+    expect(await names()).toEqual(["large", "standard"]);
     const view = await manager.getSessionProfile("session-one");
     expect(view.selected).toBe("standard");
-  });
-
-  it("resets to the row's configuration when the user layer empties", async () => {
-    const { manager, settings } = await managerOver(
-      join(directory, "settings.yaml"),
-    );
-    await settings.replace("sandbox-manager", {
-      profiles: { large: { backend: "docker", image: "dsh-runner:dev" } },
-    });
-    await until(
-      async () => (await names(manager, "session-one")).includes("large"),
-      "the override applies",
-    );
-
-    await settings.replace("sandbox-manager", {});
-    await until(
-      async () => (await names(manager, "session-one")).join() === "standard",
-      "the row's profiles return",
-    );
-  });
-
-  it("applies a Buildkite profile before its token is set", async () => {
-    const { manager, settings } = await managerOver(
-      join(directory, "settings.yaml"),
-    );
-    await settings.update("sandbox-manager", {
-      profiles: {
-        standard: { backend: "docker" },
-        hosted: {
-          backend: "buildkite",
-          organization: "acme",
-          pipeline: "dsh-yawn",
-          controlPlaneUrl: "wss://dsh.example.com/tunnel",
-        },
-      },
-    });
-    // The token resolves per request, so adding the profile is not refused;
-    // its sessions fail with the setting to fix until a token exists.
-    await until(
-      async () => (await names(manager, "session-one")).includes("hosted"),
-      "the Buildkite profile applies without a token",
-    );
-  });
-
-  it("refuses a write the host cannot apply", async () => {
-    const { settings } = await managerOver(join(directory, "settings.yaml"));
-    await expect(
-      settings.update("sandbox-manager", { defaultProfile: "missing" }),
-    ).rejects.toThrow(/not a configured profile/);
-  });
-
-  it("keeps the row's profiles when the document starts invalid", async () => {
-    const settingsFile = join(directory, "settings.yaml");
-    await writeFile(
-      settingsFile,
-      "sandbox-manager:\n  defaultProfile: ghost\n",
-      "utf8",
-    );
-    const { manager } = await managerOver(settingsFile);
-    expect(await names(manager, "session-one")).toEqual(["standard"]);
-  });
-
-  it("hot-reloads a direct edit of the settings document", async () => {
-    const settingsFile = join(directory, "settings.yaml");
-    // Materialize the document before the provider starts. A document that
-    // appears while its watcher is starting can be missed: chokidar announces
-    // ready — and the provider re-reads the file once — before it settles on
-    // watching the directory that will hold the new file. Creating an empty
-    // document first, as the settings API's `prepareDocument` does, keeps this
-    // test about an edit to an existing document.
-    await writeFile(settingsFile, "", "utf8");
-    const { manager } = await managerOver(settingsFile);
-    await manager.getSessionProfile("session-one");
-    await writeFile(
-      settingsFile,
-      [
-        "sandbox-manager:",
-        "  profiles:",
-        "    standard:",
-        "      backend: docker",
-        "    large:",
-        "      backend: docker",
-        "      image: dsh-runner:dev",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-    await until(
-      async () => (await names(manager, "session-one")).includes("large"),
-      "the externally edited profile appears",
-    );
   });
 });
 
@@ -228,29 +124,90 @@ describe("ProfileRegistry.update", () => {
 });
 
 describe("RuntimeSettings", () => {
-  it("reports timer changes without claiming a profile change", () => {
-    const initial = {
-      profiles: {},
-      defaultProfile: undefined,
-      idleMs: 60_000,
-      expiresAfterMs: 604_800_000,
-    };
-    const holder = new RuntimeSettings(initial);
-    expect(holder.apply({ ...initial, idleMs: 120_000 })).toBe(false);
+  it("re-resolves on every read", () => {
+    const initial = resolveRuntime(
+      { profiles: {}, idleMs: 60_000, expiresAfterMs: 604_800_000 },
+      8081,
+    );
+    let source: RuntimeConfig = { ...initial, idleMs: 120_000 };
+    const holder = new RuntimeSettings(initial, [], () => source, 8081);
     expect(holder.idleMs).toBe(120_000);
     expect(holder.expiresAfterMs).toBe(604_800_000);
-    expect(
-      holder.apply({
-        ...initial,
-        profiles: {
-          standard: {
-            name: "standard",
-            backend: "docker",
-            image: "default-image",
-            controlPlaneUrl: "ws://host.docker.internal:8081/tunnel",
-          },
+    source = { ...initial, idleMs: 240_000 };
+    expect(holder.idleMs).toBe(240_000);
+  });
+
+  it("degrades one broken piece without freezing the rest of the slice", () => {
+    const initial = resolveRuntime(
+      { profiles: { standard: { backend: "docker" } }, idleMs: 60_000 },
+      8081,
+    );
+    let source: RuntimeConfig = {
+      profiles: {
+        standard: { backend: "docker" },
+        broken: {
+          backend: "docker",
+          controlPlaneUrl: "not a WebSocket URL",
         },
-      }),
-    ).toBe(true);
+      },
+      idleMs: 120_000,
+    };
+    const warnings: string[][] = [];
+    const holder = new RuntimeSettings(
+      initial,
+      [],
+      () => source,
+      8081,
+      (batch) => warnings.push(batch),
+    );
+
+    // The broken profile drops alone; the valid pieces of the same slice,
+    // including the new timer, still apply. Boot resolves the same way.
+    expect(Object.keys(holder.profiles)).toEqual(["standard"]);
+    expect(holder.idleMs).toBe(120_000);
+    expect(warnings).toEqual([
+      [expect.stringContaining("ignoring sandbox profile broken")],
+    ]);
+
+    // A later valid edit lands even while the broken profile stays put, and
+    // reads do not repeat the warning.
+    source = { ...source, idleMs: 240_000 };
+    expect(holder.idleMs).toBe(240_000);
+    expect(warnings).toHaveLength(1);
+
+    // A clean slice clears the warning state, so a new bad piece warns again.
+    source = { profiles: {}, idleMs: 300_000 };
+    expect(holder.idleMs).toBe(300_000);
+    expect(warnings).toHaveLength(1);
+    source = { profiles: {}, idleMs: -1 };
+    // Boot parity: a bad timer restores its default rather than the previous
+    // value, exactly what a restart would come up with.
+    expect(holder.idleMs).toBe(600_000);
+    expect(warnings).toHaveLength(2);
+  });
+
+  it("seeds the warning state from boot so the same slice is not logged twice", () => {
+    const initial = resolveRuntime({ profiles: {} }, 8081);
+    const source: RuntimeConfig = {
+      profiles: {
+        broken: {
+          backend: "docker",
+          controlPlaneUrl: "not a WebSocket URL",
+        },
+      },
+    };
+    // What boot logged for this exact slice, derived the same way.
+    const bootWarnings = resolveDegradingRuntime(source, 8081).warnings;
+    expect(bootWarnings).toHaveLength(1);
+    const warnings: string[][] = [];
+    const holder = new RuntimeSettings(
+      initial,
+      bootWarnings,
+      () => source,
+      8081,
+      (batch) => warnings.push(batch),
+    );
+    expect(Object.keys(holder.profiles)).toEqual([]);
+    expect(warnings).toHaveLength(0);
   });
 });

@@ -50,7 +50,7 @@ export interface MessageLike {
   readonly content: readonly ContentBlock[];
 }
 
-/** Every file attachment one request references, nested tool results included. */
+/** Every file attachment one request references across its messages. */
 export function collectFileAttachments(
   messages: readonly MessageLike[],
 ): FileAttachmentRef[] {
@@ -68,8 +68,6 @@ function collectBlocks(
   for (const block of blocks) {
     if (block.type === "file") {
       refs.push(block.attachment);
-    } else if (block.type === "tool-result") {
-      collectBlocks(block.content, refs);
     }
   }
 }

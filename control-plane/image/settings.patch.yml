@@ -1,11 +1,12 @@
-# Your dsh-yawn settings. The image seeds this file once and never
+# Your dsh-yawn profile patch. The image seeds this file once and never
 # overwrites it.
 #
 # No sandbox profile is seeded on purpose: the control plane boots and serves the Web UI
 # without one, and the profiles you add name the pool your runner setup
 # publishes. The fastest way to add one is Settings → Sandboxes in the Web UI,
-# which applies without a restart; this file is the base layer those edits
-# override per field and reset to.
+# which applies without a restart. Since dsh 0.1.7 those edits — and preset
+# edits from the Web UI — persist into this very file; dsh-yawn only writes
+# it here, at first seed.
 # An id-targeted patch replaces the named row's whole config, so restate every
 # field you keep. All settings and their defaults:
 # https://github.com/zhming0/dsh-yawn/blob/main/control-plane/README.md#settings

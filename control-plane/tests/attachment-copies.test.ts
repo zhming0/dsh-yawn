@@ -80,17 +80,13 @@ function makeCopies(options: {
 }
 
 describe("collectFileAttachments", () => {
-  it("collects file blocks, nested tool results included", () => {
+  it("collects file blocks across every message, tool results included", () => {
+    // Tool results are their own tool-role messages in the 0.1.7 message
+    // model, so their file blocks sit beside the user's, never nested.
     const nested = { ...NOTES, attachmentId: "sha256:ef", name: "log.txt" };
     const messages = [
       message([{ type: "text", text: "see attached" }, fileBlock(NOTES)]),
-      message([
-        {
-          type: "tool-result",
-          toolCallId: "call-one",
-          content: [fileBlock(nested)],
-        } as unknown as ContentBlock,
-      ]),
+      message([fileBlock(nested)]),
       message([
         {
           type: "image",

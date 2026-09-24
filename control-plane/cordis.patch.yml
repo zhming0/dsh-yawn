@@ -75,6 +75,28 @@
 - id: file-reference-local
   disabled: true
 
+# 0.1.7 mounts a Plugins page that installs, enables, and removes profile
+# bundles over npm from the Web UI. The supported Kubernetes product runs one
+# released control-plane image; letting the model-adjacent UI install
+# packages into that profile is an unreviewed change surface, so the page
+# stays off here. Re-enable deliberately if the distribution ever wants
+# in-UI plugin management.
+- id: plugin-manager
+  disabled: true
+
+- id: ui-plugin-manager
+  disabled: true
+
+# 0.1.7 also mounts a Terminal tab over `spawnTerminal`. This package's
+# subprocess seam does not implement interactive terminals yet (its
+# spawnTerminal explains that), so the tab would only offer an error; keep
+# it off until terminals are real.
+- id: terminal-controller
+  disabled: true
+
+- id: ui-sidebar-terminal
+  disabled: true
+
 - insert:
     # Owns one sandbox per dsh session: provision, idle hibernate, wake, expiry,
     # and the credential broker. Every default works as-is against local Docker.
@@ -121,6 +143,13 @@
     # nothing, so the row is inert until a skill is authored.
     - id: skills
       name: '@zhming0/dsh-yawn/skills'
+
+    # Keeps fresh installations off dsh 0.1.7's automatic default Workspace:
+    # this product picks workspaces by repository URL, and the client treats
+    # the `undefined` answer as plain ineligibility — no error, no default
+    # workspace, no blank session. See src/workspace-first-use.ts.
+    - id: workspace-first-use
+      name: '@zhming0/dsh-yawn/workspace-first-use'
 
     # Serves the web client one injected global, `__DSH_TRANSPORT__ = { ownsHost:
     # true }`, so settings (model credentials above all) persist to the host on

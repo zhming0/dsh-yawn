@@ -1,4 +1,4 @@
-import { PassThrough, Writable, type Readable } from "node:stream";
+import { PassThrough, Writable, type Duplex, type Readable } from "node:stream";
 import { basename, isAbsolute } from "node:path";
 
 import {
@@ -6,6 +6,7 @@ import {
   type SubprocessHandle,
   type SubprocessOutputReader,
   type SubprocessSpawnSpec,
+  type SubprocessTerminalEnvironment,
   type SubprocessTerminalHandle,
   type SubprocessTerminalSpawnSpec,
 } from "@deepseek-ai/dsh-subprocess";
@@ -81,6 +82,15 @@ export class SandboxSubprocessRuntime extends SubprocessRuntime {
       "interactive terminals are not supported by dsh-yawn Milestone 1",
     );
   }
+
+  async terminalEnvironment(
+    _signal?: AbortSignal,
+  ): Promise<SubprocessTerminalEnvironment> {
+    // Every runner profile is a Linux image whose shell seam uses bash (see
+    // the bash executor). Terminals themselves are not supported yet, so this
+    // only answers the platform facts the seam asks for.
+    return { platform: "posix", defaultShell: "/bin/bash" };
+  }
 }
 
 /** The path frames one spawn translates between (see {@link SandboxSubprocessRuntime.executionFrame}). */
@@ -97,6 +107,7 @@ class RemoteProcess implements SubprocessHandle {
   private readonly stdoutCollection: CollectedBuffer | undefined;
   private readonly stderrCollection: CollectedBuffer | undefined;
   readonly stdin: Writable | undefined;
+  readonly control: Duplex | undefined;
   readonly done: Promise<{
     exitCode: number | null;
     signal: NodeJS.Signals | null;
@@ -107,6 +118,10 @@ class RemoteProcess implements SubprocessHandle {
     private readonly spec: SubprocessSpawnSpec,
     private readonly frame: ExecutionFrame,
   ) {
+    if (spec.stdio.control === "pipe") {
+      throw new Error("control pipes are not supported through the sandbox");
+    }
+    this.control = undefined;
     this.stdin =
       spec.stdio.stdin === "pipe" ? new UnsupportedStdin() : undefined;
     this.stdoutPipe =

@@ -53,10 +53,14 @@ function describe(method: string, parameters: string[]): InvocationDescriptor {
       codec: {
         mode: "strict",
         typeSymbol: `${id}:${name}`,
-        schema: stringSchema,
+        create: () => stringSchema,
       },
     })),
-    result: { mode: "strict", typeSymbol: `${id}:result`, schema: namesSchema },
+    result: {
+      mode: "strict",
+      typeSymbol: `${id}:result`,
+      create: () => namesSchema,
+    },
   };
 }
 

@@ -187,6 +187,7 @@ export function apply(ctx: Context): void {
   }
   ctx.on("agent/created", ({ agent }) => {
     installPrompt(agent);
+    return undefined;
   });
   ctx.on("agent/disposed", ({ agent }) => {
     disposePrompt(agent);

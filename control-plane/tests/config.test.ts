@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { configSchema, resolveConfig } from "../src/config.js";
+import {
+  configSchema,
+  readSetting,
+  resolveBootConfig,
+  resolveConfig,
+} from "../src/config.js";
 import { DEFAULT_RUNNER_IMAGE } from "../src/runner-image.js";
 
 describe("sandbox provider settings", () => {
@@ -72,12 +77,38 @@ describe("sandbox provider settings", () => {
     // A host with no sandbox profile still resolves and boots; the first
     // prompt explains what to add instead of the process failing at startup.
     // A leftover defaultProfile does not turn that into a boot error.
+    //
+    // Boot also survives settings-form writes the schema accepts but the host
+    // cannot apply: since dsh 0.1.7 those persist into the profile patch the
+    // Loader reads, so the strict resolver throwing would kill the row on the
+    // next restart. The boot face degrades instead, one warning per piece.
+    const degraded = resolveBootConfig({
+      defaultProfile: "missing",
+      profiles: {
+        standard: { backend: "docker" },
+        broken: {
+          backend: "docker",
+          controlPlaneUrl: "not a WebSocket URL",
+        },
+      },
+      idleMs: -1,
+    });
+    expect(degraded.warnings).toEqual([
+      expect.stringContaining("ignoring sandbox profile broken"),
+      "defaultProfile missing names no configured profile; using standard",
+      "idleMs -1 must be positive; using 600000",
+    ]);
+    expect(Object.keys(degraded.config.profiles)).toEqual(["standard"]);
+    expect(degraded.config.defaultProfile).toBe("standard");
+    expect(degraded.config.idleMs).toBe(600000);
     for (const config of [
       { profiles: {} },
       {},
       { profiles: {}, defaultProfile: "standard" },
     ]) {
-      expect(configSchema(config).profiles).toEqual({});
+      // The schema hands back a volatile reference for the runtime fields;
+      // readSetting is the value the host and the tests both see.
+      expect(readSetting(configSchema(config).profiles)).toEqual({});
       const empty = resolveConfig(config);
       expect(empty.profiles).toEqual({});
       expect(empty.defaultProfile).toBeUndefined();

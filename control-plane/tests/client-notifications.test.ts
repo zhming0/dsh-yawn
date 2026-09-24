@@ -60,6 +60,7 @@ function listOf(rows: readonly Row[] = []): SessionListState {
       id: row.id,
       displayTitle: `Session ${String(row.id)}`,
       running: row.running,
+      retainedBy: {},
       blank: false,
       updatedAt: 0,
       ...(row.origin === undefined ? {} : { origin: row.origin }),
@@ -68,11 +69,8 @@ function listOf(rows: readonly Row[] = []): SessionListState {
   return {
     ids: rows.map((row) => row.id),
     byId,
-    current: undefined,
     phase: "ready",
-    subagentsByParent: {},
-    jobsBySession: {},
-    currentAddress: undefined,
+    projectionsBySession: {},
   };
 }
 
@@ -149,7 +147,6 @@ describe("turn finished notifications", () => {
   });
 
   it("notifies only when enabled, permitted, and not being looked at", () => {
-    const open = vi.fn();
     const cases: ReadonlyArray<[Partial<TurnNotificationRuntime>, number]> = [
       [{}, 1],
       [{ enabled: () => false }, 0],
@@ -161,10 +158,7 @@ describe("turn finished notifications", () => {
 
     for (const [overrides, expected] of cases) {
       const list = new FakeList();
-      const sessions = { list, open } as unknown as Pick<
-        ISessions,
-        "list" | "open"
-      >;
+      const sessions = { list } as unknown as Pick<ISessions, "list">;
       const show = vi.fn();
       const stop = installTurnNotifications(
         sessions,
@@ -177,27 +171,19 @@ describe("turn finished notifications", () => {
     }
   });
 
-  it("names the session and opens it when the notification is clicked", () => {
+  it("names the session in the notification", () => {
     const list = new FakeList();
-    const open = vi.fn();
-    const sessions = { list, open } as unknown as Pick<
-      ISessions,
-      "list" | "open"
-    >;
+    const sessions = { list } as unknown as Pick<ISessions, "list">;
     const show = vi.fn();
     installTurnNotifications(sessions, runtime({ show }));
 
     list.publish(listOf([{ id: id("root"), running: true }]));
     list.publish(listOf([{ id: id("root"), running: false }]));
 
-    const [notice, onClick] = show.mock.calls[0] as [
+    const [notice] = show.mock.calls[0] as [
       { sessionId: string; title: string },
-      () => void,
     ];
     expect(notice).toEqual({ sessionId: "root", title: "Session root" });
-
-    onClick();
-    expect(open).toHaveBeenCalledWith(id("root"));
   });
 
   it("tells an insecure page apart from a browser without the API", () => {
