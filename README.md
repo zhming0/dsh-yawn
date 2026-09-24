@@ -95,17 +95,20 @@ Details: [`docs/kubernetes.md`](docs/kubernetes.md#the-in-cluster-control-plane)
 new session -> start sandbox -> clone and set up repository -> run tools
                                                             |
                                                             v
-follow-up <- wake with the same files <- hibernate after idle
+follow-up <- wake with the same /workspace <- hibernate after idle
                                                |
                                                v
                                       delete after expiry
 ```
 
 The first prompt claims a sandbox, clones the repository into
-`/workspace/repository`, and runs the repository's one-time `.agents/setup`
-hook. After ten idle minutes the sandbox hibernates: compute stops and the
-workspace survives, so the next prompt wakes it with the same files, re-running
-the idempotent `.agents/resume` hook. After seven days idle it is deleted.
+`/workspace/repository`, and runs the repository's `.agents/setup` hook. After
+ten idle minutes the sandbox hibernates: compute stops and `/workspace`
+survives. Docker restarts the container it stopped, so its whole filesystem is
+still there and setup does not run again. Kubernetes rebuilds the pod around
+the surviving volume, so the next prompt gets a new machine with the same
+`/workspace`, and setup runs again there to put back what the repository
+declares. After seven days idle it is deleted.
 Archiving a session in the Web UI skips the clock: its sandbox and storage are
 deleted at once, and the session can never run again.
 Details: [`control-plane/README.md`](control-plane/README.md#idle-and-hibernation).

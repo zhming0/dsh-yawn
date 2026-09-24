@@ -40,8 +40,8 @@ ensure_tools() {
   # for the job's access token rather than the binary: a session's sandbox on a
   # hosted agent has buildkite-agent on PATH (the agent mounts it into the job
   # container) but the runner deliberately keeps the token out of the command
-  # environment, so `.agents/setup` and `.agents/resume` would fail on the
-  # cache call. The token only exists in a real CI step.
+  # environment, so the `.agents/setup` hook would fail on the cache call. The
+  # token only exists in a real CI step.
   if [[ -n "${BUILDKITE_AGENT_ACCESS_TOKEN:-}" ]]; then
     echo "--- :recycle: Restoring the toolchain cache"
     buildkite-agent cache restore --name mise

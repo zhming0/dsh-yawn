@@ -583,7 +583,7 @@ describe("sandbox lifecycle", () => {
           content: [
             {
               type: "text",
-              text: "This sandbox was recreated. Your Git changes and commits are back. Installed tools, ignored files, and everything else outside the repository are gone. Previously staged changes are now unstaged. Re-run setup steps you need before continuing.",
+              text: "This sandbox was recreated. Your Git changes and commits are back. The repository's setup (`.agents/setup`) ran before the restore, so re-run project steps if your restored changes affect them. Anything you installed yourself, ignored files, and everything else outside the repository are gone. Previously staged changes are now unstaged.",
             },
           ],
           source: {
@@ -656,7 +656,7 @@ describe("sandbox lifecycle", () => {
           content: [
             {
               type: "text",
-              text: "This sandbox was recreated. Your Git changes and commits are back, but the artifacts folder could not be brought back, so the files in /custom/artifacts are gone. Installed tools, ignored files, and everything else outside the repository are gone too. Previously staged changes are now unstaged. Re-run setup steps you need before continuing.",
+              text: "This sandbox was recreated. Your Git changes and commits are back, but the artifacts folder could not be brought back, so the files in /custom/artifacts are gone. The repository's setup (`.agents/setup`) ran before the restore, so re-run project steps if your restored changes affect them. Anything you installed yourself, ignored files, and everything else outside the repository are gone. Previously staged changes are now unstaged.",
             },
           ],
           source: {
@@ -718,7 +718,7 @@ describe("sandbox lifecycle", () => {
           content: [
             {
               type: "text",
-              text: "This sandbox was suspended and woke on a newly created machine. Files under /workspace survived, including your home directory, but running processes, /tmp, and anything installed outside /workspace are gone. Re-create what you need before continuing.",
+              text: "This sandbox was suspended and woke on a newly created machine. Files under /workspace survived, including your home directory, but running processes, /tmp, and anything you installed yourself outside /workspace are gone. The repository's setup (`.agents/setup`) ran again on this machine; re-create anything else you need before continuing.",
             },
           ],
           source: {

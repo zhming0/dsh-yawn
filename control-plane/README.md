@@ -511,8 +511,10 @@ backend:
 
 - Docker and Kubernetes hibernate: compute stops, the workspace stays, and the
   next prompt wakes the same sandbox. Docker starts the container it stopped,
-  so its whole filesystem is still there; Kubernetes builds a new pod around
-  the surviving workspace volume.
+  so its whole filesystem is still there and the repository's setup does not
+  run again. Kubernetes builds a new pod around the surviving workspace volume:
+  a new machine, so the repository's setup runs again on it and puts back the
+  system packages the repository declares.
 - A backend that cannot hibernate checkpoints instead. The manager commits the
   Git working tree inside the sandbox (as `dsh <dsh@localhost>`, only if there
   are changes), writes the commits that `origin`'s default branch does not
@@ -540,21 +542,23 @@ repository, other local branches, stashes, or which changes were staged:
 everything comes back unstaged. A merge or rebase that was stopped on conflicts
 comes back as the conflicted files with their markers, no longer mid-merge.
 `.agents/setup` runs before the restore, on the configured revision, as it does
-for a new session. The first prompt after a restore carries a notice that says
-the sandbox was recreated: Git changes and commits are back, while installed
-tools, ignored files, and everything else outside the repository are gone, and
-previously staged changes are now unstaged, so the model can re-run the setup
-steps it needs. A restore that had to leave the artifacts folder behind says so
-on that notice.
+for a new session, so the repository's own tools are back by the time the
+session's tree is. The first prompt after a restore carries a notice that says
+the sandbox was recreated: the Git changes and commits are back, the
+repository's setup ran before the restore so project steps may need re-running,
+anything the model installed itself and every ignored file are gone, and
+previously staged changes are now unstaged. A restore that had to leave the
+artifacts folder behind says so on that notice.
 
 A wake carries its own one-shot notice on the first prompt, worded for what the
 machine kept. On Kubernetes the new pod kept only the workspace volume, so the
-notice names running processes, `/tmp`, and anything installed outside
-`/workspace` as gone; the home directory lives on that volume and comes back
-with it. On Docker the files survived and the notice says
-only that the processes did not. Only a backend that hibernates sends this
-notice: a backend that checkpoints never wakes, so its first prompt after a
-restore is the only one that carries a note.
+notice names running processes, `/tmp`, and anything the model installed itself
+as gone; the home directory and the repository's tools both come back with it,
+because the new machine runs `.agents/setup` again. On Docker the files
+survived, setup does not run again, and the notice says only that the processes
+did not. Only a backend that hibernates sends this notice: a backend that
+checkpoints never wakes, so its first prompt after a restore is the only one
+that carries a note.
 
 The bundle and, when the session had one, the artifacts tar live in the host's
 state directory next to the credential store, with the same file permissions,

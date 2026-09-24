@@ -21,11 +21,20 @@ from a mode-0600 Unix socket at `CREDENTIAL_SOCKET` (default
 `/run/dsh/credentials.sock`) through `dsh-yawn-runner git-credential`.
 
 Setup defaults to `/workspace/repository`, preserves an already initialized
-workspace, runs the repository's one-time `.agents/setup` hook and the
-idempotent `.agents/resume` hook on wake, and records setup completion in
-`.git/.agents-setup-done`. The completion marker lives inside the repository's
-own `.git` directory so it never appears as an untracked file. Keeping
-the checkout beneath the persistent volume root prevents filesystem metadata
+workspace, and runs the repository's `.agents/setup` hook once per machine. The
+completion marker is `/var/lib/dsh-yawn/setup-done`, on the machine's own
+filesystem and not on the workspace volume, so a rebuilt machine runs setup
+again while a machine that stayed alive does not. The entry in `Setup`'s
+response means a setup run happened on this call; a machine that already ran it
+answers `false`. A setup hook runs on a checkout that may already carry an
+earlier run's output — possibly with a session's uncommitted work — so it must
+be safe to re-run. Setup creates the apt cache directory
+`/workspace/.dsh-yawn/apt-cache`, which the image's apt configuration names, so
+system packages a setup installs are downloaded once per workspace volume;
+after a successful setup it trims that cache with `apt-get autoclean` and
+clears it past 2 GiB.
+
+Keeping the checkout beneath the persistent volume root prevents filesystem metadata
 such as `lost+found` from entering the repository. The file APIs operate with
 the container user's permissions; they are not a filesystem sandbox. Run the
 image as its non-root `sandbox` user (UID/GID 1000) and isolate its
@@ -50,10 +59,12 @@ puts those directories back on `PATH` for login shells, which Debian's
 The `sandbox` user has passwordless sudo (`/etc/sudoers.d/90-sandbox`), so a
 repository whose own setup installs system packages, as `mise bootstrap
 packages apply` does for an `apt:` entry, needs no custom image. The
-Kubernetes template allows privilege escalation for that; what apt installs
-still lives outside `$HOME`, so a wake that rebuilds the machine starts over
-without it. Files under `$HOME`, the workspace volume, are the ones that
-survive.
+Kubernetes template allows privilege escalation for that. What apt installs
+still lives outside `$HOME`, so it goes away with the machine — but the
+workspace volume carries the downloaded `.deb` files, and the machine that
+replaces it runs setup again, so the same packages come back without a second
+download. Files under `$HOME`, the workspace volume, are the ones that survive
+by themselves.
 
 `GET /health` on `ADDR` (default `:8080`) is an unauthenticated
 process-readiness probe for the kubelet; it is the only listener the runner

@@ -118,6 +118,38 @@ try {
     guard: { case: "overwrite", value: true },
   });
 
+  // Setup runs once per machine and records that on the machine, not on the
+  // workspace volume. The hook counts its runs on the volume, so the count
+  // shows whether the woken pod ran it again.
+  console.log("kas-smoke: setup");
+  await run(client, ["mkdir", "-p", `${workspace}/.git`, `${workspace}/.agents`]);
+  await client.writeFile({
+    path: `${workspace}/.agents/setup`,
+    content: new TextEncoder().encode(
+      `#!/bin/sh\nset -eu\nprintf 'x' >> ${workspace}/.setup-runs\n`,
+    ),
+    guard: { case: "createIfAbsent", value: true },
+  });
+  await run(client, ["chmod", "+x", `${workspace}/.agents/setup`]);
+  const firstSetup = await client.setup({
+    repositoryUrl: "https://github.com/example/unused.git",
+    revision: "",
+    workspace,
+  });
+  if (!firstSetup.ran) {
+    throw new Error("setup did not run on the first machine");
+  }
+  assertEqual(
+    await readText(client, `${workspace}/.setup-runs`),
+    "x",
+    "setup runs on the first machine",
+  );
+  assertEqual(
+    await readText(client, "/var/lib/dsh-yawn/setup-done"),
+    "complete\n",
+    "setup marker on the first machine",
+  );
+
   // Suspension removes the pod and its socket. Wake recreates the pod, whose
   // runner must dial back in while retaining the workspace volume.
   console.log("kas-smoke: hibernate");
@@ -145,6 +177,26 @@ try {
     new TextDecoder().decode(homeSentinel.content),
     "home survived",
     "home content after wake",
+  );
+
+  // The woken pod is a new machine: no setup marker, so setup runs again.
+  const secondSetup = await client.setup({
+    repositoryUrl: "https://github.com/example/unused.git",
+    revision: "",
+    workspace,
+  });
+  if (!secondSetup.ran) {
+    throw new Error("setup did not run on the woken machine");
+  }
+  assertEqual(
+    await readText(client, `${workspace}/.setup-runs`),
+    "xx",
+    "setup runs once per machine",
+  );
+  assertEqual(
+    await readText(client, "/var/lib/dsh-yawn/setup-done"),
+    "complete\n",
+    "setup marker on the woken machine",
   );
 
   success = true;
@@ -202,6 +254,12 @@ async function waitForRunner(tunnelServer, sandboxId) {
     }
   }
   throw new Error(`runner did not become healthy: ${String(lastError)}`);
+}
+
+/** Read a small file through the runner, for an assertion. */
+async function readText(client, path) {
+  const file = await client.readFile({ path, maxBytes: 4096n });
+  return new TextDecoder().decode(file.content);
 }
 
 async function run(client, argv) {

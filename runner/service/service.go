@@ -27,6 +27,14 @@ import (
 const (
 	defaultReadLimit = int64(16 << 20)
 	defaultWorkspace = "/workspace/repository"
+	// defaultStateDir is the machine's own state directory, created by the
+	// runner image on the root filesystem. It lives and dies with the machine,
+	// unlike the workspace volume.
+	defaultStateDir = "/var/lib/dsh-yawn"
+	// defaultVolumeRoot is where a sandbox mounts its workspace volume. The
+	// checkout, the home directory, the artifacts folder and the apt cache all
+	// sit under it.
+	defaultVolumeRoot = "/workspace"
 	// How long an exec keeps draining a command's output pipes after the
 	// command itself exits. A process the command left behind — a background
 	// server that inherited stdout, say — holds the pipes open; the grace
@@ -45,8 +53,13 @@ func init() {
 }
 
 type Service struct {
-	sandboxID   string
-	startedAt   time.Time
+	sandboxID string
+	startedAt time.Time
+	// stateDir and volumeRoot are the machine paths the setup rule works on.
+	// They are fields so tests can point them at a temporary directory; a
+	// service always runs with the image's real paths.
+	stateDir    string
+	volumeRoot  string
 	mu          sync.RWMutex
 	secrets     map[string]string
 	credentials map[string]Credential
@@ -56,7 +69,15 @@ type Service struct {
 type Credential struct{ Username, Password string }
 
 func New(sandboxID string) *Service {
-	return &Service{sandboxID: sandboxID, startedAt: time.Now(), secrets: map[string]string{}, credentials: map[string]Credential{}, locks: map[string]*sync.Mutex{}}
+	return &Service{
+		sandboxID:   sandboxID,
+		startedAt:   time.Now(),
+		stateDir:    defaultStateDir,
+		volumeRoot:  defaultVolumeRoot,
+		secrets:     map[string]string{},
+		credentials: map[string]Credential{},
+		locks:       map[string]*sync.Mutex{},
+	}
 }
 
 func (s *Service) lock(path string) func() {
@@ -103,7 +124,7 @@ func stat(path string, follow bool) (os.FileInfo, error) {
 }
 
 func (s *Service) Health(_ context.Context, _ *connect.Request[v1.HealthRequest]) (*connect.Response[v1.HealthResponse], error) {
-	_, err := os.Stat(setupMarkerPath(defaultWorkspace))
+	_, err := os.Stat(s.markerPath())
 	return connect.NewResponse(&v1.HealthResponse{SandboxId: s.sandboxID, SetupComplete: err == nil}), nil
 }
 

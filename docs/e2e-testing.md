@@ -76,10 +76,12 @@ then verifies:
 2. secrets reach commands, and the runner's bundled tools are installed,
    including Python, Node.js, jq, yq, and the Docker client without its daemon;
 3. the sandbox user reaches root through passwordless sudo;
-4. `.agents/setup` runs exactly once (marked in `.git/.agents-setup-done`), and
-   `.agents/resume` runs on wake;
-5. hibernate/wake reconnects the runner and preserves its setup marker,
-   workspace files, home-directory files, and mise-managed tools.
+4. `.agents/setup` runs on a new machine and is recorded at
+   `/var/lib/dsh-yawn/setup-done`, which is not on the workspace volume: a
+   restart that keeps the machine (a Docker hibernate and wake) does not run it
+   again, while a second container on the same volume does;
+5. hibernate/wake reconnects the runner and preserves the machine's setup
+   marker, workspace files, home-directory files, and mise-managed tools.
 
 Success ends with:
 
@@ -124,8 +126,9 @@ The transport probe verifies:
 5. passwordless sudo reaches root, and root can chown a file, set its setuid
    bit, and switch to another user, which is what the template's privilege
    escalation and capability additions exist for;
-6. hibernate/wake recreates the runner connection and preserves workspace and
-   home-directory data.
+6. hibernate/wake recreates the runner connection, preserves workspace and
+   home-directory data, and runs `.agents/setup` again on the new machine
+   (counted by a hook on the surviving workspace volume).
 
 It then runs the controller lifecycle smoke test, which additionally verifies
 sub-second warm adoption, backing-pod identity, a `docker run` from the runner

@@ -172,6 +172,12 @@ describe("installSandboxContext", () => {
     expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("{{tool_retention}}");
   });
 
+  it("states the wake rule", () => {
+    expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("`.agents/setup`");
+    expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("runs again");
+    expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("under /workspace");
+  });
+
   it("tells the model what this backend keeps across a sleep", () => {
     const retention = (capabilities: BackendCapabilities | undefined) => {
       const systemPrompt = makeSystemPromptStub();
