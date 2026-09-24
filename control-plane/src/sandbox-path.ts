@@ -1,6 +1,16 @@
 import { isAbsolute, posix, relative, sep } from "node:path";
 
 /**
+ * The two path frames a sandbox call translates between: the session workspace
+ * callers speak, and the sandbox workspace the same directory has inside the
+ * sandbox.
+ */
+export interface PathFrames {
+  readonly sessionWorkspace: string | undefined;
+  readonly sandboxWorkspace: string;
+}
+
+/**
  * Translate a path from the dsh session workspace to the matching path inside
  * its sandbox. Paths already inside the sandbox or outside the session
  * workspace are unchanged.

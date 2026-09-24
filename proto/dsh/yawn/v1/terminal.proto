@@ -1,0 +1,111 @@
+syntax = "proto3";
+
+package dsh.yawn.v1;
+
+option go_package = "github.com/zhming0/dsh-yawn/runner/gen/dsh/yawn/v1;yawnv1";
+
+// The interactive terminal surface of one sandbox, kept apart from
+// RunnerService so the whole feature is one file here, one package in the
+// runner, and one folder in the control plane: removing them removes the
+// feature. A runner serves this on the same tunnel as RunnerService.
+service TerminalService {
+  // One interactive terminal session: PTY allocation, input, resize, and
+  // output multiplexed over one stream. See the message docs for the ordering
+  // and shutdown contract.
+  rpc Terminal(stream TerminalRequest) returns (stream TerminalResponse);
+}
+
+// One terminal-session request. The first message on the stream must be
+// `start`; every later message is one control. Ending the client half of the
+// stream (or cancelling it) terminates the session. Replies that answer a
+// control arrive in the order their controls were sent, so the client can
+// pair them without correlation ids.
+message TerminalRequest {
+  oneof control {
+    TerminalStart start = 1;
+    bytes input = 2;
+    TerminalResize resize = 3;
+    TerminalQuery query = 4;
+    // Signal name to deliver to the current foreground process group; one of
+    // SIGINT, SIGTERM, SIGKILL, SIGTSTP, or SIGHUP.
+    string signal = 5;
+  }
+}
+
+message TerminalStart {
+  repeated string argv = 1;
+  string cwd = 2;
+  map<string, string> env = 3;
+  int32 rows = 4;
+  int32 cols = 5;
+  // Terminal emulation advertised to the child through TERM.
+  string terminal_type = 6;
+  // TERM-to-KILL grace for the complete terminal session, in milliseconds.
+  int32 grace_ms = 7;
+}
+
+message TerminalResize {
+  int32 cols = 1;
+  int32 rows = 2;
+}
+
+message TerminalQuery {
+  TerminalQueryKind kind = 1;
+}
+
+enum TerminalQueryKind {
+  TERMINAL_QUERY_KIND_UNSPECIFIED = 0;
+  TERMINAL_QUERY_KIND_FOREGROUND = 1;
+  TERMINAL_QUERY_KIND_ACTIVITY = 2;
+}
+
+message TerminalResponse {
+  oneof event {
+    TerminalStarted started = 1;
+    bytes output = 2;
+    TerminalExited exited = 3;
+    // The terminal is quiescent: the top-level command was reaped and no
+    // process holds the PTY any more. The client answers by ending its half
+    // of the request stream, which is what lets the handler return without
+    // resetting a stream whose request body is still open. Sent once, after
+    // `exited`.
+    TerminalClosed closed = 7;
+    // Answer to a FOREGROUND query.
+    TerminalForeground foreground = 4;
+    // Answer to an ACTIVITY query.
+    TerminalActivity activity = 5;
+    // Answer to a signal control: the process group that received it.
+    int32 signaled = 6;
+  }
+}
+
+message TerminalStarted {
+  int64 pid = 1;
+}
+
+message TerminalExited {
+  int32 exit_code = 1;
+  string signal = 2;
+}
+
+message TerminalClosed {}
+
+message TerminalForeground {
+  // False when no foreground process group can be resolved.
+  bool present = 1;
+  int32 process_group_id = 2;
+  // Whether that group is provably waiting on terminal input. Always false
+  // from this runner: the proof needs per-thread syscall inspection.
+  bool input_waiting = 3;
+}
+
+message TerminalActivity {
+  TerminalActivityState state = 1;
+}
+
+enum TerminalActivityState {
+  TERMINAL_ACTIVITY_STATE_UNSPECIFIED = 0;
+  TERMINAL_ACTIVITY_STATE_IDLE = 1;
+  TERMINAL_ACTIVITY_STATE_BUSY = 2;
+  TERMINAL_ACTIVITY_STATE_UNKNOWN = 3;
+}

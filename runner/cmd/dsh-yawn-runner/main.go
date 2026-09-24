@@ -103,9 +103,11 @@ func serve(socket string) error {
 		return err
 	}
 	defer func() { _ = listener.Close() }()
-	path, handler := yawnv1connect.NewRunnerServiceHandler(runnerService)
+	runnerPath, runnerHandler := yawnv1connect.NewRunnerServiceHandler(runnerService)
+	terminalPath, terminalHandler := yawnv1connect.NewTerminalServiceHandler(runnerService.TerminalHandler())
 	mux := http.NewServeMux()
-	mux.Handle(path, handler)
+	mux.Handle(runnerPath, runnerHandler)
+	mux.Handle(terminalPath, terminalHandler)
 	instrumented := otelhttp.NewHandler(mux, "dsh-yawn-runner")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
