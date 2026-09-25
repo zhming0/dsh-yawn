@@ -1,5 +1,6 @@
 # The identity the control plane uses for the Kubernetes backend's API calls,
-# and the permissions it needs to operate sandboxes. The control plane is the
+# and the permissions it needs to operate sandboxes and to keep the runner-token
+# Secret current. The control plane is the
 # client, so these ship with it rather than with the sandbox pool manifests. Non-Kubernetes
 # backends leave the identity and its permissions unused.
 {{- include "dsh-yawn.validate" . }}
@@ -25,6 +26,17 @@ rules:
   - apiGroups: [agents.x-k8s.io]
     resources: [sandboxes]
     verbs: [get, list, patch, watch]
+  # The control plane generates the runner token and owns its Secret, which the
+  # warm pool's template mounts. RBAC cannot scope `create` to a name, so the
+  # grant is every Secret in this namespace; `patch` is narrowed to the one
+  # object the control plane writes.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [dsh-yawn-registration-token]
+    verbs: [patch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

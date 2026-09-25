@@ -11,7 +11,8 @@ Install the [control plane](installations-control-plane.md) first.
 
 - a Buildkite organization and permission to create a pipeline, an
   [API access token](https://buildkite.com/docs/apis/managing-api-tokens) with
-  the `read_builds` and `write_builds` scopes, and either hosted Linux agents
+  the `read_builds`, `write_builds`, `read_pipelines`, `read_secrets_details`,
+  and `write_secrets` scopes, and either hosted Linux agents
   or self-hosted agents that can run Docker.
 - the tunnel reachable from wherever those agents run. Agents are never on the
   host machine, so an in-cluster address will not do; see
@@ -31,11 +32,11 @@ steps:
       exec runuser -u sandbox -- sh -c 'cd /workspace && exec dsh-yawn-runner'
     checkout:
       skip: true
-    secrets:
-      DSH_YAWN_REGISTRATION_TOKEN: dsh_yawn_registration_token
     timeout_in_minutes: 240
     agents:
       queue: hosted-amd64-small
+secrets:
+  - DSH_YAWN_REGISTRATION_TOKEN
 ```
 
 Set `queue` to your hosted Linux queue. Hosted agents resolve `image` from the
@@ -56,23 +57,21 @@ steps:
       "$DSH_YAWN_RUNNER_IMAGE"
     checkout:
       skip: true
-    secrets:
-      DSH_YAWN_REGISTRATION_TOKEN: dsh_yawn_registration_token
     timeout_in_minutes: 240
     agents:
       queue: self-hosted
+secrets:
+  - DSH_YAWN_REGISTRATION_TOKEN
 ```
 
-- `DSH_YAWN_RUNNER_IMAGE`, `DSH_YAWN_SANDBOX_ID`, and `DSH_YAWN_CONTROL_PLANE_URL` come from the build
-  environment the control plane sets, so the pipeline never pins a runner image and
-  cannot drift from the control plane.
-- `secrets` maps a [Buildkite secret](https://buildkite.com/docs/pipelines/security/secrets/buildkite-secrets)
-  into the job environment: the key on the left is the variable the runner
-  reads, and the value on the right is the secret's key in Buildkite, which may
-  contain only letters, numbers, and underscores. Create
-  `dsh_yawn_registration_token` with the same value the control plane holds —
-  the `dsh-yawn-registration-token` Secret in the cluster — so the runner can
-  register on the tunnel. This needs agent 3.106.0 or later.
+- `DSH_YAWN_RUNNER_IMAGE`, `DSH_YAWN_SANDBOX_ID`, and
+  `DSH_YAWN_CONTROL_PLANE_URL` come from the build environment the control
+  plane sets, so the pipeline never pins a runner image and cannot drift from
+  the control plane. `DSH_YAWN_REGISTRATION_TOKEN` comes from the cluster
+  secret the control plane creates and keeps current; the `secrets` key above
+  is the only trace of it in the pipeline, and it holds no value. A profile
+  with a custom `secretKey` — needed only when two profiles share a cluster —
+  maps that key instead.
 - Turn off **Skip intermediate builds** and **Cancel intermediate builds** in
   the pipeline's **Settings → Builds**. Every sandbox build lands on the same
   branch (`main`), so either setting would skip or cancel another live
@@ -136,7 +135,7 @@ or a Gateway API `TLSRoute` in passthrough mode. Never put an HTTP-terminating
 proxy or CDN in the path.
 [`kubernetes.md`](kubernetes.md#exposing-the-runner-tunnel-beyond-the-cluster)
 has the shapes and constraints. Exposure changes reachability, not trust: the
-registration token still authenticates every runner.
+runner token still authenticates every runner.
 
 ## Several fleets
 

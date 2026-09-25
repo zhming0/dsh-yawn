@@ -42,10 +42,12 @@ kubectl -n agent-sandbox-system wait --for=condition=Available deployment --all 
 ## Apply the sandbox pool
 
 The pool has to land in the release namespace: its template reads the
-`dsh-yawn-runner-config` ConfigMap and the `dsh-yawn-registration-token` Secret the chart
-wrote there, and the control plane's Role and tunnel Service are there too. The base
-therefore names no namespace — the placeholder in it is not a namespace any
-cluster has, and applying the base as-is fails. Write an overlay:
+`dsh-yawn-runner-config` ConfigMap and the `dsh-yawn-registration-token` Secret
+there, and the control plane's Role and tunnel Service are there too. The
+control plane creates the Secret on first boot, so the pool's pods start once
+it is running. The base therefore names no namespace — the placeholder in it is
+not a namespace any cluster has, and applying the base as-is fails. Write an
+overlay:
 
 ```yaml
 # dsh-yawn-runner/kustomization.yaml
@@ -77,8 +79,9 @@ pod from another version fails when it dials the tunnel.
 
 The base is a `SandboxTemplate` describing the pod a sandbox runs, a
 `SandboxWarmPool` keeping some warm, and nothing else. Apart from the runner
-tag, it is static: the template reads `DSH_YAWN_CONTROL_PLANE_URL` and
-`DSH_YAWN_REGISTRATION_TOKEN` from what the control plane wrote, and its
+tag, it is static: the template reads `DSH_YAWN_CONTROL_PLANE_URL` from the
+ConfigMap and `DSH_YAWN_REGISTRATION_TOKEN` from the Secret the control plane
+creates and keeps current, and its
 tunnel egress rule selects the control-plane pod in the pool's own namespace,
 so the `namespace:` above is the only place a namespace appears.
 

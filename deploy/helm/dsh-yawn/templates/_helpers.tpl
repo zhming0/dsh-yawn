@@ -3,9 +3,11 @@
 The chart owns the control plane only. The sandbox pool is a separate kustomize
 base (`deploy/kubernetes/runner`), which cannot know a release name, so the
 names its manifest reads are fixed: the tunnel Service `dsh-yawn-control-plane-tunnel`, the
-ConfigMap `dsh-yawn-runner-config`, and the Secret `dsh-yawn-registration-token`. That is
-also why the release is pinned to `dsh-yawn-control-plane`: one control plane per namespace owns
-those names, and a second release would collide with the first.
+ConfigMap `dsh-yawn-runner-config`, and the Secret `dsh-yawn-registration-token`.
+That is also why the release is pinned to `dsh-yawn-control-plane`: one control
+plane per namespace owns those names, and a second release would collide with
+the first. The Secret is created and kept current by the control plane itself,
+not by this chart.
 */}}
 
 {{- define "dsh-yawn.name" -}}
@@ -53,20 +55,12 @@ expects. */}}
 {{- .Values.runner.controlPlaneUrl | default (printf "ws://dsh-yawn-control-plane-tunnel.%s.svc.cluster.local:8081/tunnel" .Release.Namespace) }}
 {{- end }}
 
-{{/* Name of the Secret holding the shared registration token, read by the
-pool's SandboxTemplate as well as the control plane. Fixed for the same reason
-the tunnel Service is. */}}
-{{- define "dsh-yawn.registrationTokenSecret" -}}
-{{- .Values.registrationToken.existingSecret | default "dsh-yawn-registration-token" }}
-{{- end }}
-
 {{/* The deployment's sandbox-manager settings, rendered as one ordinary file
 mounted at /etc/dsh-yawn/sandbox-settings.yaml. It is a base, not a patch
 layer: dsh 0.1.7 lets a home patch outrank the profile patch the Web page
 writes to, and the page could then neither save nor reset a deployment
 profile. The runtime slice sits under the document's top-level
-`sandboxManager` section; startup settings and the registration token stay in
-the profile patch and the chart's own values.
+`sandboxManager` section; startup settings stay in the profile patch.
 
 The section is the chart-to-image contract, and the image tag can differ from
 the chart's, so a future version can add a second section without breaking
@@ -94,7 +88,7 @@ cannot produce a control plane that never becomes Ready. */}}
 {{- define "dsh-yawn.validate" -}}
 {{- $root := . -}}
 {{- if ne .Release.Name "dsh-yawn-control-plane" -}}
-{{- fail (printf "install this chart as release `dsh-yawn-control-plane`: the sandbox pool reads the fixed names dsh-yawn-control-plane-tunnel, dsh-yawn-runner-config, and dsh-yawn-registration-token, which this release owns. Got %q." .Release.Name) }}
+{{- fail (printf "install this chart as release `dsh-yawn-control-plane`: the sandbox pool reads the fixed names dsh-yawn-control-plane-tunnel, dsh-yawn-runner-config, and dsh-yawn-registration-token. Got %q." .Release.Name) }}
 {{- end -}}
 {{- $managed := .Values.controlPlane.sandboxManager }}
 {{- if and $managed (not $managed.profiles) -}}
@@ -118,9 +112,6 @@ namespace its own Role and tunnel Service live in. */}}
 {{- end }}
 {{- end }}
 {{- end }}
-{{- end -}}
-{{- if and .Values.registrationToken.existingSecret .Values.registrationToken.value -}}
-{{- fail "registrationToken.existingSecret and registrationToken.value are mutually exclusive." }}
 {{- end -}}
 {{- if and .Values.oidc.enabled (not .Values.oidc.hostname) -}}
 {{- fail "oidc.hostname is required when oidc.enabled is true: it is handed to dsh as --trusted-host and used in the proxy redirect URL." }}

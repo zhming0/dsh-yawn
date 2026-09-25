@@ -86,11 +86,12 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            # The control plane writes both: DSH_YAWN_CONTROL_PLANE_URL in the dsh-yawn-runner-config
-            # ConfigMap, the shared token in the dsh-yawn-registration-token Secret
-            # under the key `token`. Naming each key explicitly is what keeps
-            # this manifest free of install-specific values; the names and
-            # keys are the fixed contract, so there is nothing to fill in.
+            # The control plane provides both: DSH_YAWN_CONTROL_PLANE_URL in the
+            # dsh-yawn-runner-config ConfigMap, and the token it generates in the
+            # dsh-yawn-registration-token Secret under the key `token`. Naming
+            # each key explicitly is what keeps this manifest free of
+            # install-specific values; the names and keys are the fixed
+            # contract, so there is nothing to fill in.
             - name: DSH_YAWN_CONTROL_PLANE_URL
               valueFrom:
                 configMapKeyRef:

@@ -115,7 +115,7 @@ describe("preview server", () => {
     const hits: string[] = [];
     const tunnel = new TunnelServer({
       port: 0,
-      tokens: [REGISTRATION_TOKEN],
+      tokens: () => [REGISTRATION_TOKEN],
     });
     await tunnel.listen();
     const server = new PreviewServer({
@@ -195,7 +195,10 @@ describe("preview server", () => {
         yield { part: { case: "body", value: new Uint8Array() } };
       },
     });
-    const tunnel = new TunnelServer({ port: 0, tokens: [REGISTRATION_TOKEN] });
+    const tunnel = new TunnelServer({
+      port: 0,
+      tokens: () => [REGISTRATION_TOKEN],
+    });
     await tunnel.listen();
     const server = new PreviewServer({
       domain: DOMAIN,

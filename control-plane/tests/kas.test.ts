@@ -1,7 +1,11 @@
-import type { CustomObjectsApi } from "@kubernetes/client-node";
+import type { CoreV1Api, CustomObjectsApi } from "@kubernetes/client-node";
 import { describe, expect, it } from "vitest";
 
-import { KasBackend, testing as kasTesting } from "../src/backends/kas.js";
+import {
+  KasBackend,
+  REGISTRATION_TOKEN_SECRET,
+  testing as kasTesting,
+} from "../src/backends/kas.js";
 
 describe("kubernetes backend", () => {
   it("derives stable claim names", () => {
@@ -105,4 +109,93 @@ describe("kubernetes backend", () => {
       { warmPoolRef: { name: "dsh-large" } },
     ]);
   });
+
+  it("publishes the tunnel token into the namespace Secret", async () => {
+    const patches: unknown[] = [];
+    const core = {
+      async patchNamespacedSecret(request: unknown) {
+        patches.push(request);
+        return {};
+      },
+    } as unknown as CoreV1Api;
+    const backend = new KasBackend(
+      { namespace: "test", warmPool: "test" },
+      {} as unknown as CustomObjectsApi,
+      core,
+    );
+
+    await backend.publishRegistrationToken("token-value");
+
+    expect(patches).toEqual([
+      {
+        name: REGISTRATION_TOKEN_SECRET,
+        namespace: "test",
+        body: {
+          metadata: { name: REGISTRATION_TOKEN_SECRET, namespace: "test" },
+          stringData: { token: "token-value" },
+        },
+      },
+    ]);
+  });
+
+  it("creates the Secret when nothing owns it yet", async () => {
+    const created: unknown[] = [];
+    const core = {
+      async patchNamespacedSecret() {
+        throw kubernetesError(404);
+      },
+      async createNamespacedSecret(request: unknown) {
+        created.push(request);
+        return {};
+      },
+    } as unknown as CoreV1Api;
+    const backend = new KasBackend(
+      { namespace: "test", warmPool: "test" },
+      {} as unknown as CustomObjectsApi,
+      core,
+    );
+
+    await backend.publishRegistrationToken("token-value");
+
+    expect(created).toEqual([
+      {
+        namespace: "test",
+        body: {
+          metadata: {
+            name: REGISTRATION_TOKEN_SECRET,
+            namespace: "test",
+          },
+          stringData: { token: "token-value" },
+          type: "Opaque",
+        },
+      },
+    ]);
+  });
+
+  it("reports a create it is not allowed to make", async () => {
+    const core = {
+      async patchNamespacedSecret() {
+        throw kubernetesError(404);
+      },
+      async createNamespacedSecret() {
+        throw kubernetesError(403);
+      },
+    } as unknown as CoreV1Api;
+    const backend = new KasBackend(
+      { namespace: "test", warmPool: "test" },
+      {} as unknown as CustomObjectsApi,
+      core,
+    );
+
+    await expect(
+      backend.publishRegistrationToken("token-value"),
+    ).rejects.toThrow(
+      `could not create Secret test/${REGISTRATION_TOKEN_SECRET}`,
+    );
+  });
 });
+
+/** The Kubernetes client rejects with an error carrying the HTTP status. */
+function kubernetesError(code: number): Error {
+  return Object.assign(new Error(`kubernetes status ${code}`), { code });
+}

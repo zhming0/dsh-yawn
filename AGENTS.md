@@ -127,7 +127,7 @@ likely to mislead you.
 - `runner/` owns commands and file operations inside one sandbox.
 - `proto/` is the source of truth for the ConnectRPC contract between them.
 - The runner dials out to the control plane's tunnel listener and
-  authenticates with the shared registration token; RPCs then flow
+  authenticates with a runner token the control plane generated; RPCs then flow
   control-plane→runner over that runner-initiated connection. Do not add a
   listener on the runner for the control plane to dial, and do not give the
   runner any other channel back to the control plane.
@@ -155,13 +155,14 @@ likely to mislead you.
   GitHub device flow or per-repository secret scoping.
 - Sandbox code can read injected secrets by design. Keep credentials in the
   control-plane store, never in pod configuration or workspace files. Two are
-  deliberate exceptions, because a sandbox must never receive them: the shared
-  registration token, which lives in the `dsh-yawn-registration-token` Secret
-  because warm pods must hold it before any session exists (it only lets a
-  runner register a tunnel, and grants nothing else), and a Buildkite API
-  token, which the control plane resolves for its own Buildkite calls from the
-  process environment or the host credential document (write-only from the
-  Sandboxes page) because it can create and cancel builds.
+  deliberate exceptions, because a sandbox must never receive them: the runner
+  token, which the control plane generates and keeps on its data volume and
+  writes into the `dsh-yawn-registration-token` Secret because warm pods must
+  hold it before any session exists (it only lets a runner register a tunnel,
+  and grants nothing else), and a Buildkite API token, which the control plane
+  resolves for its own Buildkite calls from the process environment or the host
+  credential document (write-only from the Sandboxes page) because it can
+  create and cancel builds.
 - The Kubernetes backend uses cluster-owned templates and warm pools. The
   operator publishes them as named sandbox profiles; a session picks a profile,
   never pod privileges or an arbitrary template.

@@ -22,7 +22,6 @@ import {
   configSchema,
   readSetting,
   resolveBootConfig,
-  resolveRegistrationTokens,
   type Config,
   type ProfileConfig,
   type ResolvedConfig,
@@ -44,6 +43,10 @@ import { ManagedInstructions } from "../managed-instructions.js";
 import { yawnHost } from "../remote-contributions.js";
 import { PLACEHOLDER_PREVIEW_PORT, previewHost } from "../preview.js";
 import { PreviewServer } from "../preview-server.js";
+import {
+  RegistrationTokens,
+  type RegistrationTokenView,
+} from "../registration-token.js";
 import type { RunnerClient } from "../runner-client.js";
 import type { SandboxSettingsView } from "../sandbox-settings-remote.js";
 import type { SandboxStatusView } from "../sandbox-status-remote.js";
@@ -121,6 +124,8 @@ export class SandboxManager extends TypertRemoteService {
   /** The settings slice that can change while the host runs. */
   private readonly runtime: RuntimeSettings;
   private readonly broker: CredentialBroker;
+  /** The tunnel credential the control plane generates and hands to runners. */
+  private readonly tokens: RegistrationTokens;
   private readonly ownedTunnel: TunnelServer | undefined;
   /** Started only when a preview domain is configured; see ResolvedConfig. */
   private readonly ownedPreview: PreviewServer | undefined;
@@ -194,19 +199,12 @@ export class SandboxManager extends TypertRemoteService {
     const fileIndexes = new FileIndexStore(
       join(this.config.stateDir, "file-index"),
     );
-    const profiles = Object.values(this.config.profiles);
-    const missingBackends = profiles.filter(
-      (profile) => dependencies.backends?.[profile.name] === undefined,
-    );
-    let tokens: string[] = [];
-    if (dependencies.gateway === undefined || missingBackends.length > 0) {
-      tokens = resolveRegistrationTokens(this.config, profiles);
-    }
+    this.tokens = new RegistrationTokens(this.config.stateDir);
     if (dependencies.gateway === undefined) {
       this.ownedTunnel = new TunnelServer({
         port: this.config.tunnel.port,
         bind: this.config.tunnel.bind,
-        tokens,
+        tokens: () => this.tokens.accepted(),
         log: (message) => this.ctx.logger("sandbox").info(message),
       });
       this.gateway = this.ownedTunnel;
@@ -276,7 +274,7 @@ export class SandboxManager extends TypertRemoteService {
     this.registry = new ProfileRegistry(
       this.config.profiles,
       dependencies.backends,
-      tokens[0],
+      () => this.tokens.current(),
       (profile) => this.buildkiteToken(profile),
     );
     this.engine = new SandboxLifecycle({
@@ -413,6 +411,13 @@ export class SandboxManager extends TypertRemoteService {
       this.ownedPreview?.listen(),
       this.instructions.initialize(),
     ]);
+    // Publish before recovering sandboxes: a warm pool whose pods booted
+    // against an older Secret can only register once this lands.
+    await this.publishRegistrationToken(this.tokens.current()).catch((error) =>
+      this.ctx
+        .logger("sandbox")
+        .warn(`could not publish the runner token: ${errorMessage(error)}`),
+    );
     await this.engine.initialize();
     for (const record of this.engine.records()) {
       if (record.state === "running") {
@@ -486,6 +491,13 @@ export class SandboxManager extends TypertRemoteService {
     this.ctx
       .logger("sandbox")
       .info(`sandbox profiles are now: ${names === "" ? "(none)" : names}`);
+    // A profile added here may name a namespace this process has never
+    // written, so publish again through whatever backends now exist.
+    void this.publishRegistrationToken(this.tokens.current()).catch((error) =>
+      this.ctx
+        .logger("sandbox")
+        .warn(`could not publish the runner token: ${errorMessage(error)}`),
+    );
   }
 
   /** Resolve the current foreground agent and return its live runner. */
@@ -677,6 +689,64 @@ export class SandboxManager extends TypertRemoteService {
   async getSandboxStatus(sessionId: string): Promise<SandboxStatusView> {
     await this.ready;
     return this.status.view(sessionId);
+  }
+
+  /**
+   * The tunnel credential runners present, for the Settings page. Values flow
+   * host→browser here, unlike broker secrets: the operator needs the current
+   * token to configure a runner this control plane does not start.
+   */
+  async getRegistrationToken(): Promise<RegistrationTokenView> {
+    await this.ready;
+    return this.tokens.view();
+  }
+
+  /**
+   * Replace the token without dropping runners that already hold the old one:
+   * it moves to the retiring list, stays accepted, and new sandboxes get the
+   * new value. Every backend that publishes the token outside this process is
+   * updated before this answers, so a failure is visible in the UI.
+   */
+  async rotateRegistrationToken(): Promise<RegistrationTokenView> {
+    await this.ready;
+    const view = this.tokens.rotate();
+    await this.publishRegistrationToken(view.current);
+    return view;
+  }
+
+  /**
+   * Stop accepting the retiring tokens. Safe once the runners that booted
+   * before the rotation are gone; the caller decides that, because the
+   * control plane cannot see a warm pod that has not registered yet.
+   */
+  async retireRegistrationToken(): Promise<RegistrationTokenView> {
+    await this.ready;
+    return this.tokens.retire();
+  }
+
+  /**
+   * Hand the token to every backend that reads it outside this process. A
+   * backend that injects it into a runner it starts needs nothing here; the
+   * Kubernetes backend writes the namespace Secret and fails loudly when it
+   * cannot, so a rotation never looks applied when it is not.
+   */
+  private async publishRegistrationToken(token: string): Promise<void> {
+    const failures: string[] = [];
+    for (const backend of this.registry.allBackends()) {
+      if (backend.publishRegistrationToken === undefined) {
+        continue;
+      }
+      try {
+        await backend.publishRegistrationToken(token);
+      } catch (error) {
+        failures.push(`${backend.name}: ${errorMessage(error)}`);
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(
+        `could not update the runner token where it is stored: ${failures.join("; ")}`,
+      );
+    }
   }
 
   /**

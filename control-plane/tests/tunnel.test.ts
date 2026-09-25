@@ -15,7 +15,7 @@ import {
 
 describe("runner tunnel", () => {
   it("admits one runner per sandbox through the WebSocket handshake", async () => {
-    const tunnel = new TunnelServer({ port: 0, tokens: ["good-token"] });
+    const tunnel = new TunnelServer({ port: 0, tokens: () => ["good-token"] });
     await tunnel.listen();
     // Larger than one HTTP/2 DATA frame and one WebSocket fragment, so both
     // directions have to reassemble across messages.
@@ -94,7 +94,7 @@ describe("runner tunnel", () => {
   });
 
   it("answers plain HTTP health checks without a registration", async () => {
-    const tunnel = new TunnelServer({ port: 0, tokens: ["good-token"] });
+    const tunnel = new TunnelServer({ port: 0, tokens: () => ["good-token"] });
     await tunnel.listen();
     try {
       const health = await fetch(
@@ -111,7 +111,7 @@ describe("runner tunnel", () => {
   });
 
   it("forgets sandbox ids it waited on and never saw", async () => {
-    const tunnel = new TunnelServer({ port: 0, tokens: ["good-token"] });
+    const tunnel = new TunnelServer({ port: 0, tokens: () => ["good-token"] });
     await tunnel.listen();
     try {
       // The preview listener waits on whatever id a Host header names, so any

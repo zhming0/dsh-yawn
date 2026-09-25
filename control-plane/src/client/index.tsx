@@ -199,7 +199,8 @@ export async function apply(ctx: Context) {
   });
 
   // The stock settings controller's namespaces are traced services: a consumer
-  // must name `remote.settings` and `remote.credentials` in its own inject.
+  // must name `remote.settings` and `remote.credentials` in its own inject,
+  // plus this bundle's `remote.sandboxManager` for the runner-token card.
   // The Sandboxes page talks to them directly rather than through the stock
   // browser mirror, which keeps settings writes process-local on every
   // non-loopback page — every page of a deployed control plane. Credential
@@ -246,6 +247,12 @@ export async function apply(ctx: Context) {
                 },
                 getSandboxSettings: async () =>
                   unwrap(await sandboxManager.getSandboxSettings()),
+                getRegistrationToken: async () =>
+                  unwrap(await sandboxManager.getRegistrationToken()),
+                rotateRegistrationToken: async () =>
+                  unwrap(await sandboxManager.rotateRegistrationToken()),
+                retireRegistrationToken: async () =>
+                  unwrap(await sandboxManager.retireRegistrationToken()),
               }),
             },
             SandboxesSettings,

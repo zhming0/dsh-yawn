@@ -43,7 +43,7 @@ describe("sandbox lifecycle engine", () => {
     const registry = new ProfileRegistry(
       { standard: PROFILE },
       { standard: backend },
-      undefined,
+      () => "unused-token",
     );
     const attachment = new RunnerAttachment({
       gateway: gatewayFor(backend),

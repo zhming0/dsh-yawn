@@ -42,6 +42,11 @@ export interface BuildkiteProfile {
   /** The tunnel endpoint runners dial; Buildkite agents are never local. */
   controlPlaneUrl: string;
   readyTimeoutMs: number;
+  /**
+   * Cluster secret key holding the runner token. Defaults to
+   * DSH_YAWN_REGISTRATION_TOKEN; profiles sharing a cluster must differ.
+   */
+  secretKey?: string;
 }
 
 /**
@@ -99,6 +104,13 @@ export interface SandboxBackend {
   destroy(reference: BackendReference): Promise<void>;
   expireAt(reference: BackendReference, deadline: Date): Promise<void>;
   health(reference: BackendReference): Promise<boolean>;
+  /**
+   * Publish the tunnel credential wherever this backend's runners read it at
+   * boot, when that place is outside this process. The Kubernetes backend
+   * implements this to write the namespace's Secret; backends that hand the
+   * token to the runner they start read it directly instead.
+   */
+  publishRegistrationToken?(token: string): Promise<void>;
 }
 
 interface SessionRecordBase {

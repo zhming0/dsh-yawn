@@ -7,6 +7,7 @@ import type {
 import type { CredentialInfo } from "@deepseek-ai/dsh-credentials/types";
 import type { JsonValue } from "@deepseek-ai/dsh-util-values";
 
+import type { RegistrationTokenView } from "../registration-token.js";
 import type { SandboxSettingsView } from "../sandbox-settings-remote.js";
 
 /** What the Sandboxes page calls on the host: settings and write-only credentials. */
@@ -33,6 +34,13 @@ export interface SandboxesSettingsActions {
   unsetCredential: (ref: string) => Promise<void>;
   /** The combined read model: deployment values with the page's edits on top. */
   getSandboxSettings: () => Promise<SandboxSettingsView>;
+}
+
+/** The runner-token card's host calls; values flow host→browser. */
+export interface RegistrationTokenActions {
+  getRegistrationToken: () => Promise<RegistrationTokenView>;
+  rotateRegistrationToken: () => Promise<RegistrationTokenView>;
+  retireRegistrationToken: () => Promise<RegistrationTokenView>;
 }
 
 /** One profile as the form edits it: a backend plus its scalar fields. */

@@ -386,44 +386,45 @@ the intended state while installing the control plane before its sandbox
 backend exists, and it keeps a mistyped profile map from stopping the host from
 starting, so the settings can still be corrected.
 
-| Setting             | When | Default                 | Meaning                                                          |
-| ------------------- | ---- | ----------------------- | ---------------------------------------------------------------- |
-| `profiles.<name>`   | live | none                    | One sandbox profile; its fields are listed in the next table     |
-| `defaultProfile`    | live | first profile           | Profile used when a session does not pick one                    |
-| `idleMs`            | live | 10 minutes              | Idle delay after the last turn or wake before hibernating        |
-| `expiresAfterMs`    | live | 7 days                  | How long a hibernated workspace is retained                      |
-| `repository`        | boot | session repository      | Fallback repository for non-anchor sessions                      |
-| `revision`          | boot | repository default      | Optional branch, tag, or commit to check out                     |
-| `workspace`         | boot | `/workspace/repository` | Repository checkout and working directory                        |
-| `stateDir`          | boot | `~/.dsh-yawn`           | Records, broker data, token, instructions, and Workspace anchors |
-| `registrationToken` | boot | see below               | Token(s) runners must present, comma-separated                   |
-| `tunnel.port`       | boot | `8081`                  | Port the host listens on for runner tunnels (see Tunnel)         |
-| `tunnel.bind`       | boot | `0.0.0.0`               | Address the tunnel listener binds to                             |
-| `preview.domain`    | boot | none                    | Domain serving previews (see Previews); unset disables them      |
-| `preview.port`      | boot | `8082`                  | Port the preview listener binds to                               |
-| `preview.bind`      | boot | `0.0.0.0`               | Address the preview listener binds to                            |
+| Setting           | When | Default                 | Meaning                                                                 |
+| ----------------- | ---- | ----------------------- | ----------------------------------------------------------------------- |
+| `profiles.<name>` | live | none                    | One sandbox profile; its fields are listed in the next table            |
+| `defaultProfile`  | live | first profile           | Profile used when a session does not pick one                           |
+| `idleMs`          | live | 10 minutes              | Idle delay after the last turn or wake before hibernating               |
+| `expiresAfterMs`  | live | 7 days                  | How long a hibernated workspace is retained                             |
+| `repository`      | boot | session repository      | Fallback repository for non-anchor sessions                             |
+| `revision`        | boot | repository default      | Optional branch, tag, or commit to check out                            |
+| `workspace`       | boot | `/workspace/repository` | Repository checkout and working directory                               |
+| `stateDir`        | boot | `~/.dsh-yawn`           | Records, broker data, runner token, instructions, and Workspace anchors |
+| `tunnel.port`     | boot | `8081`                  | Port the host listens on for runner tunnels (see Tunnel)                |
+| `tunnel.bind`     | boot | `0.0.0.0`               | Address the tunnel listener binds to                                    |
+| `preview.domain`  | boot | none                    | Domain serving previews (see Previews); unset disables them             |
+| `preview.port`    | boot | `8082`                  | Port the preview listener binds to                                      |
+| `preview.bind`    | boot | `0.0.0.0`               | Address the preview listener binds to                                   |
 
 Each profile carries the settings of its own backend. Profiles do not share
 settings with each other, so two Kubernetes profiles in one namespace both
 name that namespace.
 
-| Profile field     | Backend               | Default                | Meaning                                                           |
-| ----------------- | --------------------- | ---------------------- | ----------------------------------------------------------------- |
-| `backend`         | all                   | required               | `docker`, `kas`, or `buildkite`                                   |
-| `image`           | `docker`, `buildkite` | matching release tag   | Runner image                                                      |
-| `binary`          | `docker`              | `docker`               | Docker-compatible command                                         |
-| `controlPlaneUrl` | `docker`, `buildkite` | `host.docker.internal` | `DSH_YAWN_CONTROL_PLANE_URL` runners dial, `ws://` or `wss://`    |
-| `namespace`       | `kas`                 | `dsh-yawn`             | Namespace containing claims and warm sandboxes                    |
-| `warmPool`        | `kas`                 | `dsh-yawn-universal`   | Warm pool used for claims                                         |
-| `readyTimeoutMs`  | `kas`                 | 3 minutes              | How long to wait for a claimed sandbox                            |
-| `kubeconfig`      | `kas`                 | normal client lookup   | Optional kubeconfig path                                          |
-| `organization`    | `buildkite`           | required               | Buildkite organization slug                                       |
-| `pipeline`        | `buildkite`           | required               | Pipeline slug whose job runs the runner                           |
-| `controlPlaneUrl` | `buildkite`           | required               | `DSH_YAWN_CONTROL_PLANE_URL` runners dial; agents are never local |
-| `readyTimeoutMs`  | `buildkite`           | 10 minutes             | How long a build may wait for an agent                            |
+| Profile field     | Backend               | Default                       | Meaning                                                                            |
+| ----------------- | --------------------- | ----------------------------- | ---------------------------------------------------------------------------------- |
+| `backend`         | all                   | required                      | `docker`, `kas`, or `buildkite`                                                    |
+| `image`           | `docker`, `buildkite` | matching release tag          | Runner image                                                                       |
+| `binary`          | `docker`              | `docker`                      | Docker-compatible command                                                          |
+| `controlPlaneUrl` | `docker`, `buildkite` | `host.docker.internal`        | `DSH_YAWN_CONTROL_PLANE_URL` runners dial, `ws://` or `wss://`                     |
+| `namespace`       | `kas`                 | `dsh-yawn`                    | Namespace containing claims and warm sandboxes                                     |
+| `warmPool`        | `kas`                 | `dsh-yawn-universal`          | Warm pool used for claims                                                          |
+| `readyTimeoutMs`  | `kas`                 | 3 minutes                     | How long to wait for a claimed sandbox                                             |
+| `kubeconfig`      | `kas`                 | normal client lookup          | Optional kubeconfig path                                                           |
+| `organization`    | `buildkite`           | required                      | Buildkite organization slug                                                        |
+| `pipeline`        | `buildkite`           | required                      | Pipeline slug whose job runs the runner                                            |
+| `controlPlaneUrl` | `buildkite`           | required                      | `DSH_YAWN_CONTROL_PLANE_URL` runners dial; agents are never local                  |
+| `readyTimeoutMs`  | `buildkite`           | 10 minutes                    | How long a build may wait for an agent                                             |
+| `secretKey`       | `buildkite`           | `DSH_YAWN_REGISTRATION_TOKEN` | Cluster secret holding the runner token; only needed when profiles share a cluster |
 
 A Buildkite profile cannot hibernate, so it checkpoints on idle (see below).
-The API token, with `read_builds` and `write_builds` on the pipeline, resolves
+The API token, with `read_builds`, `write_builds`, `read_pipelines`,
+`read_secrets_details`, and `write_secrets`, resolves
 per Buildkite request, so a changed token reaches the next call without a
 restart:
 
@@ -437,8 +438,7 @@ restart:
 
 A profile whose token resolves nowhere does not stop the host: it is named once
 in the log at boot, and its sessions fail at their first prompt with the
-setting to fix. The pipeline shape, the registration token, and the limits are
-described in
+setting to fix. The pipeline shape and the limits are described in
 [`docs/buildkite.md`](https://github.com/zhming0/dsh-yawn/blob/main/docs/buildkite.md).
 
 ### Archived sessions
@@ -653,9 +653,9 @@ socket and are never written to the workspace.
 ## Tunnel
 
 Runners reach the host by opening a WebSocket at `/tunnel` on the tunnel
-listener (`tunnel.port`, default 8081). The upgrade request carries the
-registration token as a bearer token and the runner's sandbox ID in the
-`X-Dsh-Sandbox-Id` header; the host answers a refusal with a plain HTTP
+listener (`tunnel.port`, default 8081). The upgrade request carries a runner
+token the control plane issued as a bearer token and the runner's sandbox ID in
+the `X-Dsh-Sandbox-Id` header; the host answers a refusal with a plain HTTP
 status (401 bad token, 409 sandbox already registered) and an acceptance with
 101, after which the WebSocket carries HTTP/2 with the roles reversed: the
 host is the HTTP/2 client and the runner the server. `GET /healthz` on the
@@ -668,7 +668,7 @@ not control must dial `wss://`, with TLS terminated by the same HTTPS proxy or
 Ingress that fronts the Web UI: route one path (`/tunnel`) of that hostname
 to the tunnel port and hand runners `wss://<hostname>/tunnel`. No second
 certificate, port, or listener is involved, and the proxy's authentication
-layer must not sit on that path; the registration token is the tunnel's
+layer must not sit on that path; the runner token is the tunnel's
 authentication. Runners trust the system CA bundle, so a private CA has to be
 made available to the runner process, for example through `SSL_CERT_FILE`.
 
@@ -725,27 +725,36 @@ page in its own tab. Without a `preview.domain` the tab says previews are not
 configured instead of vanishing. Design and follow-ups (WebSocket upgrades
 for HMR, supervised services): `docs/plans/sandbox-preview.md`.
 
-## Registration token
+## Runner token
 
-A runner authenticates its tunnel with a shared registration token, presented
-in the connection handshake. The control plane resolves the accepted tokens in this
-order:
+A runner authenticates its tunnel with a token the control plane generates.
+Nothing outside supplies one: the control plane mints it on first boot,
+persists it at `stateDir/registration-token.json` with owner-only permissions,
+and accepts it — plus any predecessors kept for a rotation — in the connection
+handshake.
 
-1. `registrationToken` in settings — comma-separated to accept several during
-   rotation. The first token is the one injected into new sandboxes.
-2. The `DSH_YAWN_REGISTRATION_TOKEN` environment variable, same format.
-3. Docker backend only: a token generated on first run and persisted at
-   `stateDir/registration-token` with owner-only permissions. The Kubernetes
-   and Buildkite backends refuse to start without an explicit token, because
-   the sandbox side holds the token before any session exists: warm pods from
-   a Secret, Buildkite jobs from the pipeline's own secret store.
+Delivery is each backend's business:
 
-For Kubernetes, put the token in the `dsh-yawn-registration-token` Secret in the
-sandbox namespace and in the host's environment. See
-[`docs/kubernetes.md`](https://github.com/zhming0/dsh-yawn/blob/main/docs/kubernetes.md).
-For Buildkite, the pipeline step passes it to the job as `DSH_YAWN_REGISTRATION_TOKEN`;
-see
-[`docs/buildkite.md`](https://github.com/zhming0/dsh-yawn/blob/main/docs/buildkite.md).
+- **Docker** passes it to every container it starts as
+  `DSH_YAWN_REGISTRATION_TOKEN`.
+- **Buildkite** creates or updates the pipeline cluster's
+  `DSH_YAWN_REGISTRATION_TOKEN` secret (the `secretKey` profile field changes
+  the name), and the pipeline maps that key into the job, so the value never
+  rides the build environment. The secret is created with an access policy for
+  the pipeline.
+- **Kubernetes** writes it into the `dsh-yawn-registration-token` Secret the
+  warm pool's pod template mounts. The control plane owns that object: it
+  creates it when missing and patches it in place, so neither `helm upgrade`
+  nor a GitOps sync can reset the value.
+
+A runner reads its token once, at boot, so a rotation cannot reach a sandbox
+that is already running. **Settings → Sandboxes** shows the current value,
+rotates it (the previous one stays accepted), and retires the previous value
+once the sandboxes holding it are gone. See
+[`docs/kubernetes.md`](https://github.com/zhming0/dsh-yawn/blob/main/docs/kubernetes.md)
+for the Kubernetes side and
+[`docs/buildkite.md`](https://github.com/zhming0/dsh-yawn/blob/main/docs/buildkite.md)
+for Buildkite.
 
 ## Limits
 

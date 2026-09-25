@@ -10,8 +10,11 @@ import { testing as managerTesting } from "../src/manager/profile-registry.js";
 import { DEFAULT_RUNNER_IMAGE } from "../src/runner-image.js";
 import { SandboxNotFoundError } from "../src/types.js";
 
-const PIPELINE_URL =
-  "https://api.buildkite.com/v2/organizations/acme/pipelines/dsh-yawn";
+const API_ROOT = "https://api.buildkite.com/v2/organizations/acme";
+const PIPELINE_URL = `${API_ROOT}/pipelines/dsh-yawn`;
+const SECRET_URL = `${API_ROOT}/clusters/cluster-uuid/secrets`;
+const PIPELINE = { id: "pipeline-uuid", cluster_id: "cluster-uuid" };
+const SECRET = { id: "secret-uuid", key: "DSH_YAWN_REGISTRATION_TOKEN" };
 
 interface Call {
   method: string;
@@ -48,7 +51,10 @@ function fakeApi(responses: Array<{ status?: number; body?: unknown }>): {
   return { calls, fetch: fetchImpl };
 }
 
-function backendWith(api: { fetch: typeof fetch }): BuildkiteBackend {
+function backendWith(
+  api: { fetch: typeof fetch },
+  secretKey?: string,
+): BuildkiteBackend {
   return new BuildkiteBackend(
     {
       organization: "acme",
@@ -57,6 +63,8 @@ function backendWith(api: { fetch: typeof fetch }): BuildkiteBackend {
       controlPlaneUrl: "wss://dsh.example.com/tunnel",
       readyTimeoutMs: 60_000,
       token: async () => "bkua_test",
+      registrationToken: () => "registration-token",
+      ...(secretKey === undefined ? {} : { secretKey }),
     },
     api.fetch,
   );
@@ -71,6 +79,9 @@ describe("Buildkite backend", () => {
     vi.useFakeTimers();
     const api = fakeApi([
       { body: [] },
+      { body: PIPELINE },
+      { body: [] },
+      { body: SECRET },
       { body: { number: 7, state: "scheduled", web_url: "https://bk/7" } },
       { body: { number: 7, state: "scheduled", web_url: "https://bk/7" } },
       { body: { number: 7, state: "running", web_url: "https://bk/7" } },
@@ -90,7 +101,8 @@ describe("Buildkite backend", () => {
       sandboxId: handle.sandboxId,
     });
 
-    const [lookup, create, ...polls] = api.calls;
+    const [lookup, pipeline, listSecrets, createSecret, create, ...polls] =
+      api.calls;
     expect(lookup?.method).toBe("GET");
     expect(lookup?.url).toBe(
       `${PIPELINE_URL}/builds?${new URLSearchParams([
@@ -101,9 +113,20 @@ describe("Buildkite backend", () => {
         ["state[]", "running"],
       ])}`,
     );
+    expect(pipeline?.url).toBe(PIPELINE_URL);
+    expect(listSecrets?.url).toBe(`${SECRET_URL}?per_page=100&page=1`);
+    expect(createSecret?.method).toBe("POST");
+    expect(createSecret?.url).toBe(SECRET_URL);
+    expect(createSecret?.body).toEqual({
+      key: "DSH_YAWN_REGISTRATION_TOKEN",
+      value: "registration-token",
+      description: "dsh-yawn runner token for dsh-yawn",
+      policy: "- pipeline_id: pipeline-uuid",
+    });
     expect(create?.method).toBe("POST");
     expect(create?.url).toBe(`${PIPELINE_URL}/builds`);
     expect(create?.headers.authorization).toBe("Bearer bkua_test");
+    // The token rides the cluster secret, never the build environment.
     expect(create?.body).toEqual({
       commit: "HEAD",
       branch: "main",
@@ -119,6 +142,93 @@ describe("Buildkite backend", () => {
       `${PIPELINE_URL}/builds/7?exclude_jobs=true&exclude_pipeline=true`,
       `${PIPELINE_URL}/builds/7?exclude_jobs=true&exclude_pipeline=true`,
     ]);
+  });
+
+  it("stores the token once and updates the same secret on rotation", async () => {
+    const api = fakeApi([
+      { body: PIPELINE },
+      { body: [SECRET] },
+      { body: SECRET },
+      { body: SECRET },
+    ]);
+    const backend = backendWith(api);
+
+    await backend.publishRegistrationToken("token-one");
+    // The token did not change, so nothing else is sent.
+    await backend.publishRegistrationToken("token-one");
+    await backend.publishRegistrationToken("token-two");
+
+    expect(api.calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+      `GET ${PIPELINE_URL}`,
+      `GET ${SECRET_URL}?per_page=100&page=1`,
+      `PUT ${SECRET_URL}/secret-uuid/value`,
+      `PUT ${SECRET_URL}/secret-uuid/value`,
+    ]);
+    expect(api.calls[2]?.body).toEqual({ value: "token-one" });
+    expect(api.calls[3]?.body).toEqual({ value: "token-two" });
+  });
+
+  it("uses the profile's own secret key when a cluster is shared", async () => {
+    const api = fakeApi([
+      { body: PIPELINE },
+      { body: [] },
+      { body: { id: "secret-uuid", key: "DSH_YAWN_HOSTED_TOKEN" } },
+    ]);
+
+    await backendWith(api, "DSH_YAWN_HOSTED_TOKEN").publishRegistrationToken(
+      "token-one",
+    );
+
+    expect(api.calls[2]?.body).toMatchObject({
+      key: "DSH_YAWN_HOSTED_TOKEN",
+    });
+  });
+
+  it("finds the secret on a later page of a busy cluster", async () => {
+    const otherSecrets = Array.from({ length: 100 }, (_, index) => ({
+      id: `other-${index}`,
+      key: `OTHER_${index}`,
+    }));
+    const api = fakeApi([
+      { body: PIPELINE },
+      { body: otherSecrets },
+      { body: [SECRET] },
+      { body: SECRET },
+    ]);
+
+    await backendWith(api).publishRegistrationToken("token-one");
+
+    expect(api.calls[2]?.url).toBe(`${SECRET_URL}?per_page=100&page=2`);
+    expect(api.calls[3]).toMatchObject({
+      method: "PUT",
+      url: `${SECRET_URL}/secret-uuid/value`,
+    });
+  });
+
+  it("creates the secret again when it disappeared", async () => {
+    const api = fakeApi([
+      { body: PIPELINE },
+      { body: [SECRET] },
+      { status: 404, body: { message: "Not Found" } },
+      { body: PIPELINE },
+      { body: [] },
+      { body: SECRET },
+    ]);
+
+    await backendWith(api).publishRegistrationToken("token-one");
+
+    expect(api.calls.at(-1)).toMatchObject({
+      method: "POST",
+      url: SECRET_URL,
+    });
+  });
+
+  it("refuses to publish when the pipeline is not in a cluster", async () => {
+    const api = fakeApi([{ body: { id: "pipeline-uuid", cluster_id: null } }]);
+
+    await expect(
+      backendWith(api).publishRegistrationToken("token-one"),
+    ).rejects.toThrow("Buildkite pipeline dsh-yawn is not in a cluster");
   });
 
   it("adopts a live build created before the session was saved", async () => {
@@ -154,6 +264,9 @@ describe("Buildkite backend", () => {
     vi.useFakeTimers();
     const api = fakeApi([
       { body: [] },
+      { body: PIPELINE },
+      { body: [] },
+      { body: SECRET },
       { body: { number: 9, state: "scheduled", web_url: "https://bk/9" } },
       { body: { number: 9, state: "scheduled", web_url: "https://bk/9" } },
       { status: 200, body: { number: 9, state: "canceling" } },
@@ -166,6 +279,7 @@ describe("Buildkite backend", () => {
         controlPlaneUrl: "wss://dsh.example.com/tunnel",
         readyTimeoutMs: 2_000,
         token: async () => "bkua_test",
+        registrationToken: () => "registration-token",
       },
       api.fetch,
     );
@@ -249,6 +363,7 @@ describe("Buildkite backend", () => {
           organization: "acme",
           pipeline: "dsh-yawn",
           controlPlaneUrl: "wss://dsh.example.com/tunnel",
+          secretKey: "DSH_YAWN_HOSTED_TOKEN",
         },
       },
     });
@@ -261,6 +376,7 @@ describe("Buildkite backend", () => {
         image: DEFAULT_RUNNER_IMAGE,
         controlPlaneUrl: "wss://dsh.example.com/tunnel",
         readyTimeoutMs: 600_000,
+        secretKey: "DSH_YAWN_HOSTED_TOKEN",
       },
     });
 
@@ -271,7 +387,10 @@ describe("Buildkite backend", () => {
     }
     // Resolution happens per request, not at construction: the backend is
     // built without a token, and a call fails with the setting to fix.
-    const backend = managerTesting.createBackend(hosted, "registration-token");
+    const backend = managerTesting.createBackend(
+      hosted,
+      () => "registration-token",
+    );
     expect(backend).toBeInstanceOf(BuildkiteBackend);
     expect(backend.capabilities).toEqual({ supportsHibernate: false });
     await expect(resolveBuildkiteToken(hosted, undefined)).rejects.toThrow(

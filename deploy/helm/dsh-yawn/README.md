@@ -1,8 +1,8 @@
 # dsh-yawn Helm chart
 
 Installs the dsh-yawn **control plane**: one control plane, its data volume,
-the tunnel Service runners dial, the shared registration token, and the
-identity and permissions the control plane uses to operate Kubernetes sandboxes.
+the tunnel Service runners dial, and the identity and permissions the control
+plane uses to operate Kubernetes sandboxes.
 
 This chart does not install sandboxes. Setting a runner up is a second phase:
 [installations-control-plane.md](../../../docs/installations-control-plane.md)
@@ -36,7 +36,8 @@ helm install dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
 
 The release must be named `dsh-yawn-control-plane` and live in one namespace per control plane:
 the pool's manifests read the fixed names `dsh-yawn-control-plane-tunnel`, `dsh-yawn-runner-config`,
-and `dsh-yawn-registration-token`, which this release owns.
+and `dsh-yawn-registration-token`. The control plane creates that Secret itself and
+keeps the runner token in it.
 
 Create the proxy's OIDC Secret first — NOTES.txt has the command; until it
 exists the pod runs but never becomes Ready. Without `oidc.enabled`, reach the
@@ -56,8 +57,6 @@ control plane over `kubectl port-forward` and open `/launch-token`.
 | `controlPlane.persistence.size` | `5Gi` | Host data volume size |
 | `controlPlane.persistence.storageClass` | `""` | Host data volume StorageClass; required when the cluster has no default |
 | `runner.controlPlaneUrl` | `ws://dsh-yawn-control-plane-tunnel.<namespace>.svc.cluster.local:8081/tunnel` | Tunnel address written into `dsh-yawn-runner-config`; set only for an unusual layout |
-| `registrationToken.existingSecret` | `""` | Existing Secret with the shared token under key `token`; no Secret is created |
-| `registrationToken.value` | `""` | Fixed token; a stable random one is generated when empty |
 | `oidc.enabled` | `false` | Add the oauth2-proxy sidecar, `--trusted-host`, and the proxy Service |
 | `oidc.hostname` | `""` | Required when enabled: bare host, no scheme |
 | `oidc.image` | `quay.io/oauth2-proxy/oauth2-proxy:v7.15.4` | Proxy image |
@@ -114,14 +113,10 @@ the profile's `cordis.patch.yml`.
 
 - The data PVC carries `helm.sh/resource-policy: keep`, so `helm uninstall`
   leaves sessions, credentials, and the seeded profile on the volume.
-- The registration token Secret is generated once per release and reused on
-  upgrades; rotating it follows
-  [docs/kubernetes.md](../../../docs/kubernetes.md#the-in-cluster-control-plane).
-- **GitOps (Argo CD, Flux):** those renderers have no live cluster, so the
-  lookup that keeps the generated token stable cannot find the existing Secret
-  and every sync invents a new one — the release never converges and the token
-  rotates under the warm pods. Set `registrationToken.value` from your secret
-  store, or `registrationToken.existingSecret`.
+- The registration token is generated and persisted by the control plane on its
+  data volume, then written into the `dsh-yawn-registration-token` Secret. No
+  chart value configures it, and `helm upgrade` never touches it; rotate it from
+  **Settings → Sandboxes**.
 - The chart deliberately ships no Ingress: the proxy Service is the anchor.
   Whatever fronts dsh must serve https, pass WebSockets, and allow large RPC
   bodies — [docs/kubernetes.md](../../../docs/kubernetes.md) has the

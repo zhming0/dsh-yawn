@@ -3,6 +3,8 @@ import type { TypertRemoteContribution } from "@deepseek-ai/dsh-typert-protocol"
 
 import type { SandboxInstructionsRemote } from "./instructions-remote.js";
 import { sandboxInstructionsDescriptors } from "./instructions-remote.js";
+import type { RegistrationTokenRemote } from "./registration-token-remote.js";
+import { registrationTokenDescriptors } from "./registration-token-remote.js";
 import type { RepositoryWorkspaceRemote } from "./repository-workspace-remote.js";
 import { repositoryWorkspaceDescriptors } from "./repository-workspace-remote.js";
 import type { SandboxSettingsRemote } from "./sandbox-settings-remote.js";
@@ -20,7 +22,8 @@ type SandboxManagerRemote = RepositoryWorkspaceRemote &
   SandboxInstructionsRemote &
   SessionProfileRemote &
   SandboxStatusRemote &
-  SandboxSettingsRemote;
+  SandboxSettingsRemote &
+  RegistrationTokenRemote;
 
 declare module "@deepseek-ai/dsh-typert-protocol" {
   interface TypertRemoteNamespaceMap {
@@ -39,6 +42,9 @@ declare module "@deepseek-ai/dsh-typert-protocol" {
     "sandboxManager/setSessionProfile": SandboxManagerRemote["setSessionProfile"];
     "sandboxManager/getSandboxStatus": SandboxManagerRemote["getSandboxStatus"];
     "sandboxManager/getSandboxSettings": SandboxManagerRemote["getSandboxSettings"];
+    "sandboxManager/getRegistrationToken": SandboxManagerRemote["getRegistrationToken"];
+    "sandboxManager/rotateRegistrationToken": SandboxManagerRemote["rotateRegistrationToken"];
+    "sandboxManager/retireRegistrationToken": SandboxManagerRemote["retireRegistrationToken"];
   }
 }
 
@@ -52,6 +58,7 @@ const descriptors = [
   ...sessionProfileDescriptors,
   ...sandboxStatusDescriptors,
   ...sandboxSettingsDescriptors,
+  ...registrationTokenDescriptors,
 ];
 
 export const yawnHost: TypertContribution = {
