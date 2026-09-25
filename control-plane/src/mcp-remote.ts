@@ -66,8 +66,14 @@ const entrySchema: TypertSchema<McpServerEntry> = {
     if (typeof record.url !== "string") {
       throw new TypeError("expected an MCP server entry with a string url");
     }
-    if (record.token !== undefined && typeof record.token !== "string") {
-      throw new TypeError("expected an MCP server entry with a string token");
+    if (
+      record.token !== undefined &&
+      record.token !== null &&
+      typeof record.token !== "string"
+    ) {
+      throw new TypeError(
+        "expected an MCP server entry with a string or null token",
+      );
     }
     if (typeof record.enabled !== "boolean") {
       throw new TypeError(
@@ -79,6 +85,7 @@ const entrySchema: TypertSchema<McpServerEntry> = {
       url: record.url,
       enabled: record.enabled,
     };
+    // `null` clears a saved token; omitting it keeps one.
     return record.token === undefined
       ? entry
       : { ...entry, token: record.token };

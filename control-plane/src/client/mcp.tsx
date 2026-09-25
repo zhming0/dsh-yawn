@@ -31,6 +31,7 @@ export function McpSettings({
   const [serverName, setServerName] = useState("");
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
+  const [clearToken, setClearToken] = useState(false);
   const [enabled, setEnabled] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
@@ -64,6 +65,10 @@ export function McpSettings({
     }
     const entry: McpServerEntry = { serverName: name, url: endpoint, enabled };
     // Blank means "keep the saved token"; the host applies the same rule.
+    // Clearing is the one case that sends an explicit null.
+    if (clearToken) {
+      return { ...entry, token: null };
+    }
     return token === "" ? entry : { ...entry, token };
   };
 
@@ -72,6 +77,7 @@ export function McpSettings({
     setServerName("");
     setUrl("");
     setToken("");
+    setClearToken(false);
     setEnabled(true);
     setTestResult(undefined);
   };
@@ -134,6 +140,7 @@ export function McpSettings({
     setServerName(server.serverName);
     setUrl(server.url);
     setToken("");
+    setClearToken(false);
     setEnabled(server.enabled);
     setTestResult(undefined);
     setError(undefined);
@@ -297,19 +304,44 @@ export function McpSettings({
           aria-label="MCP bearer token"
           type="password"
           placeholder={
-            edited?.hasToken
-              ? "a token is saved; leave blank to keep it"
-              : "token (optional)"
+            clearToken
+              ? "token will be removed on save"
+              : edited?.hasToken
+                ? "a token is saved; leave blank to keep it"
+                : "token (optional)"
           }
           autoComplete="off"
           value={token}
-          disabled={pending}
+          disabled={pending || clearToken}
           onChange={(event) => {
             setToken(event.currentTarget.value);
             setTestResult(undefined);
           }}
           style={{ width: "100%" }}
         />
+        {edited?.hasToken ? (
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              color: "var(--dsw-alias-label-secondary)",
+              fontSize: 13,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={clearToken}
+              disabled={pending}
+              onChange={(event) => {
+                setClearToken(event.currentTarget.checked);
+                setToken("");
+                setTestResult(undefined);
+              }}
+            />
+            Remove the saved token
+          </label>
+        ) : null}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <Switch
             checked={enabled}

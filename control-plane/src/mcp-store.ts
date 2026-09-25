@@ -1,11 +1,15 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-/** One remote Streamable HTTP MCP server. The token never leaves the host. */
+/**
+ * One remote Streamable HTTP MCP server. The token never leaves the host.
+ * `token: null` clears a saved token on upsert; omitting it, or sending an
+ * empty string, keeps whatever is saved.
+ */
 export interface McpServerEntry {
   serverName: string;
   url: string;
-  token?: string;
+  token?: string | null;
   enabled: boolean;
 }
 
@@ -25,6 +29,21 @@ export function validateMcpServerEntry(entry: McpServerEntry): void {
   if (!serverNamePattern.test(entry.serverName)) {
     throw new Error(
       `invalid MCP server name "${entry.serverName}": use 1-32 letters, digits, "_", or "-"`,
+    );
+  }
+  // Tool names are `mcp__<serverName>__<tool>`, and a server is identified by
+  // that prefix. A name holding `__` (server `gh__x`) or ending in `_`
+  // (server `gh_`) makes one server's prefix match another's tools, which
+  // would report a dead server as connected on the strength of a neighbour's
+  // tools.
+  if (entry.serverName.includes("__")) {
+    throw new Error(
+      `invalid MCP server name "${entry.serverName}": "__" is reserved for the tool-name prefix`,
+    );
+  }
+  if (entry.serverName.endsWith("_")) {
+    throw new Error(
+      `invalid MCP server name "${entry.serverName}": a trailing "_" collides with the tool-name prefix`,
     );
   }
   const url = parseUrl(entry.url);
@@ -93,17 +112,24 @@ export class McpServerStore {
 
   /** The one accessor that returns a token, for building a request header. */
   tokenFor(serverName: string): string | undefined {
-    return find(this.state.servers, serverName)?.token;
+    const token = find(this.state.servers, serverName)?.token;
+    return token ?? undefined;
   }
 
   /**
    * Store one entry. An omitted or empty token keeps the saved token, so the
-   * browser can edit a server without ever receiving the value back.
+   * browser can edit a server without ever receiving the value back; `null`
+   * clears it, which is the only way to remove one without deleting the server.
    */
   async upsert(entry: McpServerEntry): Promise<void> {
     validateMcpServerEntry(entry);
     const kept = entry.token === undefined || entry.token === "";
-    const token = kept ? this.tokenFor(entry.serverName) : entry.token;
+    const token =
+      entry.token === null
+        ? undefined
+        : kept
+          ? this.tokenFor(entry.serverName)
+          : entry.token;
     const stored: McpServerEntry =
       token === undefined
         ? {
@@ -198,13 +224,14 @@ function parseEntry(value: unknown): McpServerEntry {
   if (
     typeof serverName !== "string" ||
     typeof url !== "string" ||
-    (token !== undefined && typeof token !== "string") ||
+    (token !== undefined && token !== null && typeof token !== "string") ||
     (enabled !== undefined && typeof enabled !== "boolean")
   ) {
     throw new Error("MCP server file has an unsupported format");
   }
   const entry: McpServerEntry = { serverName, url, enabled: enabled ?? true };
-  return token === undefined ? entry : { ...entry, token };
+  // A hand-edited `null` reads as no token, the same as omitting it.
+  return token === undefined || token === null ? entry : { ...entry, token };
 }
 
 function isNotFound(error: unknown): error is NodeJS.ErrnoException {
