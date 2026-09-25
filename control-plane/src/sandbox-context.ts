@@ -52,7 +52,7 @@ export const SANDBOX_ENVIRONMENT_SECTION = "environment:sandbox";
  * notice carry it.
  */
 export const SANDBOX_ENVIRONMENT_PROMPT =
-  'You are working inside an isolated sandbox: file and shell tools resolve paths inside this sandbox, and the repository checkout is mounted at {{cwd}}. There is no DeepSeek Harness source checkout inside the sandbox; the DeepSeek Harness web UI runs on the host machine and is unreachable from here. When the user says "this page", "this GUI", or "this app", they mean that web UI. When a sleep rebuilds the machine, the new machine starts with what is under /workspace and the repository\'s setup hook, `.agents/setup`, runs again on it, so what the repository installs is back. The sandbox user has passwordless sudo, so system package managers can install software, but what you install yourself outside $HOME lasts only as long as this machine. Prefer the preinstalled managers for project tools: `mise use -g` for toolchains, `uv tool install` for Python tools, and `npm install -g` for Node tools. Those write under $HOME. {{tool_retention}} Anything the user should keep but that does not belong in the repository — screenshots, recordings, reports — goes in {{artifacts}}, which always comes back.';
+  'You are working inside an isolated sandbox: file and shell tools resolve paths inside this sandbox, and the repository checkout is mounted at {{cwd}}. There is no DeepSeek Harness source checkout inside the sandbox; the DeepSeek Harness web UI runs on the host machine and is unreachable from here. When the user says "this page", "this GUI", or "this app", they mean that web UI. {{preview}} When a sleep rebuilds the machine, the new machine starts with what is under /workspace and the repository\'s setup hook, `.agents/setup`, runs again on it, so what the repository installs is back. The sandbox user has passwordless sudo, so system package managers can install software, but what you install yourself outside $HOME lasts only as long as this machine. Prefer the preinstalled managers for project tools: `mise use -g` for toolchains, `uv tool install` for Python tools, and `npm install -g` for Node tools. Those write under $HOME. {{tool_retention}} Anything the user should keep but that does not belong in the repository — screenshots, recordings, reports — goes in {{artifacts}}, which always comes back.';
 
 /**
  * What the model is told about tools it installs under $HOME. The backend
@@ -127,6 +127,7 @@ export function installSandboxContext(
   systemPrompt: SystemPromptLike,
   workspace: () => string,
   capabilities: () => BackendCapabilities | undefined,
+  previewOrigin: () => string | undefined,
 ): void {
   systemPrompt.section({
     name: SANDBOX_ENVIRONMENT_SECTION,
@@ -136,6 +137,19 @@ export function installSandboxContext(
   systemPrompt.variable("cwd", () => workspace());
   systemPrompt.variable("artifacts", () => artifactsDirectory(workspace()));
   systemPrompt.variable("tool_retention", () => toolRetention(capabilities()));
+  systemPrompt.variable("preview", () => previewSentence(previewOrigin()));
+}
+
+/**
+ * The previews sentence, expanded per assembly. Without an origin — previews
+ * unconfigured, or no sandbox yet — it is empty, so the prompt never promises
+ * an address it cannot name.
+ */
+function previewSentence(origin: string | undefined): string {
+  if (origin === undefined) {
+    return "";
+  }
+  return `HTTP servers you leave running on a sandbox port are served to the user's browser at ${origin}, with PORT replaced by the port the server listens on: start such servers detached so they outlive the command, and give the user that address to open.`;
 }
 
 export const name = "sandbox-context";
@@ -167,6 +181,7 @@ export function apply(ctx: Context): void {
         scope.systemPrompt,
         () => ctx.sandboxManager.workspace,
         () => ctx.sandboxManager.sandboxCapabilitiesFor(agent),
+        () => ctx.sandboxManager.previewOriginFor(agent),
       );
     });
     promptFibers.set(agent, fiber);

@@ -741,10 +741,12 @@ path the sandboxes share the host's network and can. Set `preview.bind` to
 `127.0.0.1` when the preview port is not meant to be reachable from the
 network.
 
-The Web Preview tab beside the chat follows the sandbox's listening ports (the
-runner reports them), lets you pick a port and an entry path, and can open the
-page in its own tab. Without a `preview.domain` the tab says previews are not
-configured instead of vanishing. Design and follow-ups (WebSocket upgrades
+The Sandbox tab links the sandbox's listening ports (the runner reports them)
+and its preview address, each opening in a browser tab. The sandbox
+environment prompt tells the model the address pattern once its sandbox
+exists, so it can start a server detached and hand the user a clickable URL.
+Without a `preview.domain` the Sandbox tab's preview row says previews are
+not configured. Design and follow-ups (WebSocket upgrades
 for HMR, supervised services): `docs/plans/sandbox-preview.md`.
 
 ## Registration token

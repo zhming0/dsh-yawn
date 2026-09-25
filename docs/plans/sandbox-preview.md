@@ -36,7 +36,7 @@ Decided against, in discussion:
   security postures and a URL whose meaning depends on configuration. The
   path mode's compatibility advantage (no operator prerequisites) does not
   outweigh serving broken previews for most real apps; an install without a
-  preview domain gets a Web Preview tab that says what is missing instead.
+  preview domain gets a Sandbox tab row that says what is missing instead.
 - **Mounting the route on the Web UI's server.** dsh's web server matches
   routes by path only (exact, then longest prefix, then one fallback seat),
   so a subdomain request with path `/` lands in the SPA fallback. A host
@@ -49,6 +49,14 @@ Decided against, in discussion:
   shareable. Previews sit behind the same proxy as the UI.
 - **A second runner→host channel for proxied bytes.** One runner-initiated
   connection carries everything; HTTP/2 multiplexes the preview streams.
+- **An in-app preview tab.** The first cut framed previews in a Web Preview
+  conversation tab, and dsh 0.1.7 later shipped its own sidebar Browser.
+  Both are a browser inside the browser: the user is already in a real one,
+  a top-level tab has the full address bar, devtools, and extension set, and
+  it is the path where the authenticating proxy's OAuth roundtrip cannot
+  break. The tab was removed once the model could hand the user a clickable
+  URL and the Sandbox tab linked every detected port; dsh's sidebar Browser
+  stays disabled, so chat links open in the user's browser.
 
 ## How it works
 
@@ -83,18 +91,18 @@ services (below), not with addressing.
 
 **Configuration.** `preview: { domain, port }` in the control plane settings,
 mirroring `tunnel: { port, bind }`. When the domain is unset the listener
-does not start and the Web Preview tab explains what is missing and where to
-configure it — the tab never silently vanishes.
+does not start and the Sandbox tab explains what is missing and where to
+configure it — the row never silently vanishes.
 
-**Status and the Web Preview tab.** The sandbox status carries an absolute
-`previewUrl` (the `<sandboxId>-p<port>` origin with the default port) beside
-the listening ports. The Web Preview tab offers the detected ports as chips, a
-path field as the frame's entry point, both remembered per session, and an
-Open link — safe again, because the preview's origin is not the UI's. The
-frame keeps scripts but now also `allow-same-origin`, so storage, IndexedDB,
-and service workers work. Preview traffic counts as session activity, so a
-sandbox receiving preview requests does not hibernate under its viewer, and
-opening a preview wakes a hibernated one.
+**Status and the Sandbox tab.** The sandbox status carries the preview
+domain and each sandbox's host (the `<sandboxId>-p<port>` origin with the
+default port) beside the listening ports. The Sandbox tab turns both into
+links that open in the user's browser, and the sandbox environment prompt
+tells the model the address pattern once its sandbox exists, so it can start
+a server, hand the user the URL, and the user's click opens a real tab.
+Preview traffic counts as session activity, so a sandbox receiving preview
+requests does not hibernate under its viewer, and opening a preview wakes a
+hibernated one.
 
 **Kubernetes and auth.** The chart gains the container port, a `ClusterIP`
 Service (a sibling of the tunnel Service), and oauth2-proxy configuration to
@@ -104,9 +112,14 @@ certificate (cert-manager DNS-01), and an Ingress rule for
 `*.sandbox.<domain>` routed to the preview Service with the same long read
 and send timeouts the UI needs. That Ingress also serves the UI, on the same
 scheme and default port: a preview URL carries no port, so the browser asks
-for whatever the UI's own page used. Putting previews on a registrable domain
-separate from the UI's is recommended: it keeps the proxy's cookies off the
-UI's site entirely and removes same-site request surfaces. The sandbox
+for whatever the UI's own page used. Previews open in the user's own browser,
+as top-level pages: that is the most robust path through the authenticating
+proxy (a first-party OAuth roundtrip on every browser, no framed third-party
+cookie at all), which is also why dsh's in-app sidebar Browser is left
+disabled. An install that wants in-app tabs may enable it; previews are its
+own origins either way. Putting previews on a registrable domain separate
+from the UI's is recommended: it keeps the proxy's cookies off the UI's site
+entirely and removes same-site request surfaces. The sandbox
 NetworkPolicy needs no change — egress to the control plane pod is allowed
 on the tunnel port only, so sandboxes cannot reach the preview listener
 directly.
@@ -146,9 +159,10 @@ arrives at the sandbox is the app's own session and nothing else.
 1. **Preview feature** (on top of the transport; landed in two PRs): the
    control-plane half — the preview listener with host parsing,
    `preview: { domain, port }` settings, the relay on the listener,
-   `previewDomain` + `previewHost` facts in the status, the Web Preview tab
-   (port chips, path field, Open link, unset-domain message), and tests,
-   including a Docker smoke through the real listener. Then the exposure
+   `previewDomain` + `previewHost` facts in the status, the preview surfaces
+   (a third cut replaced the first Web Preview tab with Sandbox-tab links
+   and the prompt sentence), and tests, including a Docker smoke through the
+   real listener. Then the exposure
    half — the chart's port/Service/proxy values and the operator
    documentation: wildcard DNS and certificates, the Ingress rule, the
    auth-cookie rules above (`preview.authCookieNames` wired to the proxy's

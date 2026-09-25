@@ -102,13 +102,28 @@ describe("dropHostOnlySections", () => {
 });
 
 describe("installSandboxContext", () => {
+  it("names the preview address once the sandbox has one", () => {
+    const systemPrompt = makeSystemPromptStub();
+    installSandboxContext(
+      systemPrompt,
+      () => "/workspace/repository",
+      () => undefined,
+      () => "https://sandbox-one-pPORT.sandbox.example.com/",
+    );
+    expect(systemPrompt.variables.get("preview")?.({})).toBe(
+      "HTTP servers you leave running on a sandbox port are served to the user's browser at https://sandbox-one-pPORT.sandbox.example.com/, with PORT replaced by the port the server listens on: start such servers detached so they outlive the command, and give the user that address to open.",
+    );
+  });
+
   it("registers the environment section and the sandbox variables", () => {
     const systemPrompt = makeSystemPromptStub();
     installSandboxContext(
       systemPrompt,
       () => "/workspace/repository",
       () => undefined,
+      () => undefined,
     );
+    expect(systemPrompt.variables.get("preview")?.({})).toBe("");
     expect(systemPrompt.sections).toEqual([
       {
         name: SANDBOX_ENVIRONMENT_SECTION,
@@ -131,6 +146,7 @@ describe("installSandboxContext", () => {
       systemPrompt,
       () => workspace,
       () => undefined,
+      () => undefined,
     );
     expect(systemPrompt.variables.get("cwd")?.({})).toBe("/workspace/one");
     expect(systemPrompt.variables.get("artifacts")?.({})).toBe(
@@ -146,6 +162,7 @@ describe("installSandboxContext", () => {
       systemPrompt,
       () => "/host/checkout",
       () => undefined,
+      () => "https://sandbox-one-pPORT.sandbox.example.com/",
     );
     expect(systemPrompt.variables.get("cwd")?.({})).toBe("/host/checkout");
     expect(systemPrompt.variables.get("artifacts")?.({})).toBe(
@@ -156,6 +173,7 @@ describe("installSandboxContext", () => {
   it("references the workspace variables from the section text", () => {
     expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("{{cwd}}");
     expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("{{artifacts}}");
+    expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("{{preview}}");
   });
 
   it("carries the GUI paragraph's still-true this-page mapping", () => {
@@ -185,6 +203,7 @@ describe("installSandboxContext", () => {
         systemPrompt,
         () => "/workspace/repository",
         () => capabilities,
+        () => undefined,
       );
       return systemPrompt.variables.get("tool_retention")?.({});
     };
@@ -307,11 +326,15 @@ describe("against the pinned dsh-system-prompt service", () => {
       systemPrompt,
       () => "/workspace/repository",
       () => ({ supportsHibernate: false }),
+      () => "https://sandbox-one-pPORT.sandbox.example.com/",
     );
 
     const assembly = await systemPrompt.assemble({});
     const rendered = renderPrompt(assembly);
     expect(rendered).toContain("/workspace/artifacts");
+    expect(rendered).toContain(
+      "HTTP servers you leave running on a sandbox port are served to the user's browser at https://sandbox-one-pPORT.sandbox.example.com/",
+    );
     expect(rendered).toContain(
       "A sleep does not keep them, so reinstall what you need.",
     );

@@ -253,54 +253,47 @@ profiles that differ only by name, for example `standard` and `large` both with
 ### Verify sandbox web previews
 
 Run this scenario for changes to the preview listener, the relay, or the
-Web Preview tab. It works against a Docker host: give the `sandbox-manager` row a
-`preview.domain` (any name — nothing resolves it, the listener routes by the
-`Host` header alone) and read the preview port from the host's port bindings
-(the `preview.port` setting, default 8082).
+preview surfaces. It works against a Docker host: give the `sandbox-manager`
+row a `preview.domain` (any name — nothing resolves it, the listener routes
+by the `Host` header alone) and read the preview port from the host's port
+bindings (the `preview.port` setting, default 8082).
 
-The tab builds the frame's URL from its own page and the preview host, with no
-port — in a deployment one front door serves the UI and previews on the same
-scheme and port — so on a development host the browser reaches the preview
-listener only at the port that URL implies. Either bind the listener there
-(`preview.port: 80`, which needs the privilege to bind it) or point the browser
-at the real port, for example by launching Chrome with
-`--host-resolver-rules='MAP *.localhost 127.0.0.1:8082'` for the default. The
+Preview links carry no port — in a deployment one front door serves the UI
+and previews on the same scheme and port. The Sandbox tab's links reuse the
+UI page's scheme; the address the model is given is always `https://`, since
+the supported distribution serves previews over TLS. So on a development host
+the browser reaches the listener only at the port those URLs imply. Either
+bind the listener there (`preview.port: 80`, which needs the privilege to
+bind it) or point the browser at the real port, for example by launching
+Chrome with `--host-resolver-rules='MAP *.localhost 127.0.0.1:8082'` for the
+default; for the model's `https://` address, swap the scheme by hand. The
 `curl` step below names the port itself and works either way.
 
 1. Start a session and ask the model to start a web server in the sandbox on
    a fixed port, detached. The Sandbox tab must list the port under
-   "Listening ports" once it is up.
-2. The Web Preview tab must offer the port as a chip and load the page. Typing a
-   path the page does not link (plus a query string) and pressing Enter must
-   load it; the port and path survive leaving and re-entering the tab.
-3. The page must be functional as a real origin: absolute-path assets load,
-   and `localStorage` works from the page's own console.
-4. **Open** must load the page in its own tab, served from the same origin as
-   the frame.
-5. From the host, both of these must hold:
-
-   ```sh
-   # the preview host returns the same page
-   curl -H "Host: <sandboxId>-p<port>.<preview.domain>" http://127.0.0.1:<preview.port>/
-   # a host the domain does not own is unknown, not a dial
-   curl -H "Host: other.example.com" http://127.0.0.1:<preview.port>/
-   ```
-
-   The first returns 200, the second 404, and a sandbox with no runner
-   (hibernate it) answers 503 with the wake hint.
-
-6. With `preview.domain` removed from the row, the Web Preview tab must say
-   previews are not configured instead of disappearing.
-7. Leave the Web Preview tab open past the idle delay on a page that keeps
-   requesting something (it polls, or reload it by hand): the sandbox must not
-   hibernate while those requests keep arriving. Stop the traffic and it
-   hibernates after the idle delay — a page that loaded once and then sat idle
-   makes no further requests and does not hold the sandbox open.
+   "Listening ports" once it is up, as a link that opens the page in a
+   browser tab; the "Web preview" row links the sandbox's base address.
+2. The model's reply should carry the preview URL to click — the sandbox
+   environment prompt names the address pattern once the sandbox exists.
+   Check the assembled prompt if the model does not offer it.
+3. The opened page is a normal top-level tab: absolute-path assets load, and
+   `localStorage` works from the page's own console.
+4. From the host, `curl -H "Host: <sandboxId>-p<port>.<preview.domain>"
+   http://127.0.0.1:<preview.port>/` must return the same page;
+   `curl -H "Host: other.example.com" …` must return 404, and a sandbox with
+   no runner (hibernate it) must answer 503 with the wake hint.
+5. With `preview.domain` removed from the row, the Sandbox tab's preview row
+   must say previews are not configured.
+6. Keep a preview page open past the idle delay on a page that keeps
+   requesting something (it polls, or reload it by hand): the sandbox must
+   not hibernate while those requests keep arriving. Stop the traffic and it
+   hibernates after the idle delay — a page that loaded once and then sat
+   idle makes no further requests and does not hold the sandbox open.
 
 In a browser, `<anything>.localhost` resolves to loopback in Chrome and
-Firefox, so a `preview.domain` of `preview.localhost` gives the frame a real
-host name with no DNS or certificate on a development host; the host mapping
-above then supplies the port.
+Firefox, so a `preview.domain` of `preview.localhost` gives real host names
+with no DNS or certificate on a development host; the host mapping above then
+supplies the port.
 
 For UI changes, record the browser state or capture a screenshot when useful,
 but also exercise the interaction and verify the resulting state. A screenshot

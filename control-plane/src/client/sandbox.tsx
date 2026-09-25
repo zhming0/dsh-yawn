@@ -113,7 +113,13 @@ export function SandboxStatusTab({
             first prompt.
           </p>
         ) : (
-          <SandboxFacts sandbox={view.sandbox} live={view.live} />
+          <SandboxFacts
+            sandbox={view.sandbox}
+            live={view.live}
+            {...(view.previewDomain === undefined
+              ? {}
+              : { previewDomain: view.previewDomain })}
+          />
         )}
       </div>
     </div>
@@ -123,9 +129,11 @@ export function SandboxStatusTab({
 function SandboxFacts({
   sandbox,
   live,
+  previewDomain,
 }: {
   sandbox: SandboxHostFacts;
   live: SandboxLiveFacts | undefined;
+  previewDomain?: string;
 }) {
   const { state } = sandbox;
   return (
@@ -155,19 +163,31 @@ function SandboxFacts({
             {new Date(sandbox.expiresAt).toLocaleString()}
           </Row>
         )}
-        {sandbox.previewHost !== undefined && (
-          <Row label="Web preview">
+        <Row label="Web preview">
+          {sandbox.previewHost !== undefined ? (
             <span>
-              {`${location.protocol}//${sandbox.previewHost}`}
+              <a
+                href={`${location.protocol}//${sandbox.previewHost}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {`${location.protocol}//${sandbox.previewHost}`}
+              </a>
               <br />
               <span style={{ fontSize: 12, color: captionColor }}>
-                Serves a port inside this sandbox, shown live in the Web Preview
-                tab beside the chat. Pick the port there; the host keeps working
-                across a hibernate and wake.
+                Opens this sandbox's servers in a browser tab. The address keeps
+                working across a hibernate and wake; the port is part of the
+                name, as the links under Listening ports show.
               </span>
             </span>
-          </Row>
-        )}
+          ) : (
+            <span style={{ fontSize: 13, color: captionColor }}>
+              {previewDomain === undefined
+                ? "Not configured: set a preview domain (preview.domain in the sandbox-manager settings) and expose its listener, and each sandbox serves its HTTP servers at its own address."
+                : "This sandbox has no ID yet, so there is nothing to open."}
+            </span>
+          )}
+        </Row>
       </Section>
 
       <Section title="Machine">
@@ -183,11 +203,32 @@ function SandboxFacts({
             <Row label="Listening ports">
               {live.listeningPorts.length === 0
                 ? "none"
-                : live.listeningPorts.join(", ")}
+                : live.listeningPorts.map((port, index) => {
+                    const host = withPreviewPort(
+                      sandbox.previewHost ?? "",
+                      String(port),
+                    );
+                    return (
+                      <span key={port}>
+                        {index > 0 && ", "}
+                        {host === undefined ? (
+                          String(port)
+                        ) : (
+                          <a
+                            href={`${location.protocol}//${host}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {port}
+                          </a>
+                        )}
+                      </span>
+                    );
+                  })}
               <br />
               <span style={{ fontSize: 12, color: captionColor }}>
-                Servers the session started. The Web Preview tab offers these
-                ports.
+                Servers the session started; each opens in a browser tab at its
+                own address.
               </span>
             </Row>
             <Row label="System">
@@ -255,6 +296,27 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 }
 
 const captionColor = "var(--dsw-alias-label-caption)";
+
+/**
+ * Swap the port segment of a preview host. The shape is the control plane's
+ * (`<sandboxId>-p<port>.<domain>`, see src/preview.ts); only the first
+ * label's trailing marker is touched, and anything that does not parse
+ * leaves the host alone.
+ */
+function withPreviewPort(host: string, port: string): string | undefined {
+  const trimmed = port.trim();
+  if (!/^\d{1,5}$/.test(trimmed)) {
+    return undefined;
+  }
+  const number = Number(trimmed);
+  if (number < 1 || number > 65_535) {
+    return undefined;
+  }
+  if (!/^[a-z0-9-]+-p\d{1,5}\./.test(host)) {
+    return undefined;
+  }
+  return host.replace(/-p\d{1,5}\./, `-p${trimmed}.`);
+}
 
 function stateDot(state: SandboxHostFacts["state"]): StateDotState {
   return state === "running" ? "ongoing" : "idle";

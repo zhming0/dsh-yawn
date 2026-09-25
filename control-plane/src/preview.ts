@@ -33,7 +33,7 @@ export interface PreviewTarget {
  * labels on every backend (Kubernetes object names, Docker hex ids); anything
  * that is not lowercases rather than failing, so a preview still resolves.
  */
-export function previewLabel(sandboxId: string, port: number): string {
+export function previewLabel(sandboxId: string, port: number | string): string {
   return `${sanitizeLabel(sandboxId)}-p${port}`;
 }
 
