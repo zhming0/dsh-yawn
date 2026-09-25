@@ -123,6 +123,7 @@ describe("preview server", () => {
       port: 0,
       bind: "127.0.0.1",
       gateway: tunnel,
+      authCookieNames: ["_auth"],
       onPreviewHit: (sandboxId) => hits.push(sandboxId),
     });
     await server.listen();
@@ -139,8 +140,9 @@ describe("preview server", () => {
         method: "POST",
         headers: {
           "content-type": "text/plain",
-          // The preview's cookies are its own; they ride like any header.
-          cookie: "app=1",
+          // The app's cookie rides; the fronting proxy's session (and a
+          // large session's numbered chunks) never reach the sandbox.
+          cookie: "_auth=secret; _auth_1=chunk; app=1",
         },
         body: "ping",
       });
@@ -169,6 +171,10 @@ describe("preview server", () => {
       ]);
       expect(forwarded).toContainEqual(["content-type", "text/plain"]);
       expect(forwarded).toContainEqual(["cookie", "app=1"]);
+      // Only the app's cookie survived; the proxy's session did not.
+      expect(forwarded.filter(([name]) => name === "cookie")).toEqual([
+        ["cookie", "app=1"],
+      ]);
       // The browser's connection to the control plane is not the sandbox's.
       expect(forwarded.map(([name]) => name)).not.toContain("host");
       expect(hits).toEqual(["sandbox-one"]);
@@ -177,6 +183,16 @@ describe("preview server", () => {
       const foreign = await request(server.port(), "other.example.com", "/");
       expect(foreign.status).toBe(404);
       expect(hits).toEqual(["sandbox-one"]);
+
+      // A request carrying only the proxy's session forwards no cookie at
+      // all: nothing in the header belongs to the app.
+      await request(server.port(), HOST, "/");
+      const bare = seen[1] as {
+        headers?: Array<{ name: string; value: string }>;
+      };
+      expect(
+        (bare.headers ?? []).map((header) => header.name.toLowerCase()),
+      ).not.toContain("cookie");
 
       // A load balancer can health-check the port.
       const health = await request(server.port(), HOST, "/healthz");

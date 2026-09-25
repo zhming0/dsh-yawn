@@ -423,22 +423,23 @@ the intended state while installing the control plane before its sandbox
 backend exists, and it keeps a mistyped profile map from stopping the host from
 starting, so the settings can still be corrected.
 
-| Setting             | When | Default                 | Meaning                                                                       |
-| ------------------- | ---- | ----------------------- | ----------------------------------------------------------------------------- |
-| `profiles.<name>`   | live | none                    | One sandbox profile; its fields are listed in the next table                  |
-| `defaultProfile`    | live | first profile           | Profile used when a session does not pick one                                 |
-| `idleMs`            | live | 10 minutes              | Idle delay after the last turn or wake before hibernating                     |
-| `expiresAfterMs`    | live | 7 days                  | How long a hibernated workspace is retained                                   |
-| `repository`        | boot | session repository      | Fallback repository for non-anchor sessions                                   |
-| `revision`          | boot | repository default      | Optional branch, tag, or commit to check out                                  |
-| `workspace`         | boot | `/workspace/repository` | Repository checkout and working directory                                     |
-| `stateDir`          | boot | `~/.dsh-yawn`           | Records, broker data, token, instructions, MCP servers, and Workspace anchors |
-| `registrationToken` | boot | see below               | Token(s) runners must present, comma-separated                                |
-| `tunnel.port`       | boot | `8081`                  | Port the host listens on for runner tunnels (see Tunnel)                      |
-| `tunnel.bind`       | boot | `0.0.0.0`               | Address the tunnel listener binds to                                          |
-| `preview.domain`    | boot | none                    | Domain serving previews (see Previews); unset disables them                   |
-| `preview.port`      | boot | `8082`                  | Port the preview listener binds to                                            |
-| `preview.bind`      | boot | `0.0.0.0`               | Address the preview listener binds to                                         |
+| Setting                   | When | Default                 | Meaning                                                                       |
+| ------------------------- | ---- | ----------------------- | ----------------------------------------------------------------------------- |
+| `profiles.<name>`         | live | none                    | One sandbox profile; its fields are listed in the next table                  |
+| `defaultProfile`          | live | first profile           | Profile used when a session does not pick one                                 |
+| `idleMs`                  | live | 10 minutes              | Idle delay after the last turn or wake before hibernating                     |
+| `expiresAfterMs`          | live | 7 days                  | How long a hibernated workspace is retained                                   |
+| `repository`              | boot | session repository      | Fallback repository for non-anchor sessions                                   |
+| `revision`                | boot | repository default      | Optional branch, tag, or commit to check out                                  |
+| `workspace`               | boot | `/workspace/repository` | Repository checkout and working directory                                     |
+| `stateDir`                | boot | `~/.dsh-yawn`           | Records, broker data, token, instructions, MCP servers, and Workspace anchors |
+| `registrationToken`       | boot | see below               | Token(s) runners must present, comma-separated                                |
+| `tunnel.port`             | boot | `8081`                  | Port the host listens on for runner tunnels (see Tunnel)                      |
+| `tunnel.bind`             | boot | `0.0.0.0`               | Address the tunnel listener binds to                                          |
+| `preview.domain`          | boot | none                    | Domain serving previews (see Previews); unset disables them                   |
+| `preview.port`            | boot | `8082`                  | Port the preview listener binds to                                            |
+| `preview.bind`            | boot | `0.0.0.0`               | Address the preview listener binds to                                         |
+| `preview.authCookieNames` | boot | `[]`                    | Cookie names stripped from preview requests before they enter a sandbox       |
 
 Each profile carries the settings of its own backend. Profiles do not share
 settings with each other, so two Kubernetes profiles in one namespace both
@@ -746,27 +747,31 @@ re-arming the idle countdown, so a page that keeps making requests does not
 hibernate under its viewer. A page that loads once and then sits idle makes
 no further requests, and the sandbox hibernates as usual.
 
-**Do not publish the preview listener yet.** The relay forwards the browser's
-headers to the sandbox, cookies included, because the previewed app's own
-session has to work — but that also carries whatever authenticates the
-wildcard host into untrusted sandbox code. `preview.authCookieNames`, which
-drops configured auth-cookie names from the request before it enters the
-tunnel, lands with the exposure half (chart, Service, and Ingress) described
-in `docs/plans/sandbox-preview.md`; keep previews on a development host until
-it does. For the same reason, the listener binds `0.0.0.0` by default: on the
-Kubernetes backend the reference NetworkPolicy lets sandbox egress reach only
-the tunnel port, so a sandbox cannot dial it, but on the Docker development
-path the sandboxes share the host's network and can. Set `preview.bind` to
-`127.0.0.1` when the preview port is not meant to be reachable from the
-network.
+**The listener does not authenticate.** It answers every request that
+reaches it, so whatever publishes it owns authentication; on Kubernetes that
+is the operator's front, not the chart's oauth2-proxy (see
+`docs/kubernetes.md`). The relay forwards the browser's headers to the
+sandbox, cookies included, because the previewed app's own session has to
+work — but that also carries whatever authenticates the wildcard host into
+untrusted sandbox code. `preview.authCookieNames` names cookies the relay
+drops before a request enters the tunnel, including the numbered `_1`, `_2`,
+… chunks of an oversized session; list the front's session cookie there. The
+strip is cookie-only, so a front that authenticates by header still hands
+that header to the sandbox.
+
+The listener binds `0.0.0.0` by default: on the Kubernetes backend the
+reference NetworkPolicy lets sandbox egress reach only the tunnel port, so a
+sandbox cannot dial it, but on the Docker development path the sandboxes
+share the host's network and can. Set `preview.bind` to `127.0.0.1` when the
+preview port is not meant to be reachable from the network.
 
 The Sandbox tab links the sandbox's listening ports (the runner reports them)
 and its preview address, each opening in a browser tab. The sandbox
 environment prompt tells the model the address pattern once its sandbox
 exists, so it can start a server detached and hand the user a clickable URL.
 Without a `preview.domain` the Sandbox tab's preview row says previews are
-not configured. Design and follow-ups (WebSocket upgrades
-for HMR, supervised services): `docs/plans/sandbox-preview.md`.
+not configured. Design and deferred follow-ups (WebSocket upgrades for HMR,
+supervised services): `docs/plans/sandbox-preview.md`.
 
 ## Registration token
 

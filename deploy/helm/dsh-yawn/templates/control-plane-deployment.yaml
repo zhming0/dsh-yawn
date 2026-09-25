@@ -112,6 +112,13 @@ spec:
             - name: tunnel
               containerPort: 8081
               protocol: TCP
+            {{- if .Values.preview.domain }}
+            # The row setting's default; the chart fixes its render points to
+            # it, exactly as the tunnel port is fixed to 8081.
+            - name: preview
+              containerPort: 8082
+              protocol: TCP
+            {{- end }}
           # The server binds 127.0.0.1:3000, so a TCP probe against the pod IP
           # cannot reach it; probe over loopback from inside the container.
           # An unauthenticated GET / answers 401 once dsh is serving, so that

@@ -58,6 +58,26 @@ controlPlane:
   #      backend: kas
   #      warmPool: dsh-yawn-universal
 
+# Previews: serve each sandbox's HTTP servers at their own origin,
+# <sandboxId>-p<port>.<preview.domain>. Setting `domain` enables them: the
+# domain and the strip list travel in the sandbox-settings document the chart
+# mounts at /etc/dsh-yawn/sandbox-settings.yaml (its `preview` section, a
+# deployment base beneath the row config), the control plane opens its
+# preview listener on the row's default port, and the chart creates the
+# dsh-yawn-control-plane-preview Service. The chart does not authenticate
+# previews: the listener answers every request that reaches it, so whatever
+# you put in front of the Service (an authenticating Ingress, Cloudflare
+# Access, a VPN) owns that, along with the wildcard DNS record and
+# certificate; see docs/kubernetes.md.
+preview:
+  domain: ""
+  # Cookie names the control plane strips from preview requests before they
+  # enter a sandbox, including their numbered _1, _2, … chunks. List the
+  # session cookie of whatever authenticates the preview domain: the browser
+  # attaches it to every preview request, and code in the sandbox must never
+  # read it. The previewed app's own cookies pass through.
+  authCookieNames: []
+
 runner:
   # The in-cluster tunnel address handed to sandbox runners.
   # Defaults to the dsh-yawn-control-plane-tunnel Service this chart creates in

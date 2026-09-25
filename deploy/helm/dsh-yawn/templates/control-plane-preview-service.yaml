@@ -1,0 +1,23 @@
+{{- include "dsh-yawn.validate" . }}
+{{- if .Values.preview.domain }}
+{{- /* The anchor preview traffic routes to: point one Ingress rule (or
+Gateway API route) for *.<preview.domain> at this Service. The preview
+listener answers every request that reaches it, so whatever exposes this
+Service owns authentication. The Service is plain HTTP: TLS comes from the
+certificate on the wildcard host, exactly as for the UI. */}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: dsh-yawn-control-plane-preview
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dsh-yawn.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "dsh-yawn.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: preview
+{{- end }}

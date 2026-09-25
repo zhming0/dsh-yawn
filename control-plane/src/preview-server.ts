@@ -17,6 +17,12 @@ export interface PreviewServerOptions {
   port: number;
   bind?: string;
   gateway: PreviewGateway;
+  /**
+   * Cookie names stripped from the request before it enters the sandbox:
+   * the fronting proxy's session, not the app's own cookies. See
+   * PreviewRelayOptions.
+   */
+  authCookieNames?: string[];
   log?: (message: string) => void;
   /**
    * Called for each relayed preview request. Preview traffic is a user
@@ -45,6 +51,9 @@ export class PreviewServer {
   constructor(private readonly options: PreviewServerOptions) {
     this.relay = new PreviewRelay({
       gateway: options.gateway,
+      ...(options.authCookieNames === undefined
+        ? {}
+        : { authCookieNames: options.authCookieNames }),
       ...(options.log === undefined ? {} : { log: options.log }),
       ...(options.onPreviewHit === undefined
         ? {}

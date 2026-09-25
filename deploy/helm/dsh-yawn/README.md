@@ -18,6 +18,25 @@ secrets, instructions, and repository workspaces all work. The first tool call
 in a session needs a sandbox, so it fails with a message naming the missing
 runner until a runner is set up and the control plane points at it.
 
+## Previews
+
+Set `preview.domain` to serve each sandbox's HTTP servers at their own origin,
+`<sandboxId>-p<port>.<domain>`:
+
+```sh
+helm upgrade dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
+  --namespace dsh-yawn --reuse-values \
+  --set preview.domain=sandbox.example.com
+```
+
+The chart creates the `dsh-yawn-control-plane-preview` Service and nothing in
+front of it. You provide the wildcard DNS record, the wildcard certificate
+(DNS-01), the Ingress rule for `*.<domain>`, and the authentication: the
+listener answers every request that reaches it. If that authentication uses a
+cookie, list its name in `preview.authCookieNames` so the control plane strips
+it before a request enters a sandbox. The copy-paste forms and the cookie
+rules are in [docs/kubernetes.md](../../../docs/kubernetes.md).
+
 ## Prerequisites
 
 - a Kubernetes cluster and an OIDC identity provider, unless you reach the

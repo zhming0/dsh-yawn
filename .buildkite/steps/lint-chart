@@ -65,6 +65,25 @@ helm template dsh-yawn-control-plane "$CHART" --namespace platform \
 grep -qF "namespace: platform" /tmp/chart-profile-ns.yaml \
   || { echo "chart profile does not default the namespace to the release namespace" >&2; exit 1; }
 
+# Previews: the settings section, the container port, and the Service all
+# have to render, and the strip list has to reach the settings document.
+render --set controlPlane.sandboxManager.profiles.standard.backend=kas \
+  --set controlPlane.sandboxManager.profiles.standard.warmPool=dsh-yawn-universal \
+  --set preview.domain=sandbox.example.com \
+  --set 'preview.authCookieNames[0]=_front_session' >/tmp/chart-preview.yaml
+for expected in 'domain: "sandbox.example.com"' "authCookieNames:" \
+  "_front_session" "name: preview" "name: dsh-yawn-control-plane-preview" \
+  "targetPort: preview"; do
+  grep -qF "$expected" /tmp/chart-preview.yaml \
+    || { echo "preview render lost: $expected" >&2; exit 1; }
+done
+# Without a domain, nothing preview-shaped renders.
+render --set controlPlane.sandboxManager.profiles.standard.backend=kas \
+  >/tmp/chart-preview-off.yaml
+if grep -q "dsh-yawn-control-plane-preview\|containerPort: 8082" /tmp/chart-preview-off.yaml; then
+  echo "preview resources rendered without preview.domain" >&2; exit 1
+fi
+
 echo "--- :helm: Checking the chart guards"
 expect_fail() {
   local what="$1"; shift
@@ -87,6 +106,12 @@ expect_fail "a startup setting under sandboxManager" --set registrationToken.val
   --set controlPlane.sandboxManager.profiles.standard.backend=kas \
   --set controlPlane.sandboxManager.workspace=/tmp/elsewhere
 expect_fail "oidc without hostname" --set registrationToken.value=x --set oidc.enabled=true
+# The profile matters: without one the pre-existing "needs at least one
+# profile" validation fires first and the case proves nothing.
+expect_fail "preview configured twice" --set registrationToken.value=x \
+  --set controlPlane.sandboxManager.profiles.standard.backend=kas \
+  --set preview.domain=sandbox.example.com \
+  --set controlPlane.sandboxManager.preview.domain=other.com
 expect_fail "LoadBalancer without the proxy" --set registrationToken.value=x \
   --set service.type=LoadBalancer
 
