@@ -516,6 +516,21 @@ export class SandboxManager extends TypertRemoteService {
   }
 
   /**
+   * Note activity from outside the agent loop, such as a keystroke in an open
+   * interactive terminal, so a running sandbox is not hibernated while its
+   * terminal is in use. Nothing starts or wakes: a session without a running
+   * sandbox has nothing to keep alive, and its terminal is already gone.
+   */
+  noteActivity(agent: Agent): void {
+    const sessionId = this.rootSessionId(agent);
+    if (this.engine.record(sessionId)?.state !== "running") {
+      return;
+    }
+    this.idle.markActive(sessionId);
+    this.idle.schedule(sessionId);
+  }
+
+  /**
    * The root session owning the calling agent's sandbox, or undefined outside
    * an agent boundary. Attachment copies are keyed by this id, so a subagent
    * and its root session resolve to the same copy. Synchronous: the

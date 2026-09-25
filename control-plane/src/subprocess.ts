@@ -15,11 +15,18 @@ import {
 import type { Context } from "@deepseek-ai/cordis";
 
 import type { RunnerClient } from "./runner-client.js";
-import { isInsideSandboxWorkspace, pathInSandbox } from "./sandbox-path.js";
+import {
+  isInsideSandboxWorkspace,
+  pathInSandbox,
+  type PathFrames,
+} from "./sandbox-path.js";
+import { TerminalPool } from "./terminal/remote-terminal.js";
 
 export class SandboxSubprocessRuntime extends SubprocessRuntime {
   static inject = ["sandboxManager", "agents"];
   private readonly live = new Set<RemoteProcess>();
+  /** The sandbox terminal feature owns its sessions; this seam only holds them. */
+  private readonly terminals = new TerminalPool();
 
   constructor(ctx: Context) {
     super(ctx);
@@ -28,6 +35,7 @@ export class SandboxSubprocessRuntime extends SubprocessRuntime {
         process.terminate();
       }
       await Promise.allSettled([...this.live].map((process) => process.done));
+      await this.terminals.terminateAll();
     });
   }
 
@@ -80,7 +88,7 @@ export class SandboxSubprocessRuntime extends SubprocessRuntime {
    * the execution world that has to answer, so the seam maps all of them onto
    * the sandbox the same way the shell and filesystem seams map their paths.
    */
-  private executionFrame(): ExecutionFrame {
+  private executionFrame(): PathFrames {
     let sessionWorkspace: string | undefined;
     try {
       sessionWorkspace = this.ctx.agents.requireInitiator().session.header.cwd;
@@ -93,11 +101,28 @@ export class SandboxSubprocessRuntime extends SubprocessRuntime {
     };
   }
 
-  async spawnTerminal(
-    _spec: SubprocessTerminalSpawnSpec,
+  /**
+   * Allocate one interactive terminal in the session's sandbox. The runner
+   * owns the PTY: the request stream carries input, resize, foreground and
+   * activity queries, and signals, while the response stream carries output
+   * and the exit status. Ending the request stream runs the runner's
+   * termination ladder over the session's process group.
+   *
+   * The published handle captures the runner client at allocation, so opening
+   * a terminal wakes a hibernated sandbox once and later keystrokes do not
+   * need an agent boundary. The spec's signal cancels allocation only; it is
+   * detached once the handle is published.
+   *
+   * The whole feature lives in `terminal/`, so a profile without the terminal
+   * rows leaves this handoff and the pool it feeds unused.
+   */
+  spawnTerminal(
+    spec: SubprocessTerminalSpawnSpec,
   ): Promise<SubprocessTerminalHandle> {
-    throw new Error(
-      "interactive terminals are not supported by dsh-yawn Milestone 1",
+    return this.terminals.spawn(
+      this.ctx.sandboxManager.clientForCurrentAgent(),
+      spec,
+      this.executionFrame(),
     );
   }
 
@@ -105,16 +130,10 @@ export class SandboxSubprocessRuntime extends SubprocessRuntime {
     _signal?: AbortSignal,
   ): Promise<SubprocessTerminalEnvironment> {
     // Every runner profile is a Linux image whose shell seam uses bash (see
-    // the bash executor). Terminals themselves are not supported yet, so this
-    // only answers the platform facts the seam asks for.
+    // the bash executor). Terminal requests on a non-Linux runner are refused
+    // by the runner itself.
     return { platform: "posix", defaultShell: "/bin/bash" };
   }
-}
-
-/** The path frames one spawn translates between (see {@link SandboxSubprocessRuntime.executionFrame}). */
-interface ExecutionFrame {
-  readonly sessionWorkspace: string | undefined;
-  readonly sandboxWorkspace: string;
 }
 
 class RemoteProcess implements SubprocessHandle {
@@ -134,7 +153,7 @@ class RemoteProcess implements SubprocessHandle {
   constructor(
     client: Promise<RunnerClient>,
     private readonly spec: SubprocessSpawnSpec,
-    private readonly frame: ExecutionFrame,
+    private readonly frame: PathFrames,
   ) {
     if (spec.stdio.control === "pipe") {
       throw new Error("control pipes are not supported through the sandbox");

@@ -51,6 +51,10 @@
       "types": "./dist/workspace-files.d.ts",
       "default": "./dist/workspace-files.js"
     },
+    "./terminal-controller": {
+      "types": "./dist/terminal/terminal-controller.d.ts",
+      "default": "./dist/terminal/terminal-controller.js"
+    },
     "./launch-token": {
       "types": "./dist/launch-token.d.ts",
       "default": "./dist/launch-token.js"
@@ -121,6 +125,7 @@
     "@deepseek-ai/dsh-api-remotes": "0.1.7-rc.2",
     "@deepseek-ai/dsh-api-session-controller": "0.1.7-rc.2",
     "@deepseek-ai/dsh-api-settings-controller": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-api-terminal-controller": "0.1.7-rc.2",
     "@deepseek-ai/dsh-api-workspace-controller": "0.1.7-rc.2",
     "@deepseek-ai/dsh-api-workspace-files": "0.1.7-rc.2",
     "@deepseek-ai/dsh-client-connection": "0.1.7-rc.2",

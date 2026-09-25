@@ -2,7 +2,8 @@
 
 ## Status
 
-Slice one shipped; slice two deferred. dsh 0.1.5-rc.1 added a right sidebar
+Slice one shipped; slice two deferred; slice three (the Terminal tab) shipped.
+dsh 0.1.5-rc.1 added a right sidebar
 to the Web surface, with a **Files** tab (workspace tree), a **Preview** tab
 (Markdown, code, HTML, PDF, images, plain text), and file cards under each
 assistant turn for files the model presents. The stock rows (`workspace-files`,
@@ -57,9 +58,9 @@ Every fact below was checked against the 0.1.5-rc.2 package sources.
   `tool-bash` call `ctx.get("sandboxPolicy")` only when a confining backend
   sets a default mode, and the sandbox backends do not. `dsh-terminal-bash`
   hard-injects it but is not mounted by the Web patch; the shipped `minimal`
-  preset uses it, and with the stand-in it composes, but its persistent
-  terminal still fails because the sandbox subprocess seam has no
-  `spawnTerminal`.
+  preset uses it, and with the stand-in it composes, and since the sandbox
+  subprocess seam gained `spawnTerminal` (the runner's PTY RPC) its persistent
+  terminal has the provider it waits on.
 
 ## Design
 
@@ -133,6 +134,25 @@ Files tab listed from the index and Preview showed the hibernated message; a
 prompt that edited the file woke the sandbox and the open preview reported the
 change; Retry loaded it; with Preview left open the sandbox hibernated again on
 its idle schedule.
+
+### Slice three: the Terminal tab
+
+Shipped. dsh 0.1.7 added a **Terminal** tab to the same sidebar
+(`terminal-controller`, `ui-sidebar-terminal`); the upgrade that moved this
+package to 0.1.7 kept it off because the sandbox subprocess seam had no
+`spawnTerminal`. The seam now implements it over a bidirectional runner RPC
+that owns a real PTY in the sandbox (a session leader with the PTY as its
+controlling terminal), so input, resize, foreground and activity queries, and
+signals go one way while output and the exit status come back the other. The
+bundle adds one more row, `sandbox-terminal-controller`, using the slice-one
+recipe on the stock controller: `shells` and `create` run inside
+`agents.withInitiator(agent, ...)`, so opening a terminal wakes a hibernated
+sandbox, and `write`/`resize` call `SandboxManager.noteActivity` so the idle
+timer does not hibernate a sandbox out from under an open terminal. Screen
+buffers, reconnection, shell selection, and tab lifetime stay in the stock
+host controller and browser half. Unlike a file browse, a keystroke alone
+neither wakes nor provisions: if the sandbox is gone its terminal is too, and
+the stock controller marks it failed.
 
 ## Open question
 

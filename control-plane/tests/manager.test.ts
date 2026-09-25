@@ -239,6 +239,64 @@ describe("sandbox lifecycle", () => {
     expect(backend.hibernations).toBe(1);
   });
 
+  it("keeps a running sandbox awake across terminal activity", async () => {
+    const backend = new FakeBackend();
+    const ctx = new Context();
+    const manager = new SandboxManager(
+      ctx,
+      {
+        profiles: { standard: { backend: "docker" } },
+        stateDir: directory,
+        repository: "https://github.com/example/public.git",
+        idleMs: 100,
+        expiresAfterMs: 60_000,
+      },
+      { backends: { standard: backend }, gateway: gatewayFor(backend) },
+    );
+    const agent = {
+      id: "session-one",
+      session: { header: {} },
+    } as unknown as Agent;
+
+    await manager.ensureRunning(agent);
+    // Keystrokes arrive faster than the countdown, as they do in a terminal
+    // someone is typing in.
+    for (let keystroke = 0; keystroke < 10; keystroke += 1) {
+      await sleep(30);
+      manager.noteActivity(agent);
+    }
+    expect(backend.hibernations).toBe(0);
+
+    // With the terminal untouched the countdown runs out as usual.
+    await sleep(300);
+    expect(backend.hibernations).toBe(1);
+  });
+
+  it("ignores terminal activity for a session with no running sandbox", async () => {
+    const backend = new FakeBackend();
+    const ctx = new Context();
+    const manager = new SandboxManager(
+      ctx,
+      {
+        profiles: { standard: { backend: "docker" } },
+        stateDir: directory,
+        repository: "https://github.com/example/public.git",
+        idleMs: 10,
+        expiresAfterMs: 60_000,
+      },
+      { backends: { standard: backend }, gateway: gatewayFor(backend) },
+    );
+    const agent = {
+      id: "session-one",
+      session: { header: {} },
+    } as unknown as Agent;
+
+    manager.noteActivity(agent);
+    await sleep(50);
+    expect(backend.provisions).toBe(0);
+    expect(backend.hibernations).toBe(0);
+  });
+
   it("serves subagent sessions from the root session's sandbox", async () => {
     const backend = new FakeBackend();
     const ctx = new Context();

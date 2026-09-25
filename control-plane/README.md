@@ -180,6 +180,25 @@ wakes a sandbox. One cosmetic limit remains: the Files tab's header label
 comes from the session `cwd` in the browser, so it shows the host anchor
 directory while every entry under it is a sandbox path.
 
+The right sidebar's **Terminal** tab (`terminal-controller`,
+`ui-sidebar-terminal`) opens an interactive shell in the session workspace. The
+stock controller allocates it through `ctx.subprocess.spawnTerminal`, and this
+package implements that seam over a bidirectional runner RPC that owns a real
+PTY in the sandbox: a session leader with the PTY as its controlling terminal,
+so the terminal driver owns signal generation, the foreground process group,
+and the window size. Input, resize, foreground and activity queries, and
+signals travel one way; output and one final exit status come back the other.
+Ending the request stream runs a TERM-to-KILL ladder over the session's process
+group and hangs up what remains. Like file browsing, the allocation reaches the
+sandbox through the agent that is asking, so the bundle keeps the stock rows
+and adds `sandbox-terminal-controller`, which wraps the live
+`terminalController` service: shell discovery and terminal creation run inside
+`agents.withInitiator(agent, ...)`, and input and resize reset the session's
+idle timer so a sandbox is not hibernated out from under a terminal someone is
+typing in. Terminal output stays out of the agent transcript. The same seam is
+what dsh's persistent-shell backend (`dsh-terminal-bash`, used by the shipped
+`minimal` preset) waits on.
+
 The header's **Open in...** button (`open-in-app`, `ui-open-in-app`) is off:
 it launches a desktop application on the host against the session `cwd`.
 That `cwd` is the anchor, and the application probe would run through the
@@ -774,11 +793,17 @@ see
 - The subprocess seam translates a path argument only when it is a whole argv
   element under the session workspace. A session-frame path embedded in a
   `--flag=value` pair reaches the sandbox untranslated.
-- Interactive terminals and streaming subprocess input are not implemented.
-  One-shot stdin, streamed stdout/stderr, cancellation, and background process
-  handles are supported. The shipped `minimal` agent preset is built on a
-  persistent terminal, so its only tool fails on every call; use `standard`,
-  `code`, or `cordis`.
+- Streaming subprocess input is not implemented: one-shot stdin, streamed
+  stdout/stderr, cancellation, and background process handles are supported,
+  and interactive terminals allocate their own PTY rather than using it.
+- An interactive terminal lives and dies with its sandbox. Idle hibernation,
+  expiry, and a host restart end every open terminal; its screen buffer on the
+  host is the only part that survives a browser reload. While a shell is
+  running the provider reports `unknown` activity — proving a prompt needs
+  shell integration the runner does not have — so unattended cleanup cannot
+  reclaim a live-but-quiet terminal; once the session is gone the provider
+  reports `idle` and cleanup can. Explicit close and session disposal always
+  work.
 - Shell and subprocess output is kept in bounded in-memory tails. Truncated
   output is reported, but it is not copied to a spill file.
 - An uploaded attachment reaches the sandbox through one unary `WriteFile` RPC

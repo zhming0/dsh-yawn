@@ -92,15 +92,11 @@
 # also lists this bundle and can switch the control plane's own services off;
 # re-enable it from the same page if that happens.
 
-# 0.1.7 also mounts a Terminal tab over `spawnTerminal`. This package's
-# subprocess seam does not implement interactive terminals yet (its
-# spawnTerminal explains that), so the tab would only offer an error; keep
-# it off until terminals are real.
-- id: terminal-controller
-  disabled: true
-
-- id: ui-sidebar-terminal
-  disabled: true
+# The Web Terminal tab stays mounted: its host half (`terminal-controller`) and
+# its browser half (`ui-sidebar-terminal`) go together, and the
+# sandbox-terminal-controller row inserted below gives the host half the agent
+# boundary its subprocess calls need. The stock rows are untouched, so the
+# sidebar's terminal provider still ships with the page.
 
 - insert:
     # Owns one sandbox per dsh session: provision, idle hibernate, wake, expiry,
@@ -138,6 +134,13 @@
     # of injecting them, so a headless profile still boots with this row.
     - id: sandbox-workspace-files
       name: '@zhming0/dsh-yawn/workspace-files'
+
+    # Runs the Web Terminal tab (the stock terminal-controller row above) as
+    # the session it serves, so opening a terminal wakes and reaches the
+    # session's sandbox, and terminal input keeps it awake. Same wait-not-
+    # inject shape as the row above.
+    - id: sandbox-terminal-controller
+      name: '@zhming0/dsh-yawn/terminal-controller'
 
     # Skills authored in this package as TypeScript modules, for the reason the
     # stock skill rows cannot serve a sandbox: `dsh-skill-filesystem` reads its

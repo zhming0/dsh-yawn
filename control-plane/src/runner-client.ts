@@ -3,6 +3,7 @@ import type { Duplex } from "node:stream";
 import { createClient, type Client } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-node";
 
+import { TerminalService } from "./gen/dsh/yawn/v1/terminal_pb.js";
 import {
   RunnerService,
   type EditFileRequest,
@@ -29,7 +30,14 @@ export type HttpProxyRequestMessage =
 
 /** A small facade keeps generated RPC details out of dsh capability adapters. */
 export class RunnerClient {
-  constructor(private readonly client: GeneratedClient) {}
+  constructor(
+    private readonly client: GeneratedClient,
+    /**
+     * The terminal service. It shares this connection, and the sandbox
+     * terminal feature is its only user (see `proto/dsh/yawn/v1/terminal.proto`).
+     */
+    readonly terminals: Client<typeof TerminalService>,
+  ) {}
 
   health(options?: CallOptions) {
     return this.client.health({}, options);
@@ -148,5 +156,8 @@ export function runnerClientForSocket(socket: Duplex): RunnerClient {
     idleConnectionTimeoutMs: 2 ** 31 - 1,
   });
 
-  return new RunnerClient(createClient(RunnerService, transport));
+  return new RunnerClient(
+    createClient(RunnerService, transport),
+    createClient(TerminalService, transport),
+  );
 }
