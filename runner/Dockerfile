@@ -108,7 +108,23 @@ RUN set -eux; \
     install -d "${AGENT_BROWSER_INSTALL_DIR}"; \
     npm install -g --prefix "${AGENT_BROWSER_INSTALL_DIR}" "agent-browser@${AGENT_BROWSER_VERSION}"; \
     ln -s "${AGENT_BROWSER_INSTALL_DIR}/bin/agent-browser" /usr/local/bin/agent-browser; \
-    chown -R sandbox:sandbox "${AGENT_BROWSER_INSTALL_DIR}"
+    chown -R sandbox:sandbox "${AGENT_BROWSER_INSTALL_DIR}"; \
+    apt-get clean; \
+    rm -f /etc/apt/apt.conf.d/docker-clean; \
+    printf '%s\n' \
+      '# dsh-yawn: keep downloaded .deb files on the workspace volume, so a' \
+      '# machine rebuilt around that volume re-installs the system packages a' \
+      '# repository setup needs without downloading them again. The runner' \
+      '# creates the directory; keep the path equal to its aptCacheDir.' \
+      '# Written last, after the apt installs above, so those layers stay small.' \
+      'Dir::Cache::Archives "/workspace/.dsh-yawn/apt-cache/";' \
+      'APT::Keep-Downloaded-Packages "true";' \
+      > /etc/apt/apt.conf.d/90-dsh-yawn
+# The setup marker lives on the machine's own filesystem, not on the workspace
+# volume, so a machine rebuilt around the surviving volume runs the repository's
+# setup again. The sandbox user writes the marker; see markerPath in
+# runner/service/setup.go. Keep this image free of the marker file itself.
+RUN install -d -o sandbox -g sandbox -m 0755 /var/lib/dsh-yawn
 # The on-demand browser bootstrap ships in the image the session runs, so that
 # a session runs the copy pinned to its own image instead of the control plane
 # having to send one through the skill body.

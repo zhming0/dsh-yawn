@@ -54,7 +54,10 @@ spec:
         accessModes: [ReadWriteOnce]
         resources:
           requests:
-            storage: 2Gi
+            # The checkout, the home directory (mise toolchains and package
+            # caches), the artifacts folder, and the apt cache, which holds up
+            # to 2GiB of .deb files; see docs/kubernetes.md.
+            storage: 6Gi
   podTemplate:
     metadata:
       annotations:

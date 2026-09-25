@@ -110,7 +110,7 @@ patches:
               storageClassName: rook-ceph-block
               resources:
                 requests:
-                  storage: 5Gi
+                  storage: 10Gi
       # Pod resources: one ceiling the kubelet splits across the containers.
       - op: add
         path: /spec/podTemplate/spec/resources

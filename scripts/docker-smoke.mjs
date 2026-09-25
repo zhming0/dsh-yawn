@@ -1,13 +1,20 @@
 #!/usr/bin/env node
 
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
+import { promisify } from "node:util";
 
 import { DockerBackend } from "../control-plane/dist/backends/docker.js";
 import { previewHost } from "../control-plane/dist/preview.js";
 import { PreviewServer } from "../control-plane/dist/preview-server.js";
 import { TunnelServer } from "../control-plane/dist/tunnel.js";
+
+const execFileAsync = promisify(execFile);
+
+/** Run one `docker` subcommand, for the checks the backend cannot express. */
+const docker = (arguments_) => execFileAsync("docker", arguments_);
 
 const image = process.env.DSH_YAWN_RUNNER_IMAGE ?? "dsh-yawn-runner:dev";
 const workspace = "/workspace/repository";
@@ -123,26 +130,29 @@ try {
   await client.writeFile({
     path: `${workspace}/.agents/setup`,
     content: new TextEncoder().encode(
-      `#!/bin/sh\nset -eu\nprintf 'workspace survived' > ${workspace}/sentinel\n`,
+      `#!/bin/sh\nset -eu\nprintf 'x' >> ${workspace}/.setup-runs\nprintf 'workspace survived' > ${workspace}/sentinel\n`,
     ),
     guard: { case: "createIfAbsent", value: true },
   });
-  await client.writeFile({
-    path: `${workspace}/.agents/resume`,
-    content: new TextEncoder().encode(
-      `#!/bin/sh\nset -eu\nprintf 'resumed' > ${workspace}/resumed\n`,
-    ),
-    guard: { case: "createIfAbsent", value: true },
-  });
-  await run(client, ["chmod", "+x", `${workspace}/.agents/setup`, `${workspace}/.agents/resume`]);
+  await run(client, ["chmod", "+x", `${workspace}/.agents/setup`]);
   const firstSetup = await client.setup({
     repositoryUrl: "https://github.com/example/unused.git",
     revision: "",
     workspace,
   });
   if (!firstSetup.ran) throw new Error("first setup did not run");
+  if ((await readText(client, `${workspace}/.setup-runs`)) !== "x") {
+    throw new Error("the setup hook did not record exactly one run");
+  }
+  if (
+    (await readText(client, "/var/lib/dsh-yawn/setup-done")) !== "complete\n"
+  ) {
+    throw new Error("the setup marker is not on the machine");
+  }
 
-  // Hibernation kills the tunnel socket; on wake the runner dials back in.
+  // Hibernation kills the tunnel socket; on wake the runner dials back in. The
+  // container is the same machine, so its setup marker survived and setup must
+  // not run again.
   await backend.hibernate(handle.reference);
   tunnel.drop(handle.sandboxId);
   handle = await backend.wake(handle.reference);
@@ -152,13 +162,11 @@ try {
     revision: "",
     workspace,
   });
-  if (!secondSetup.ran) throw new Error("resume hook did not run after wake");
-  const resumed = await client.readFile({
-    path: `${workspace}/resumed`,
-    maxBytes: 1024n,
-  });
-  if (new TextDecoder().decode(resumed.content) !== "resumed") {
-    throw new Error("resume hook did not run after wake");
+  if (secondSetup.ran) {
+    throw new Error("setup re-ran on a machine that kept its marker");
+  }
+  if (await readText(client, `${workspace}/.setup-runs`) !== "x") {
+    throw new Error("setup ran more than once on one machine");
   }
   const sentinel = await client.readFile({
     path: `${workspace}/sentinel`,
@@ -189,6 +197,12 @@ try {
   if (nodeVersionAfterWake.trim() !== "v24.19.0") {
     throw new Error("mise-managed tools did not survive hibernation");
   }
+
+  // A Kubernetes wake builds a new machine around the workspace volume, and
+  // the new machine must run setup again. Docker's own backend keeps its
+  // container, so two containers sharing a named volume stand in for that
+  // rebuild here.
+  await assertNewMachineRunsSetupAgain(tunnel, image, registrationToken);
 
   // The preview listener: a server started by a session command, reached by
   // host name. setsid detaches it from the exec process group so it outlives
@@ -290,6 +304,99 @@ function requestByHost(port, host, path) {
     outgoing.on("error", reject);
     outgoing.end();
   });
+}
+
+/**
+ * A machine rebuilt around the same workspace volume runs setup again, because
+ * the marker lives on the machine and not on the volume. The two containers
+ * here are plain `docker run`s: the backend's own container has no volume, and
+ * its hibernate/wake keeps the machine, which the earlier checks cover.
+ */
+async function assertNewMachineRunsSetupAgain(
+  tunnel,
+  image,
+  registrationToken,
+) {
+  const suffix = Date.now();
+  const volume = `dsh-smoke-volume-${suffix}`;
+  const sandboxId = `dsh-smoke-machine-${suffix}`;
+  const container = (name) => `dsh-smoke-machine-${suffix}-${name}`;
+  const start = (name) =>
+    docker([
+      "run",
+      "--detach",
+      "--name",
+      container(name),
+      "--user",
+      "1000:1000",
+      "--volume",
+      `${volume}:/workspace`,
+      "--add-host",
+      "host.docker.internal:host-gateway",
+      "--env",
+      `DSH_YAWN_SANDBOX_ID=${sandboxId}`,
+      "--env",
+      `DSH_YAWN_CONTROL_PLANE_URL=ws://host.docker.internal:${tunnel.port()}/tunnel`,
+      "--env",
+      `DSH_YAWN_REGISTRATION_TOKEN=${registrationToken}`,
+      image,
+    ]);
+  const setupRequest = {
+    repositoryUrl: "https://github.com/example/unused.git",
+    revision: "",
+    workspace: "/workspace/repository",
+  };
+  try {
+    await docker(["volume", "create", volume]);
+    await start("one");
+    let client = await waitForRunner(tunnel, sandboxId);
+    await run(client, [
+      "mkdir",
+      "-p",
+      "/workspace/repository/.git",
+      "/workspace/repository/.agents",
+    ]);
+    await client.writeFile({
+      path: "/workspace/repository/.agents/setup",
+      content: new TextEncoder().encode(
+        "#!/bin/sh\nset -eu\nprintf 'x' >> /workspace/repository/.setup-runs\n",
+      ),
+      guard: { case: "createIfAbsent", value: true },
+    });
+    await run(client, ["chmod", "+x", "/workspace/repository/.agents/setup"]);
+    const first = await client.setup(setupRequest);
+    if (!first.ran) {
+      throw new Error("setup did not run on a fresh machine");
+    }
+    if ((await readText(client, "/workspace/repository/.setup-runs")) !== "x") {
+      throw new Error("the setup hook did not record exactly one run");
+    }
+
+    // The machine goes away; only the volume stays.
+    await docker(["rm", "--force", container("one")]);
+    tunnel.drop(sandboxId);
+    await start("two");
+    client = await waitForRunner(tunnel, sandboxId);
+    const second = await client.setup(setupRequest);
+    if (!second.ran) {
+      throw new Error("a new machine with the same volume did not run setup");
+    }
+    if ((await readText(client, "/workspace/repository/.setup-runs")) !== "xx") {
+      throw new Error("setup did not run once per machine");
+    }
+  } finally {
+    await docker(["rm", "--force", container("one"), container("two")]).catch(
+      () => {},
+    );
+    await docker(["volume", "rm", "--force", volume]).catch(() => {});
+    tunnel.drop(sandboxId);
+  }
+}
+
+/** Read a small file through the runner, for an assertion. */
+async function readText(client, path) {
+  const file = await client.readFile({ path, maxBytes: 4096n });
+  return new TextDecoder().decode(file.content);
 }
 
 async function waitForRunner(tunnel, sandboxId) {

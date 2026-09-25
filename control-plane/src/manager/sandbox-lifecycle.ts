@@ -635,9 +635,10 @@ export class SandboxLifecycle {
       await this.deps.store.set(woken);
       transitions.add(1, { backend: record.backend, transition: "wake" });
       const client = await this.deps.attachment.attach(woken, repositoryUrl);
-      // After the attach, so the hook sees the reconnected runner once the
-      // runner's own resume hook has run. A backend that cannot hibernate
-      // only probes a sandbox it never put away, so it has no wake to report.
+      // After the attach, so the hook sees the reconnected runner once its
+      // setup step has run on the woken machine. A backend that cannot
+      // hibernate only probes a sandbox it never put away, so it has no wake
+      // to report.
       if (backend.capabilities.supportsHibernate) {
         for (const hooks of this.hooks) {
           await hooks.afterWake?.({

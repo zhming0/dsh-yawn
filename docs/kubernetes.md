@@ -207,11 +207,14 @@ what that buys:
   container, including over the runner's own files. Treat this as part of the
   same trust decision as the privileged Docker sidecar, and drop the sudoers
   file in a custom image if that is the wrong trade for a shared cluster.
-- **It does not survive a wake.** apt writes to `/usr` and `/var`, which come
-  from the image again when the pod is rebuilt; only the workspace volume
-  survives. A repository that needs the packages after a wake either re-runs
-  its bootstrap from `.agents/resume` or installs into `$HOME` instead, as
-  `install-browser` does with `dpkg-deb -x`.
+- **It does not survive a wake by itself.** apt writes to `/usr` and `/var`,
+  which come from the image again when the pod is rebuilt; only the workspace
+  volume survives. The repository gets its packages back through
+  `.agents/setup`, which the runner runs again on every new machine, and
+  through the `.deb` cache on the workspace volume at
+  `/workspace/.dsh-yawn/apt-cache`, which spares the second download. A
+  repository that wants a package to survive without setup can still install
+  into `$HOME` instead, as `install-browser` does with `dpkg-deb -x`.
 
 ## The in-cluster control plane
 
@@ -552,13 +555,16 @@ the test prints a note that models will not be able to pull images. On failure
 the main claim is intentionally preserved for debugging; on success it is
 removed.
 
-The PVC carries the whole `/workspace` tree: the checkout and the home
-directory at `/workspace/home`, which holds mise's data and shims, package
-caches, and anything else installed under `$HOME`. A wake therefore keeps
-mise-installed toolchains and home files, while `/tmp`, apt packages,
-processes, and anything installed elsewhere in the container are gone. Home
-caches share the claim's storage quota, so size it for the toolchains a session
-installs.
+The PVC carries the whole `/workspace` tree: the checkout, the home directory
+at `/workspace/home` (mise's data and shims, package caches, and anything else
+installed under `$HOME`), the artifacts folder, and the apt cache at
+`/workspace/.dsh-yawn/apt-cache`. A wake therefore keeps mise-installed
+toolchains, home files, and the downloaded `.deb` files, while `/tmp`, the
+installed apt packages, processes, and anything else in the container are gone;
+the runner runs the repository's setup again on the new machine to put those
+packages back. The checked-in template requests 6Gi, which holds all of that
+including up to 2GiB of `.deb` files. Home caches share the claim's storage
+quota, so size it for the toolchains a session installs.
 
 Expiry/deletion is terminal and the owned PVC is garbage-collected. A
 hibernated PVC survives only while its Sandbox/Claim remain. Suspended or

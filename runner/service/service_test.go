@@ -264,25 +264,184 @@ func TestResolveMissingLeafThroughSymlink(t *testing.T) {
 	}
 }
 
-func TestSetupRestoresGitCredentialHelperAfterWake(t *testing.T) {
-	home := t.TempDir()
+// newSetupService returns a service whose machine state and workspace volume
+// are temporary, so a setup test never touches /var/lib/dsh-yawn or /workspace.
+func newSetupService(t *testing.T) *Service {
+	t.Helper()
+	service := New("box")
+	service.stateDir = t.TempDir()
+	service.volumeRoot = t.TempDir()
+	return service
+}
+
+// newSetupWorkspace returns a workspace that already holds the checkout, as a
+// workspace volume has after a wake, plus a `.agents/setup` hook that records
+// every run. The returned path counts the runs.
+func newSetupWorkspace(t *testing.T) (string, string) {
+	t.Helper()
 	workspace := t.TempDir()
-	t.Setenv("HOME", home)
+	hook := filepath.Join(workspace, ".agents", "setup")
+	if err := os.MkdirAll(filepath.Dir(hook), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nprintf 'x' >> .setup-count\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Mkdir(filepath.Join(workspace, ".git"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(setupMarkerPath(workspace), []byte("complete\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	return workspace, filepath.Join(workspace, ".setup-count")
+}
 
-	s := New("box")
-	response, err := s.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace}))
+// setupRuns counts the runs the test hook recorded.
+func setupRuns(t *testing.T, countFile string) int {
+	t.Helper()
+	content, err := os.ReadFile(countFile)
+	if os.IsNotExist(err) {
+		return 0
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A completed setup with no resume hook is a quiet wake: nothing re-runs.
+	return len(content)
+}
+
+func TestSetupRunsOnANewMachine(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workspace, countFile := newSetupWorkspace(t)
+	service := newSetupService(t)
+
+	response, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !response.Msg.Ran {
+		t.Fatal("setup did not run on a new machine")
+	}
+	if _, err := os.Stat(service.markerPath()); err != nil {
+		t.Fatalf("setup marker was not written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(service.aptCacheDir(), "partial")); err != nil {
+		t.Fatalf("apt cache directory was not created: %v", err)
+	}
+	if runs := setupRuns(t, countFile); runs != 1 {
+		t.Fatalf("setup ran %d times on a new machine, want 1", runs)
+	}
+}
+
+func TestSetupSkipsSetupOnTheSameMachine(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workspace, countFile := newSetupWorkspace(t)
+	service := newSetupService(t)
+
+	if _, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace})); err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Msg.Ran {
+		t.Fatal("setup reported a run on a machine that already ran it")
+	}
+	if runs := setupRuns(t, countFile); runs != 1 {
+		t.Fatalf("setup ran %d times on one machine, want 1", runs)
+	}
+}
+
+func TestSetupIgnoresTheOldGitMarker(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workspace, countFile := newSetupWorkspace(t)
+	legacyMarker := filepath.Join(workspace, ".git", ".agents-setup-done")
+	if err := os.WriteFile(legacyMarker, []byte("complete\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	service := newSetupService(t)
+
+	response, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !response.Msg.Ran {
+		t.Fatal("the old .git marker suppressed setup on a new machine")
+	}
+	if runs := setupRuns(t, countFile); runs != 1 {
+		t.Fatalf("setup ran %d times, want 1", runs)
+	}
+	if _, err := os.Stat(legacyMarker); !os.IsNotExist(err) {
+		t.Fatalf("old .git marker was not removed: %v", err)
+	}
+}
+
+func TestSetupNeverRunsAResumeHook(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workspace, _ := newSetupWorkspace(t)
+	if err := os.WriteFile(
+		filepath.Join(workspace, ".agents", "resume"),
+		[]byte("#!/bin/sh\nprintf resumed > .resumed\n"),
+		0755,
+	); err != nil {
+		t.Fatal(err)
+	}
+	service := newSetupService(t)
+
+	for range 2 {
+		if _, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace})); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".resumed")); !os.IsNotExist(err) {
+		t.Fatalf("a .agents/resume hook ran: %v", err)
+	}
+}
+
+func TestFailedSetupIsNotRemembered(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workspace := t.TempDir()
+	if err := os.Mkdir(filepath.Join(workspace, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(workspace, ".agents"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(workspace, ".agents", "setup"),
+		[]byte("#!/bin/sh\nprintf 'x' >> .setup-count\nexit 1\n"),
+		0755,
+	); err != nil {
+		t.Fatal(err)
+	}
+	service := newSetupService(t)
+
+	if _, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace})); err == nil {
+		t.Fatal("a failing setup returned no error")
+	}
+	if _, err := os.Stat(service.markerPath()); !os.IsNotExist(err) {
+		t.Fatalf("a failed setup wrote the marker: %v", err)
+	}
+	// The next start on the same machine tries again.
+	if _, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace})); err == nil {
+		t.Fatal("a second setup returned no error")
+	}
+	if runs := setupRuns(t, filepath.Join(workspace, ".setup-count")); runs != 2 {
+		t.Fatalf("failed setup ran %d times, want 2", runs)
+	}
+}
+
+func TestSetupRestoresGitCredentialHelperOnAMachineThatAlreadyRanSetup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	service := newSetupService(t)
+	if err := os.WriteFile(service.markerPath(), []byte("complete\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: t.TempDir()}))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if response.Msg.Ran {
-		t.Fatal("resume hook ran when none is present")
+		t.Fatal("setup ran on a machine that already ran it")
 	}
 	config, err := os.ReadFile(filepath.Join(home, ".gitconfig"))
 	if err != nil {
@@ -293,85 +452,6 @@ func TestSetupRestoresGitCredentialHelperAfterWake(t *testing.T) {
 	}
 }
 
-func TestSetupRunsResumeHookOnWake(t *testing.T) {
-	home := t.TempDir()
-	workspace := t.TempDir()
-	t.Setenv("HOME", home)
-	if err := os.Mkdir(filepath.Join(workspace, ".git"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(workspace, ".agents"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(setupMarkerPath(workspace), []byte("complete\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(workspace, ".agents", "resume"),
-		[]byte("#!/bin/sh\nprintf resumed > .resumed\n"),
-		0755,
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	s := New("box")
-	response, err := s.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !response.Msg.Ran {
-		t.Fatal("resume hook did not run")
-	}
-	if _, err := os.Stat(filepath.Join(workspace, ".resumed")); err != nil {
-		t.Fatalf("resume hook did not run: %v", err)
-	}
-}
-
-func TestSetupRunsSetupOnceAndSkipsOnResume(t *testing.T) {
-	home := t.TempDir()
-	workspace := t.TempDir()
-	t.Setenv("HOME", home)
-	if err := os.Mkdir(filepath.Join(workspace, ".git"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(workspace, ".agents"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	setup := filepath.Join(workspace, ".agents", "setup")
-	if err := os.WriteFile(setup, []byte("#!/bin/sh\nprintf 'x' >> .setup-count\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	s := New("box")
-	first, err := s.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !first.Msg.Ran {
-		t.Fatal("setup did not run on a fresh workspace")
-	}
-	if _, err := os.Stat(setupMarkerPath(workspace)); err != nil {
-		t.Fatalf("setup marker was not written: %v", err)
-	}
-
-	second, err := s.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// No .agents/resume exists, so the second call is a quiet resume that must
-	// not re-run the one-time setup.
-	if second.Msg.Ran {
-		t.Fatal("setup re-ran on resume")
-	}
-	count, err := os.ReadFile(filepath.Join(workspace, ".setup-count"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(count) != "x" {
-		t.Fatalf("setup ran %d times, want 1", len(count))
-	}
-}
-
 func TestSetupClonesBelowFilesystemRoot(t *testing.T) {
 	home := t.TempDir()
 	source := t.TempDir()
@@ -379,7 +459,7 @@ func TestSetupClonesBelowFilesystemRoot(t *testing.T) {
 	workspace := filepath.Join(filesystemRoot, "repository")
 	t.Setenv("HOME", home)
 
-	s := New("box")
+	service := newSetupService(t)
 	commands := [][]string{
 		{"git", "init", "--initial-branch=main"},
 		{"git", "add", "README.md"},
@@ -389,7 +469,7 @@ func TestSetupClonesBelowFilesystemRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, command := range commands {
-		if err := s.run(context.Background(), source, command...); err != nil {
+		if err := service.run(context.Background(), source, command...); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -397,7 +477,7 @@ func TestSetupClonesBelowFilesystemRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	response, err := s.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{
+	response, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{
 		RepositoryUrl: source,
 		Workspace:     workspace,
 	}))

@@ -16,22 +16,24 @@ interface SandboxNotice {
  * The one-turn notes the model sees when ensureRunning brought its session
  * back in an environment it did not last see: a checkpoint restore, a wake
  * that built a new machine, or a wake that reused the old one. The environment
- * section carries the rule — the artifacts folder survives every sleep — so a
- * note states what happened this time, and only a restore that had to leave
- * the folder behind names an exception to that rule.
+ * section carries the rule — the artifacts folder survives every sleep, and a
+ * rebuilt machine runs the repository's setup again — so a note states what
+ * happened this time, names `.agents/setup` as the thing that put the
+ * repository's tools back, and only a restore that had to leave the folder
+ * behind names an exception to that rule.
  */
 const RESTORE_NOTICE: SandboxNotice = {
-  text: "This sandbox was recreated. Your Git changes and commits are back. Installed tools, ignored files, and everything else outside the repository are gone. Previously staged changes are now unstaged. Re-run setup steps you need before continuing.",
+  text: "This sandbox was recreated. Your Git changes and commits are back. The repository's setup (`.agents/setup`) ran before the restore, so re-run project steps if your restored changes affect them. Anything you installed yourself, ignored files, and everything else outside the repository are gone. Previously staged changes are now unstaged.",
   summary: "Sandbox restored from a checkpoint",
 };
 const RESTORE_NOTICE_ARTIFACTS_DROPPED = (
   artifacts: string,
 ): SandboxNotice => ({
-  text: `This sandbox was recreated. Your Git changes and commits are back, but the artifacts folder could not be brought back, so the files in ${artifacts} are gone. Installed tools, ignored files, and everything else outside the repository are gone too. Previously staged changes are now unstaged. Re-run setup steps you need before continuing.`,
+  text: `This sandbox was recreated. Your Git changes and commits are back, but the artifacts folder could not be brought back, so the files in ${artifacts} are gone. The repository's setup (\`.agents/setup\`) ran before the restore, so re-run project steps if your restored changes affect them. Anything you installed yourself, ignored files, and everything else outside the repository are gone. Previously staged changes are now unstaged.`,
   summary: "Sandbox restored from a checkpoint without artifacts",
 });
 const WAKE_NOTICE: SandboxNotice = {
-  text: "This sandbox was suspended and woke on a newly created machine. Files under /workspace survived, including your home directory, but running processes, /tmp, and anything installed outside /workspace are gone. Re-create what you need before continuing.",
+  text: "This sandbox was suspended and woke on a newly created machine. Files under /workspace survived, including your home directory, but running processes, /tmp, and anything you installed yourself outside /workspace are gone. The repository's setup (`.agents/setup`) ran again on this machine; re-create anything else you need before continuing.",
   summary: "Sandbox woke from hibernation",
 };
 const WAKE_NOTICE_KEPT_FILESYSTEM: SandboxNotice = {
