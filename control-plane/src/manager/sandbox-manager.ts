@@ -45,7 +45,11 @@ import { McpPool } from "../mcp-pool.js";
 import type { McpServerView, McpTestResult } from "../mcp-remote.js";
 import { McpServerStore, type McpServerEntry } from "../mcp-store.js";
 import { yawnHost } from "../remote-contributions.js";
-import { PLACEHOLDER_PREVIEW_PORT, previewHost } from "../preview.js";
+import {
+  PLACEHOLDER_PREVIEW_PORT,
+  previewHost,
+  previewLabel,
+} from "../preview.js";
 import { PreviewServer } from "../preview-server.js";
 import type { RunnerClient } from "../runner-client.js";
 import type { SandboxSettingsView } from "../sandbox-settings-remote.js";
@@ -555,6 +559,29 @@ export class SandboxManager extends TypertRemoteService {
     return profile === undefined
       ? undefined
       : this.registry.backendOf(profile.name)?.capabilities;
+  }
+
+  /**
+   * The address pattern this sandbox's HTTP servers are served at, for the
+   * sandbox environment prompt: `https://<label>.<domain>/` with PORT where
+   * the server's port goes. Undefined while previews are unconfigured or the
+   * session has no sandbox yet; the prompt resolves it on each assembly, so
+   * the sentence appears from the first prompt after provisioning.
+   */
+  previewOriginFor(agent: Agent): string | undefined {
+    const domain = this.config.preview.domain;
+    if (domain === undefined) {
+      return undefined;
+    }
+    const record = this.engine.record(this.rootSessionId(agent));
+    if (
+      record === undefined ||
+      !("sandboxId" in record) ||
+      record.sandboxId === undefined
+    ) {
+      return undefined;
+    }
+    return `https://${previewLabel(record.sandboxId, "PORT")}.${domain}/`;
   }
 
   /** Create and register the host Workspace selected by repository URL in Web. */

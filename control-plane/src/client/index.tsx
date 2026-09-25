@@ -18,7 +18,6 @@ import {
   installTurnNotifications,
   type ClientSessions,
 } from "./notifications.js";
-import { PreviewTab } from "./preview.js";
 import { SandboxProfileChip } from "./profile.js";
 import { RepositoryDirectoryFlow } from "./repository-directory-flow.js";
 import { SandboxStatusTab } from "./sandbox.js";
@@ -157,7 +156,7 @@ export async function apply(ctx: Context) {
     });
     remoteCtx.slots.inject(
       "conversation.view",
-      function* registerSandboxViews() {
+      function* registerSandboxView() {
         yield remoteCtx.slots.register(
           {
             name: "conversation.view",
@@ -171,20 +170,6 @@ export async function apply(ctx: Context) {
             }),
           },
           SandboxStatusTab,
-        );
-        yield remoteCtx.slots.register(
-          {
-            name: "conversation.view",
-            id: "dsh-yawn.preview",
-            // Beside the Sandbox tab, sharing its status reader.
-            order: 21,
-            label: () => "Web Preview",
-            inject: (sessionId) => ({
-              sessionId,
-              ...injectedStatus(),
-            }),
-          },
-          PreviewTab,
         );
       },
     );
