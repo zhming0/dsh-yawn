@@ -210,6 +210,44 @@ describe("MCP pool", () => {
     expect(pool.views()[0]?.error).toContain("no tools are registered");
   });
 
+  it("reports the cause behind a failed mount", async () => {
+    await store.upsert({
+      serverName: "alpha",
+      url: "https://alpha.example/mcp",
+      enabled: true,
+    });
+    await pool.sync();
+
+    // The client's own message names no reason; the actionable part is the
+    // cause, which is where a 401 or a refused connection sits.
+    mounts[0]?.reject(
+      new Error(
+        "mcp-client(alpha): initial connection or tool synchronization failed",
+        { cause: new Error("Streamable HTTP error: 401 Unauthorized") },
+      ),
+    );
+    await tick();
+
+    expect(pool.views()[0]?.error).toBe(
+      "mcp-client(alpha): initial connection or tool synchronization failed: " +
+        "Streamable HTTP error: 401 Unauthorized",
+    );
+  });
+
+  it("keeps one mount when syncs overlap", async () => {
+    await store.upsert({
+      serverName: "alpha",
+      url: "https://alpha.example/mcp",
+      enabled: true,
+    });
+
+    // The Web page polls while a mount settles, so these overlap in practice.
+    await Promise.all([pool.sync(), pool.sync(), pool.sync()]);
+
+    expect(mounts).toHaveLength(1);
+    expect(pool.views()[0]).toMatchObject({ status: "starting" });
+  });
+
   it("retry remounts an entry whose tools were unregistered", async () => {
     await store.upsert({
       serverName: "alpha",

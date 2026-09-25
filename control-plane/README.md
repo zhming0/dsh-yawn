@@ -138,13 +138,17 @@ Streamable HTTP. An enabled server's tools join the model's tool list as
 `mcp__<serverName>__<tool>`, and its resources join the profile's shared
 `mcp-resources` service, which dsh-base mounts. A token is sent as a static
 `Authorization: Bearer` header and is write-only: the browser receives only
-whether a token is saved, never its value. Adding, editing, disabling, or
-removing a server mounts or unmounts its tools for new tool calls without
-restarting the host, and **Test connection** probes an unsaved entry without
-saving it. A server that fails to connect is reported as `error`, and
-**Retry** connects it again — the client stops reconnecting on its own once
-its attempt budget runs out, so Retry is the only way back short of a restart.
-The configuration lives in `stateDir/mcp.json`, owner-only like the rest of the
+whether a token is saved, never its value, and saving with **Remove the saved
+token** clears one. Adding, editing, disabling, or removing a server mounts or
+unmounts its tools for new tool calls without restarting the host, and **Test
+connection** probes an unsaved entry without saving it — its probe tools live
+in the shared registry until the probe is disposed, so a session can see them
+for that moment. A server that fails to connect is reported as `error` with
+the reason the client reported, and **Retry** connects it again — the client
+stops reconnecting on its own once its attempt budget runs out, so Retry is
+the only way back short of a restart. A name may not contain `__` or end in
+`_`, because those would make one server's tool prefix match another's. The
+configuration lives in `stateDir/mcp.json`, owner-only like the rest of the
 control plane's state, and never in a sandbox.
 
 The bundle also disables dsh's local shell permission presets and its file

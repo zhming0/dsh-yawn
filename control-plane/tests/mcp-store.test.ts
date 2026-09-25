@@ -137,6 +137,55 @@ describe("MCP server store", () => {
     expect(store.list()).toEqual([]);
   });
 
+  it("rejects names whose tool prefix would overlap another server's", async () => {
+    const store = new McpServerStore({ path: join(directory, "mcp.json") });
+    await store.initialize();
+
+    // A server is identified by `mcp__<name>__`, so these two shapes would
+    // each swallow a neighbour's tools: `gh__x` starts with `mcp__gh__`, and
+    // `gh_` makes `mcp__gh___`.
+    await expect(
+      store.upsert({
+        serverName: "gh__x",
+        url: "https://alpha.example/mcp",
+        enabled: true,
+      }),
+    ).rejects.toThrow('"__" is reserved');
+    await expect(
+      store.upsert({
+        serverName: "gh_",
+        url: "https://alpha.example/mcp",
+        enabled: true,
+      }),
+    ).rejects.toThrow('trailing "_" collides');
+    expect(store.list()).toEqual([]);
+  });
+
+  it("clears a saved token when an update sends null", async () => {
+    const path = join(directory, "mcp.json");
+    const store = new McpServerStore({ path });
+    await store.initialize();
+    await store.upsert({
+      serverName: "alpha",
+      url: "https://alpha.example/mcp",
+      token: "alpha-token",
+      enabled: true,
+    });
+    expect(store.tokenFor("alpha")).toBe("alpha-token");
+
+    await store.upsert({
+      serverName: "alpha",
+      url: "https://alpha.example/mcp",
+      token: null,
+      enabled: true,
+    });
+    expect(store.tokenFor("alpha")).toBeUndefined();
+
+    const reopened = new McpServerStore({ path });
+    await reopened.initialize();
+    expect(reopened.tokenFor("alpha")).toBeUndefined();
+  });
+
   it("removes one entry and leaves the others", async () => {
     const path = join(directory, "mcp.json");
     const store = new McpServerStore({ path });

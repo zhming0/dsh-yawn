@@ -60,6 +60,8 @@ export class McpPool {
   private readonly mounts = new Map<string, LiveMount>();
   /** Probe names in flight; they are not store entries, so sync ignores them. */
   private readonly probes = new Set<string>();
+  /** Serializes mount changes; see {@link serialize}. */
+  private chain: Promise<unknown> = Promise.resolve();
   private probeCount = 0;
 
   constructor(options: McpPoolOptions) {
@@ -72,6 +74,24 @@ export class McpPool {
 
   /** Reconcile every live mount with the stored configuration. */
   async sync(): Promise<void> {
+    await this.serialize(() => this.reconcile());
+  }
+
+  /**
+   * Run one mount-changing operation at a time. Callers reconcile on every
+   * list, and the Web page polls while a mount settles, so two runs could
+   * otherwise interleave a dispose with a mount for the same server.
+   */
+  private serialize<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.chain.then(work, work);
+    this.chain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async reconcile(): Promise<void> {
     await this.store.refresh();
     const wanted = new Map(
       this.store.list().map((entry) => [entry.serverName, entry]),
@@ -132,20 +152,33 @@ export class McpPool {
 
   /** Remount one server, so a row can recover after its reconnect budget ran out. */
   async retry(serverName: string): Promise<void> {
-    await this.unmount(serverName);
-    const entry = this.store.get(serverName);
-    if (entry !== undefined && entry.enabled) {
-      this.mountEntry(entry);
-    }
+    await this.serialize(async () => {
+      await this.unmount(serverName);
+      const entry = this.store.get(serverName);
+      if (entry !== undefined && entry.enabled) {
+        this.mountEntry(entry);
+      }
+    });
   }
 
-  /** Try one unsaved configuration; the probe never outlives the call. */
+  /**
+   * Try one unsaved configuration; the probe never outlives the call.
+   *
+   * The probe is an ordinary mount, so while it lives its `mcp__<probe>__*`
+   * tools sit in the shared registry and every session can see and call them,
+   * with a token that is not saved yet. Discovery takes milliseconds when it
+   * succeeds; a server that never answers holds the probe for the full
+   * timeout. Isolating it would need a scoped registry the tools service does
+   * not offer, so this is a known, bounded exposure rather than a solved one.
+   */
   async testConnection(entry: McpServerEntry): Promise<McpTestResult> {
     validateMcpServerEntry(entry);
     const token =
-      entry.token === undefined || entry.token === ""
-        ? this.store.tokenFor(entry.serverName)
-        : entry.token;
+      entry.token === null
+        ? undefined
+        : entry.token === undefined || entry.token === ""
+          ? this.store.tokenFor(entry.serverName)
+          : entry.token;
     const probeName = this.probeName(entry.serverName);
     let fiber: McpMount | undefined;
     try {
@@ -345,6 +378,22 @@ function withTimeout<T>(value: PromiseLike<T>, ms: number): Promise<T> {
   });
 }
 
+/**
+ * Flatten an error and its causes. A failed mount reports only "initial
+ * connection or tool synchronization failed" at the top, and the reason a user
+ * can act on — a 401, a refused connection — is the cause beneath it.
+ */
 function describe(reason: unknown): string {
-  return reason instanceof Error ? reason.message : String(reason);
+  if (!(reason instanceof Error)) {
+    return String(reason);
+  }
+  const parts = [reason.message];
+  const seen = new Set<unknown>([reason]);
+  let cause: unknown = reason.cause;
+  while (cause instanceof Error && !seen.has(cause) && parts.length < 5) {
+    seen.add(cause);
+    parts.push(cause.message);
+    cause = cause.cause;
+  }
+  return parts.join(": ");
 }
