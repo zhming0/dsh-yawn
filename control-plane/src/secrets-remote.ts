@@ -4,15 +4,39 @@ import type {
   TypertSchema,
 } from "@deepseek-ai/dsh-typert-protocol";
 
+export interface SecretWorkspaceView {
+  repositoryUrl: string;
+  title: string;
+  names: string[];
+}
+
+/** One name list per scope; values never appear in any view. */
+export interface SecretSettingsView {
+  global: string[];
+  workspaces: SecretWorkspaceView[];
+}
+
 /**
  * Browser CRUD surface for broker secrets. Values flow browser→host only;
- * every method answers with the updated name list, never a value.
+ * every method answers with the updated name lists, never a value.
  * The namespace map declaration lives in remote-contributions.ts.
  */
 export interface SandboxSecretsRemote {
-  listSecrets(): Promise<RemoteResult<string[]>>;
-  setSecret(name: string, value: string): Promise<RemoteResult<string[]>>;
-  deleteSecret(name: string): Promise<RemoteResult<string[]>>;
+  getSecrets(): Promise<RemoteResult<SecretSettingsView>>;
+  setGlobalSecret(
+    name: string,
+    value: string,
+  ): Promise<RemoteResult<SecretSettingsView>>;
+  setWorkspaceSecret(
+    repositoryUrl: string,
+    name: string,
+    value: string,
+  ): Promise<RemoteResult<SecretSettingsView>>;
+  deleteGlobalSecret(name: string): Promise<RemoteResult<SecretSettingsView>>;
+  deleteWorkspaceSecret(
+    repositoryUrl: string,
+    name: string,
+  ): Promise<RemoteResult<SecretSettingsView>>;
 }
 
 const stringSchema: TypertSchema<string> = {
@@ -24,19 +48,39 @@ const stringSchema: TypertSchema<string> = {
   },
 };
 
-const namesSchema: TypertSchema<string[]> = {
-  parse(value: unknown): string[] {
+const settingsSchema: TypertSchema<SecretSettingsView> = {
+  parse(value: unknown): SecretSettingsView {
     if (
-      !Array.isArray(value) ||
-      value.some((entry) => typeof entry !== "string")
+      typeof value !== "object" ||
+      value === null ||
+      !("global" in value) ||
+      !Array.isArray(value.global) ||
+      !("workspaces" in value) ||
+      !Array.isArray(value.workspaces) ||
+      // Array.isArray narrows to any[]; widen so the entry checks stay typed.
+      (value.workspaces as unknown[]).some(
+        (entry) =>
+          typeof entry !== "object" ||
+          entry === null ||
+          !("repositoryUrl" in entry) ||
+          typeof entry.repositoryUrl !== "string" ||
+          !("title" in entry) ||
+          typeof entry.title !== "string" ||
+          !("names" in entry) ||
+          !Array.isArray(entry.names) ||
+          entry.names.some((name) => typeof name !== "string"),
+      )
     ) {
-      throw new TypeError("expected an array of strings");
+      throw new TypeError("expected a secret settings view");
     }
-    return value as string[];
+    return value as SecretSettingsView;
   },
 };
 
-function describe(method: string, parameters: string[]): InvocationDescriptor {
+function describe(
+  method: string,
+  parameters: Array<{ name: string; schema: TypertSchema }>,
+): InvocationDescriptor {
   const id = `@zhming0/dsh-yawn#sandboxManager/${method}`;
   return {
     id,
@@ -46,26 +90,38 @@ function describe(method: string, parameters: string[]): InvocationDescriptor {
     namespace: "sandboxManager",
     method,
     invocation: { kind: "direct" },
-    parameters: parameters.map((name) => ({
+    parameters: parameters.map(({ name, schema }) => ({
       name,
       wire: name,
       source: "json",
       codec: {
         mode: "strict",
         typeSymbol: `${id}:${name}`,
-        create: () => stringSchema,
+        create: () => schema,
       },
     })),
     result: {
       mode: "strict",
       typeSymbol: `${id}:result`,
-      create: () => namesSchema,
+      create: () => settingsSchema,
     },
   };
 }
 
 export const sandboxSecretsDescriptors: InvocationDescriptor[] = [
-  describe("listSecrets", []),
-  describe("setSecret", ["name", "value"]),
-  describe("deleteSecret", ["name"]),
+  describe("getSecrets", []),
+  describe("setGlobalSecret", [
+    { name: "name", schema: stringSchema },
+    { name: "value", schema: stringSchema },
+  ]),
+  describe("setWorkspaceSecret", [
+    { name: "repositoryUrl", schema: stringSchema },
+    { name: "name", schema: stringSchema },
+    { name: "value", schema: stringSchema },
+  ]),
+  describe("deleteGlobalSecret", [{ name: "name", schema: stringSchema }]),
+  describe("deleteWorkspaceSecret", [
+    { name: "repositoryUrl", schema: stringSchema },
+    { name: "name", schema: stringSchema },
+  ]),
 ];

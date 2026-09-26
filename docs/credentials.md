@@ -2,9 +2,13 @@
 
 Sandboxes have no credentials of their own; they borrow the control plane's. The control plane
 keeps one store of named secrets and pushes the current values to the runner
-before each command, which injects them into that command's environment. The
-store is global to the control plane — one trust domain, no per-session or
-per-repository scoping.
+before each command, which injects them into that command's environment.
+Secrets have two scopes: **global** secrets reach every sandbox, and
+**workspace** secrets reach the sandboxes of one repository Workspace,
+overriding a global secret of the same name. A sandbox receives exactly the
+global set with its workspace's overrides applied — nothing from other
+workspaces. Scoping limits which sandbox receives a value; one control plane
+is still one trust domain, not an isolation boundary between users.
 
 This is the step after [installation](installations.md): the control plane and
 a runner come first.
@@ -19,17 +23,22 @@ Use a fine-grained personal access token scoped to the repositories sessions
 work on, with **Contents: read** — add write access if the agent should push.
 If you are logged in with the GitHub CLI, `gh auth token` prints a suitable
 token. Without one, sessions still clone public repositories; private ones
-fail at `git clone`.
+fail at `git clone`. Storing the token in a workspace scope serves that
+workspace's clones in place of the global one, so two Workspaces can use two
+tokens.
 
 ## Set a secret
 
 Secrets go in through the Web UI: **Settings → Secrets**. It is the only way
 in — there is no CLI — and values are write-only: the page lists names, never
-values.
+values. The page's scope selector picks where a secret lives: **Global · All
+workspaces**, or one repository Workspace, matching the Workspaces in the
+sidebar. A name stored in both scopes resolves to the workspace's value inside
+that workspace and to the global value everywhere else.
 
 A change applies before the session's next command, running sessions included:
-before every command the control plane re-reads the store and pushes it to the
-runner. No control-plane restart is needed.
+before every command the control plane re-reads the store and pushes the
+session's effective set to the runner. No control-plane restart is needed.
 
 ## Credentials the control plane owns
 

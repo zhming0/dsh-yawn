@@ -149,10 +149,14 @@ likely to mislead you.
   is operator access.
 - One control plane is one trust domain. Its sessions, credentials, and
   sandboxes are not isolated from other users admitted to that control plane.
-- Secrets are global to the control plane and are pushed to a runner before
-  commands.
-  `GITHUB_TOKEN` also supplies Git credentials for github.com. There is no
-  GitHub device flow or per-repository secret scoping.
+- Secrets live in the control plane's broker store and are pushed to a runner
+  before commands, in two scopes: global secrets reach every sandbox, and a
+  workspace secret reaches that workspace's sandboxes and overrides a global
+  secret of the same name. Scoping limits delivery, not access: one control
+  plane is still one trust domain.
+  `GITHUB_TOKEN` also supplies Git credentials for github.com; a
+  workspace-scoped one serves that workspace's clones. There is no GitHub
+  device flow.
 - Sandbox code can read injected secrets by design. Keep credentials in the
   control-plane store, never in pod configuration or workspace files. Two are
   deliberate exceptions, because a sandbox must never receive them: the shared

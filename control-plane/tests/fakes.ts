@@ -75,7 +75,21 @@ export class FakeRunnerClient {
   async setSecrets(secrets: Record<string, string>) {
     this.secrets = secrets;
   }
-  async setGitCredentials() {}
+  /** Every credential push, in order, as the control plane resolved them. */
+  readonly gitCredentials: Array<{
+    host: string;
+    username: string;
+    password: string;
+  }> = [];
+  async setGitCredentials(
+    credentials: {
+      host: string;
+      username: string;
+      password: string;
+    }[],
+  ) {
+    this.gitCredentials.push(...credentials);
+  }
 
   async setup(request: { revision: string }) {
     this.setups += 1;

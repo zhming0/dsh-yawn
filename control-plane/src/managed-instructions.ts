@@ -11,7 +11,7 @@ import type {
 } from "./instructions-remote.js";
 import {
   normalizeWorkspaceRepositoryUrl,
-  repositoryForAnchor,
+  workspaceScopes,
 } from "./workspace-anchor.js";
 
 const CLEARED_INSTRUCTIONS =
@@ -131,25 +131,14 @@ export class ManagedInstructions {
     if (registry === undefined) {
       return [];
     }
-    const workspaces = await Promise.all(
-      registry.list().map(async (workspace) => {
-        const repositoryUrl = await repositoryForAnchor(
-          this.dependencies.stateDir,
-          workspace.path,
-        );
-        return repositoryUrl === undefined
-          ? undefined
-          : {
-              repositoryUrl,
-              title: workspace.title,
-              content: this.dependencies.store.workspace(repositoryUrl),
-            };
-      }),
+    const scopes = await workspaceScopes(
+      this.dependencies.stateDir,
+      registry.list(),
     );
-    return workspaces.filter(
-      (workspace): workspace is InstructionWorkspaceView =>
-        workspace !== undefined,
-    );
+    return scopes.map((scope) => ({
+      ...scope,
+      content: this.dependencies.store.workspace(scope.repositoryUrl),
+    }));
   }
 }
 

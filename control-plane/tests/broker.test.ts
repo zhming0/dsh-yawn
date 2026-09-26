@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -6,9 +6,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   CredentialBroker,
+  GLOBAL_SECRET_SCOPE,
   normalizeRepositoryUrl,
+  type SecretScope,
   testing as brokerTesting,
 } from "../src/broker.js";
+
+/** One workspace scope, as the manager builds it from a registered anchor. */
+function workspace(repositoryUrl: string): SecretScope {
+  return { kind: "workspace", repositoryUrl };
+}
 
 describe("credential broker", () => {
   let directory: string;
@@ -26,12 +33,14 @@ describe("credential broker", () => {
       path: join(directory, "broker.json"),
     });
     await broker.initialize();
-    await broker.setSecret("API_KEY", "secret-value");
-    expect(broker.secretNames()).toEqual(["API_KEY"]);
-    expect(broker.secrets()).toEqual({ API_KEY: "secret-value" });
-    await expect(broker.setSecret("not-valid-name", "x")).rejects.toThrow(
-      "invalid",
-    );
+    await broker.setSecret(GLOBAL_SECRET_SCOPE, "API_KEY", "secret-value");
+    expect(broker.secretNames(GLOBAL_SECRET_SCOPE)).toEqual(["API_KEY"]);
+    expect(broker.secrets(GLOBAL_SECRET_SCOPE)).toEqual({
+      API_KEY: "secret-value",
+    });
+    await expect(
+      broker.setSecret(GLOBAL_SECRET_SCOPE, "not-valid-name", "x"),
+    ).rejects.toThrow("invalid");
   });
 
   it("serves a GITHUB_TOKEN secret as the github.com git credential", async () => {
@@ -45,7 +54,7 @@ describe("credential broker", () => {
       await broker.gitCredentials("https://github.com/example/repo.git"),
     ).toEqual([]);
 
-    await broker.setSecret("GITHUB_TOKEN", "pat-value");
+    await broker.setSecret(GLOBAL_SECRET_SCOPE, "GITHUB_TOKEN", "pat-value");
     expect(
       await broker.gitCredentials("https://github.com/example/repo.git"),
     ).toEqual([
@@ -60,6 +69,152 @@ describe("credential broker", () => {
     expect(
       await broker.gitCredentials("https://gitlab.com/example/repo.git"),
     ).toEqual([]);
+  });
+
+  it("scopes secrets per workspace with same-name override", async () => {
+    const broker = new CredentialBroker({
+      path: join(directory, "broker.json"),
+    });
+    await broker.initialize();
+    await broker.setSecret(GLOBAL_SECRET_SCOPE, "API_KEY", "global");
+    await broker.setSecret(
+      workspace("https://github.com/a/x"),
+      "API_KEY",
+      "workspace",
+    );
+    await broker.setSecret(
+      workspace("https://github.com/a/x"),
+      "EXTRA",
+      "workspace-only",
+    );
+
+    expect(broker.secretNames(GLOBAL_SECRET_SCOPE)).toEqual(["API_KEY"]);
+    expect(broker.secretNames(workspace("https://github.com/a/x"))).toEqual([
+      "API_KEY",
+      "EXTRA",
+    ]);
+    expect(broker.secretNames(workspace("https://github.com/a/y"))).toEqual([]);
+    expect(broker.secrets(GLOBAL_SECRET_SCOPE)).toEqual({ API_KEY: "global" });
+    expect(broker.secrets(workspace("https://github.com/a/x"))).toEqual({
+      API_KEY: "workspace",
+      EXTRA: "workspace-only",
+    });
+    expect(broker.secrets(workspace("https://github.com/a/y"))).toEqual({
+      API_KEY: "global",
+    });
+    await expect(
+      broker.setSecret(workspace("https://github.com/a/x"), "not-valid!", "x"),
+    ).rejects.toThrow("invalid");
+
+    // Deleting the last workspace secret drops the workspace section.
+    await broker.deleteSecret(workspace("https://github.com/a/x"), "EXTRA");
+    await broker.deleteSecret(workspace("https://github.com/a/x"), "API_KEY");
+    expect(broker.secretNames(workspace("https://github.com/a/x"))).toEqual([]);
+    expect(broker.secretNames(GLOBAL_SECRET_SCOPE)).toEqual(["API_KEY"]);
+    const saved = JSON.parse(
+      await readFile(join(directory, "broker.json"), "utf8"),
+    ) as { workspaces: Record<string, unknown> };
+    expect(saved.workspaces).toEqual({});
+  });
+
+  it("keys a workspace by the repository, not by a clone-URL spelling", async () => {
+    const broker = new CredentialBroker({
+      path: join(directory, "broker.json"),
+    });
+    await broker.initialize();
+    await broker.setSecret(
+      workspace("git@github.com:a/x.git"),
+      "TOKEN",
+      "scp-spelling",
+    );
+
+    // Reads through any spelling of the same repository see the same scope.
+    for (const spelling of [
+      "https://github.com/a/x",
+      "https://github.com/a/x.git",
+      "https://github.com/a/x/",
+      "ssh://git@github.com/a/x.git",
+      "https://GitHub.com/a/x?tab=readme",
+    ]) {
+      expect(broker.secrets(workspace(spelling))).toMatchObject({
+        TOKEN: "scp-spelling",
+      });
+      expect(broker.secretNames(workspace(spelling))).toEqual(["TOKEN"]);
+    }
+    expect(broker.secrets(workspace("https://github.com/a/y"))).toEqual({});
+
+    // A write through one spelling lands in the one stored scope.
+    await broker.setSecret(
+      workspace("https://github.com/a/x.git"),
+      "NEXT",
+      "1",
+    );
+    const saved = JSON.parse(
+      await readFile(join(directory, "broker.json"), "utf8"),
+    ) as { workspaces: Record<string, Record<string, string>> };
+    expect(Object.keys(saved.workspaces)).toEqual(["https://github.com/a/x"]);
+    expect(saved.workspaces["https://github.com/a/x"]).toEqual({
+      TOKEN: "scp-spelling",
+      NEXT: "1",
+    });
+  });
+
+  it("prefers a workspace GITHUB_TOKEN for that workspace's clones", async () => {
+    const broker = new CredentialBroker({
+      path: join(directory, "broker.json"),
+    });
+    await broker.initialize();
+    await broker.setSecret(GLOBAL_SECRET_SCOPE, "GITHUB_TOKEN", "global-pat");
+    await broker.setSecret(
+      workspace("https://github.com/example/repo"),
+      "GITHUB_TOKEN",
+      "workspace-pat",
+    );
+
+    expect(
+      await broker.gitCredentials("https://github.com/example/repo"),
+    ).toEqual([
+      {
+        host: "github.com",
+        username: "x-access-token",
+        password: "workspace-pat",
+      },
+    ]);
+    expect(
+      await broker.gitCredentials("https://github.com/other/repo"),
+    ).toEqual([
+      {
+        host: "github.com",
+        username: "x-access-token",
+        password: "global-pat",
+      },
+    ]);
+  });
+
+  it("reads a version 1 file as global-only and writes version 2", async () => {
+    const path = join(directory, "broker.json");
+    await writeFile(
+      path,
+      `${JSON.stringify({
+        version: 1,
+        secrets: { LEGACY: "kept" },
+      })}\n`,
+      "utf8",
+    );
+    const broker = new CredentialBroker({ path });
+    await broker.initialize();
+
+    expect(broker.secretNames(GLOBAL_SECRET_SCOPE)).toEqual(["LEGACY"]);
+    expect(broker.secrets(workspace("https://github.com/a/x"))).toEqual({
+      LEGACY: "kept",
+    });
+    await broker.setSecret(GLOBAL_SECRET_SCOPE, "NEW", "value");
+    const saved = JSON.parse(await readFile(path, "utf8")) as {
+      version: number;
+      workspaces: Record<string, unknown>;
+    };
+    expect(saved.version).toBe(2);
+    expect(saved.workspaces).toEqual({});
   });
 
   it("parses repository hosts and normalizes clone URLs", () => {
