@@ -84,6 +84,16 @@ pnpm install && pnpm build
 dsh plugin --profile web add "$PWD/control-plane"
 ```
 
+`scripts/dev.mjs start` does those steps into a scratch `DSH_HOME` instead of
+yours, points it at a Docker sandbox profile, and runs `dsh web` in the
+foreground on free ports (`--port` pins one). The launcher's output carries the
+tokenized URL, and Ctrl-C — or a process manager, which can own it as an
+ordinary foreground process — stops it. `clean` removes what a run left behind:
+a plane still running from that home, and the sandboxes its sessions created,
+which outlive it because a sandbox is a child of the Docker daemon, not of the
+control plane. A later `start` cleans them too, before it replaces the home.
+Use it for acceptance runs, so the profile an operator is using stays untouched.
+
 Declare one Docker profile that points at the locally built runner image in
 your profile layer, then run `dsh web` and open the `?token=` URL it prints:
 
