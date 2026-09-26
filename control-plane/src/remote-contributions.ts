@@ -32,9 +32,11 @@ declare module "@deepseek-ai/dsh-typert-protocol" {
 
   interface TypertRemoteMap {
     "sandboxManager/createRepositoryWorkspace": SandboxManagerRemote["createRepositoryWorkspace"];
-    "sandboxManager/listSecrets": SandboxManagerRemote["listSecrets"];
-    "sandboxManager/setSecret": SandboxManagerRemote["setSecret"];
-    "sandboxManager/deleteSecret": SandboxManagerRemote["deleteSecret"];
+    "sandboxManager/getSecrets": SandboxManagerRemote["getSecrets"];
+    "sandboxManager/setGlobalSecret": SandboxManagerRemote["setGlobalSecret"];
+    "sandboxManager/setWorkspaceSecret": SandboxManagerRemote["setWorkspaceSecret"];
+    "sandboxManager/deleteGlobalSecret": SandboxManagerRemote["deleteGlobalSecret"];
+    "sandboxManager/deleteWorkspaceSecret": SandboxManagerRemote["deleteWorkspaceSecret"];
     "sandboxManager/listMcpServers": SandboxManagerRemote["listMcpServers"];
     "sandboxManager/setMcpServer": SandboxManagerRemote["setMcpServer"];
     "sandboxManager/deleteMcpServer": SandboxManagerRemote["deleteMcpServer"];

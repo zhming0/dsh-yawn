@@ -4,8 +4,7 @@ import { Button } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { SettingsSectionOwnerProps } from "@deepseek-ai/dsh-client-ui-settings/client";
 
 import type { InstructionSettingsView } from "../instructions-remote.js";
-
-const GLOBAL_SCOPE = "__global__";
+import { GLOBAL_SCOPE, ScopeSelector } from "./scope-selector.js";
 
 interface InstructionActions {
   getInstructions: () => Promise<InstructionSettingsView>;
@@ -96,38 +95,18 @@ export function InstructionsSettings({
           >
             Scope
           </label>
-          <select
+          <ScopeSelector
             id="dsh-yawn-instruction-scope"
-            value={scope}
+            workspaces={settings.workspaces}
+            scope={scope}
             disabled={pending}
-            onChange={(event) => {
-              const nextScope = event.currentTarget.value;
+            onScopeChange={(nextScope) => {
               setScope(nextScope);
               setDraft(contentFor(settings, nextScope));
               setStatus(undefined);
               setError(undefined);
             }}
-            style={{
-              width: "100%",
-              minHeight: 38,
-              padding: "7px 10px",
-              border: "1px solid var(--dsw-alias-border-l2)",
-              borderRadius: 8,
-              background: "var(--dsw-alias-bg-layer-1)",
-              color: "var(--dsw-alias-label-primary)",
-              font: "inherit",
-            }}
-          >
-            <option value={GLOBAL_SCOPE}>Global · All workspaces</option>
-            {settings.workspaces.map((workspace) => (
-              <option
-                key={workspace.repositoryUrl}
-                value={workspace.repositoryUrl}
-              >
-                Workspace · {workspace.title}
-              </option>
-            ))}
-          </select>
+          />
 
           <label
             htmlFor="dsh-yawn-instructions"

@@ -119,6 +119,32 @@ export async function repositoryForAnchor(
   return metadata.repositoryUrl;
 }
 
+/** One settings scope beyond global: a registered repository workspace. */
+export interface WorkspaceScope {
+  repositoryUrl: string;
+  title: string;
+}
+
+/**
+ * The scopes settings pages offer: every registry workspace that resolves to a
+ * repository anchor, in registry order. Entries the anchor store cannot
+ * resolve are skipped, so an unrelated directory never becomes a scope.
+ */
+export async function workspaceScopes(
+  stateDir: string,
+  workspaces: Array<{ path: string; title: string }>,
+): Promise<WorkspaceScope[]> {
+  const scopes = await Promise.all(
+    workspaces.map(async (workspace) => {
+      const repositoryUrl = await repositoryForAnchor(stateDir, workspace.path);
+      return repositoryUrl === undefined
+        ? undefined
+        : { repositoryUrl, title: workspace.title };
+    }),
+  );
+  return scopes.filter((scope): scope is WorkspaceScope => scope !== undefined);
+}
+
 /** Normalize and validate a repository URL entered through the Web UI. */
 export function normalizeWorkspaceRepositoryUrl(input: string): string {
   let repositoryUrl = normalizeRepositoryUrl(input.trim());

@@ -117,7 +117,11 @@ export class RunnerAttachment {
     repositoryUrl: string,
   ): Promise<void> {
     await this.deps.broker.refresh();
-    await client.setSecrets(this.deps.broker.secrets());
+    // The workspace's effective set: global secrets with this workspace's
+    // own names overriding them.
+    await client.setSecrets(
+      this.deps.broker.secrets({ kind: "workspace", repositoryUrl }),
+    );
     await client.setGitCredentials(
       await this.deps.broker.gitCredentials(repositoryUrl),
     );

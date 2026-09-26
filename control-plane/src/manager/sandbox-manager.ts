@@ -12,7 +12,7 @@ import type {} from "@deepseek-ai/dsh-typert-registry";
 import { TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
 import { artifactsDirectory } from "../artifacts.js";
-import { CredentialBroker } from "../broker.js";
+import { CredentialBroker, GLOBAL_SECRET_SCOPE } from "../broker.js";
 import {
   resolveBuildkiteToken,
   type CredentialResolver,
@@ -53,6 +53,7 @@ import {
 import { PreviewServer } from "../preview-server.js";
 import type { RunnerClient } from "../runner-client.js";
 import type { SandboxSettingsView } from "../sandbox-settings-remote.js";
+import type { SecretSettingsView } from "../secrets-remote.js";
 import type { SandboxStatusView } from "../sandbox-status-remote.js";
 import type { SessionProfileView } from "../session-profile-remote.js";
 import { SessionStore } from "../state-store.js";
@@ -64,7 +65,10 @@ import type {
 } from "../types.js";
 import {
   createRepositoryAnchor,
+  normalizeWorkspaceRepositoryUrl,
   repositoryForAnchor,
+  workspaceScopes,
+  type WorkspaceScope,
 } from "../workspace-anchor.js";
 import { ArchiveRelease } from "./archive-release.js";
 import { FileIndexHooks } from "./file-index-hooks.js";
@@ -599,24 +603,61 @@ export class SandboxManager extends TypertRemoteService {
     return (await registry.create(anchor.path, anchor.title)).path;
   }
 
-  /** Secret names for the Web page; refresh first so CLI edits appear. */
-  async listSecrets(): Promise<string[]> {
+  /**
+   * The Secrets page's read model: one name list per scope, values never
+   * included. Refresh first so edits made outside the host appear.
+   */
+  async getSecrets(): Promise<SecretSettingsView> {
     await this.ready;
     await this.broker.refresh();
-    return this.broker.secretNames();
+    return this.secretSettings();
   }
 
-  /** Store one secret and answer the updated names. Values never flow back. */
-  async setSecret(name: string, value: string): Promise<string[]> {
+  /** Store one global secret; values never flow back. */
+  async setGlobalSecret(
+    name: string,
+    value: string,
+  ): Promise<SecretSettingsView> {
     await this.ready;
-    await this.broker.setSecret(name, value);
-    return this.broker.secretNames();
+    await this.broker.setSecret(GLOBAL_SECRET_SCOPE, name, value);
+    return this.secretSettings();
   }
 
-  async deleteSecret(name: string): Promise<string[]> {
+  /** Store one workspace secret, overriding a global secret of the same name. */
+  async setWorkspaceSecret(
+    repositoryUrl: string,
+    name: string,
+    value: string,
+  ): Promise<SecretSettingsView> {
     await this.ready;
-    await this.broker.deleteSecret(name);
-    return this.broker.secretNames();
+    await this.setRegisteredWorkspaceSecret(repositoryUrl, (normalized) =>
+      this.broker.setSecret(
+        { kind: "workspace", repositoryUrl: normalized },
+        name,
+        value,
+      ),
+    );
+    return this.secretSettings();
+  }
+
+  async deleteGlobalSecret(name: string): Promise<SecretSettingsView> {
+    await this.ready;
+    await this.broker.deleteSecret(GLOBAL_SECRET_SCOPE, name);
+    return this.secretSettings();
+  }
+
+  async deleteWorkspaceSecret(
+    repositoryUrl: string,
+    name: string,
+  ): Promise<SecretSettingsView> {
+    await this.ready;
+    await this.setRegisteredWorkspaceSecret(repositoryUrl, (normalized) =>
+      this.broker.deleteSecret(
+        { kind: "workspace", repositoryUrl: normalized },
+        name,
+      ),
+    );
+    return this.secretSettings();
   }
 
   /** Configured MCP servers with their live connection status. */
@@ -860,6 +901,46 @@ export class SandboxManager extends TypertRemoteService {
       this.workspaceRegistry ??
       (this.ctx.get("workspaceRegistry") as WorkspaceRegistryLike | undefined);
     return registry?.archivedSessionIds ?? [];
+  }
+
+  /** Every scope the settings pages offer, from the live workspace registry. */
+  private async scopes(): Promise<WorkspaceScope[]> {
+    const registry =
+      this.workspaceRegistry ??
+      (this.ctx.get("workspaceRegistry") as WorkspaceRegistryLike | undefined);
+    return registry === undefined
+      ? []
+      : workspaceScopes(this.config.stateDir, registry.list());
+  }
+
+  /** The Secrets page's read model over the broker's per-scope name lists. */
+  private async secretSettings(): Promise<SecretSettingsView> {
+    return {
+      global: this.broker.secretNames(GLOBAL_SECRET_SCOPE),
+      workspaces: (await this.scopes()).map((scope) => ({
+        ...scope,
+        names: this.broker.secretNames({
+          kind: "workspace",
+          repositoryUrl: scope.repositoryUrl,
+        }),
+      })),
+    };
+  }
+
+  /**
+   * Run one workspace-scoped broker write after checking the workspace is
+   * registered, so a mistyped URL cannot create an unreachable scope.
+   */
+  private async setRegisteredWorkspaceSecret(
+    repositoryUrl: string,
+    apply: (normalized: string) => Promise<void>,
+  ): Promise<void> {
+    const normalized = normalizeWorkspaceRepositoryUrl(repositoryUrl);
+    const scopes = await this.scopes();
+    if (!scopes.some((scope) => scope.repositoryUrl === normalized)) {
+      throw new Error(`workspace is not registered: ${normalized}`);
+    }
+    await apply(normalized);
   }
 
   /**

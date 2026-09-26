@@ -674,6 +674,14 @@ and a chat transcript is durable. They go through the Web UI's
 **Settings → Secrets** page, which stores them in the broker file under
 `stateDir`.
 
+The page edits two kinds of scope, picked in the same Global/Workspace
+selector the Instructions page uses (the stock settings shell has no
+per-workspace pages). Global secrets reach every sandbox. A workspace secret
+reaches that workspace's sandboxes and overrides a global secret of the same
+name; a sandbox receives exactly the global set with its workspace's
+overrides applied. Scoping limits which sandbox receives a value — one control
+plane is still one trust domain, and global secrets still reach every sandbox.
+
 The Buildkite API token is the one control-plane-owned token the UI also
 stores: **Settings → Sandboxes** writes it, write-only, to the host credential
 document (`$DSH_HOME/.credentials.yaml`). That document is host-side and never
@@ -686,7 +694,8 @@ saved change takes effect without restarting dsh.
 A secret named `GITHUB_TOKEN` doubles as the Git credential for github.com, so
 storing a fine-grained personal access token (or `gh auth token`) under that
 name is the simplest way to reach private repositories — no OAuth app
-required.
+required. A workspace-scoped `GITHUB_TOKEN` serves that workspace's clones in
+place of the global one.
 
 Sandbox code can read injected secrets, which is their purpose. The broker
 improves storage and cleanup, not confidentiality from the repository being run.

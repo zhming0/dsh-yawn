@@ -45,13 +45,34 @@ export async function apply(ctx: Context) {
   };
 
   ctx.inject(["remote.sandboxManager"], (remoteCtx) => {
-    const injected = () => ({
-      listSecrets: async () =>
-        unwrap(await remoteCtx.remote.sandboxManager.listSecrets()),
-      setSecret: async (name: string, value: string) =>
-        unwrap(await remoteCtx.remote.sandboxManager.setSecret(name, value)),
-      deleteSecret: async (name: string) =>
-        unwrap(await remoteCtx.remote.sandboxManager.deleteSecret(name)),
+    const injectedSecrets = () => ({
+      getSecrets: async () =>
+        unwrap(await remoteCtx.remote.sandboxManager.getSecrets()),
+      setGlobalSecret: async (name: string, value: string) =>
+        unwrap(
+          await remoteCtx.remote.sandboxManager.setGlobalSecret(name, value),
+        ),
+      setWorkspaceSecret: async (
+        repositoryUrl: string,
+        name: string,
+        value: string,
+      ) =>
+        unwrap(
+          await remoteCtx.remote.sandboxManager.setWorkspaceSecret(
+            repositoryUrl,
+            name,
+            value,
+          ),
+        ),
+      deleteGlobalSecret: async (name: string) =>
+        unwrap(await remoteCtx.remote.sandboxManager.deleteGlobalSecret(name)),
+      deleteWorkspaceSecret: async (repositoryUrl: string, name: string) =>
+        unwrap(
+          await remoteCtx.remote.sandboxManager.deleteWorkspaceSecret(
+            repositoryUrl,
+            name,
+          ),
+        ),
     });
     const injectedInstructions = () => ({
       getInstructions: async () =>
@@ -106,7 +127,7 @@ export async function apply(ctx: Context) {
             id: "dsh-yawn.secrets",
             order: 31,
             label: "Secrets",
-            inject: injected,
+            inject: injectedSecrets,
           },
           SecretsSettings,
         );

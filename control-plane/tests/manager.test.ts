@@ -8,7 +8,7 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CredentialBroker } from "../src/broker.js";
+import { CredentialBroker, GLOBAL_SECRET_SCOPE } from "../src/broker.js";
 import { SandboxManager } from "../src/manager/index.js";
 import { SessionStore } from "../src/state-store.js";
 import {
@@ -62,7 +62,11 @@ describe("sandbox lifecycle", () => {
       path: join(directory, "broker.json"),
     });
     await cliBroker.initialize();
-    await cliBroker.setSecret("UPDATED_IN_CLI", "available-on-next-command");
+    await cliBroker.setSecret(
+      GLOBAL_SECRET_SCOPE,
+      "UPDATED_IN_CLI",
+      "available-on-next-command",
+    );
     await manager.ensureRunning(agent);
     expect(backend.client.secrets).toEqual({
       UPDATED_IN_CLI: "available-on-next-command",
@@ -1127,6 +1131,85 @@ describe("repository workspaces and instructions", () => {
         ctx.get("directoryPicker") as { capability(): { kind: string } }
       ).capability().kind,
     ).toBe("repository");
+  });
+
+  it("scopes secrets per workspace and pushes the effective set to the runner", async () => {
+    const backend = new FakeBackend();
+    const workspaceRegistry = new FakeWorkspaceRegistry();
+    const manager = new SandboxManager(
+      new Context(),
+      {
+        profiles: { standard: { backend: "docker" } },
+        stateDir: directory,
+        repository: "https://github.com/example/fallback.git",
+      },
+      {
+        backends: { standard: backend },
+        gateway: gatewayFor(backend),
+        workspaceRegistry,
+      },
+    );
+    const anchor = await manager.createRepositoryWorkspace(
+      "https://github.com/example/public.git",
+    );
+
+    await manager.setGlobalSecret("API_KEY", "global");
+    await manager.setGlobalSecret("GITHUB_TOKEN", "global-pat");
+    // The URL without ".git" normalizes to the anchor's repository URL.
+    await manager.setWorkspaceSecret(
+      "https://github.com/example/public",
+      "API_KEY",
+      "workspace",
+    );
+    await manager.setWorkspaceSecret(
+      "https://github.com/example/public",
+      "GITHUB_TOKEN",
+      "workspace-pat",
+    );
+
+    expect(await manager.getSecrets()).toEqual({
+      global: ["API_KEY", "GITHUB_TOKEN"],
+      workspaces: [
+        {
+          repositoryUrl: "https://github.com/example/public",
+          title: "example/public",
+          names: ["API_KEY", "GITHUB_TOKEN"],
+        },
+      ],
+    });
+    await expect(
+      manager.setWorkspaceSecret(
+        "https://github.com/example/unknown",
+        "API_KEY",
+        "x",
+      ),
+    ).rejects.toThrow("not registered");
+    await expect(
+      manager.deleteWorkspaceSecret(
+        "https://github.com/example/unknown",
+        "API_KEY",
+      ),
+    ).rejects.toThrow("not registered");
+
+    await manager.ensureRunning({
+      id: "session-one",
+      session: { header: { cwd: anchor } },
+    } as unknown as Agent);
+
+    expect(backend.repositoryUrls).toEqual([
+      "https://github.com/example/public",
+    ]);
+    expect(backend.client.secrets).toEqual({
+      API_KEY: "workspace",
+      GITHUB_TOKEN: "workspace-pat",
+    });
+    expect(backend.client.gitCredentials).toEqual([
+      {
+        host: "github.com",
+        username: "x-access-token",
+        password: "workspace-pat",
+      },
+    ]);
   });
 
   it("does not create repository anchors without the Web workspace service", async () => {
