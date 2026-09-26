@@ -31,13 +31,27 @@ describe("SandboxPolicy", () => {
       header: { cwd: "/home/host/.dsh/workspaces/repo" },
     } as unknown as Session;
     expect(service.resolve({ session })).toEqual({
-      mode: "workspace-write",
+      mode: "danger-full-access",
       workspaceRoot: "/workspace/repository",
       sessionId: "session-one",
     });
     expect(service.resolve()).toEqual({
-      mode: "workspace-write",
+      mode: "danger-full-access",
       workspaceRoot: "/workspace/repository",
+    });
+  });
+
+  /**
+   * dsh's persistent shell and PTC runtime wrap their command in the host's
+   * `landlock-run` launcher unless this service answers full access. The
+   * sandbox cannot run that launcher, so a confined answer breaks the command
+   * instead of confining it.
+   */
+  it("answers full access, even for an explicitly requested mode", () => {
+    const { service } = makeService();
+    expect(service.defaultMode).toBe("danger-full-access");
+    expect(service.resolve({ mode: "read-only" })).toMatchObject({
+      mode: "danger-full-access",
     });
   });
 

@@ -13,6 +13,14 @@
  * refuses to boot while a mounted row waits for a missing service. This
  * module answers those readers with the sandbox workspace and nothing else.
  *
+ * It answers `danger-full-access` for every call. In dsh that mode means "run
+ * the command as it is, with no extra file sandbox", and the container is
+ * already the boundary, so there is nothing to add. Any other answer makes two
+ * stock rows wrap the command in the dsh host's `landlock-run` launcher:
+ * `dsh-terminal-bash`, the shell behind the `minimal` preset, and the PTC
+ * runtime. The sandbox has no `landlock-run`, so the command fails with ENOENT
+ * instead of running.
+ *
  * @module @zhming0/dsh-yawn/sandbox-policy
  */
 
@@ -34,17 +42,18 @@ type SandboxPolicyContract = Pick<
 >;
 
 /**
- * `ctx.sandboxPolicy` for sandbox-backed sessions. Every root it reports is
- * the sandbox workspace path, which is the only directory the agent works in.
+ * `ctx.sandboxPolicy` for sandbox-backed sessions. It reports the sandbox
+ * workspace as the root and full access as the mode; the module note says why
+ * the mode cannot be anything else.
  */
 export class SandboxPolicy extends Service implements SandboxPolicyContract {
   static inject = ["sandboxManager"];
 
   /**
-   * Nominal: the runner lets the agent write anywhere inside its container,
-   * and no enabled row reads this to enforce or describe a boundary.
+   * The container is the file boundary, and the runner lets the agent write
+   * anywhere inside it, so there is no narrower mode to report.
    */
-  readonly defaultMode: SandboxMode = "workspace-write";
+  readonly defaultMode: SandboxMode = "danger-full-access";
 
   constructor(ctx: Context) {
     super(ctx, "sandboxPolicy");
@@ -55,10 +64,15 @@ export class SandboxPolicy extends Service implements SandboxPolicyContract {
     return this.ctx.sandboxManager.workspace;
   }
 
+  /**
+   * Ignore a requested mode and answer full access. Nothing here can enforce
+   * a narrower one, and returning it would only get the command wrapped in a
+   * launcher the sandbox does not have (see the module note).
+   */
   resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy {
     const { session } = request;
     return {
-      mode: request.mode ?? this.defaultMode,
+      mode: this.defaultMode,
       workspaceRoot: this.workspaceRoot,
       ...(session === undefined ? {} : { sessionId: session.id }),
     };

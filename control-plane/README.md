@@ -171,8 +171,14 @@ filesystem finds a session's sandbox through the agent that is asking. The
 bundle keeps those stock rows and adds two of its own: `sandbox-workspace-files`
 wraps the live `workspaceFiles` service so each request runs as the agent of the
 session it names, and `sandbox-workspace-policy` publishes the `sandboxPolicy`
-service those rows require, reporting the sandbox workspace and adding nothing
-to the prompt. Browsing a file behaves like any other request against the
+service those rows require, reporting the sandbox workspace, adding nothing to
+the prompt, and answering every call as `danger-full-access` — in dsh, "run the
+command as it is, with no extra file sandbox". The container is the boundary, so
+there is nothing to add. The rows that would add one — the persistent shell
+behind the shipped `minimal` preset, and the PTC runtime — wrap the command in
+the host's `landlock-run` launcher under any other answer. No sandbox can run
+that launcher, so the command fails instead of being confined. See the Terminal
+tab paragraph below. Browsing a file behaves like any other request against the
 session: it wakes a hibernated sandbox and counts as activity for the idle
 timer. [`docs/plans/web-sidebar.md`](../docs/plans/web-sidebar.md) records why
 the stock rows fail on their own and a deferred design in which browsing never
@@ -197,7 +203,13 @@ and adds `sandbox-terminal-controller`, which wraps the live
 idle timer so a sandbox is not hibernated out from under a terminal someone is
 typing in. Terminal output stays out of the agent transcript. The same seam is
 what dsh's persistent-shell backend (`dsh-terminal-bash`, used by the shipped
-`minimal` preset) waits on.
+`minimal` preset) waits on: that preset swaps the one-shot `bash` tool for a
+persistent shell that opens its PTY through `ctx.subprocess.spawnTerminal`.
+Before opening it, the backend reads `ctx.sandboxPolicy` and, for any answer but
+`danger-full-access`, wraps the shell in the host's `landlock-run` launcher.
+The sandbox has no such launcher, so every `minimal` command failed with ENOENT;
+answering full access is what keeps the preset working. The shell still runs in
+the sandbox, through this seam, like every other command.
 
 The header's **Open in...** button (`open-in-app`, `ui-open-in-app`) is off:
 it launches a desktop application on the host against the session `cwd`.
