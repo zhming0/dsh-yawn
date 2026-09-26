@@ -28,6 +28,26 @@ The Kubernetes tests additionally need Docker, `kind`, `kubectl`, and Python 3. 
 disposable kind cluster. A full browser test needs a real model credential;
 never put its value in a repository, command transcript, fixture, or manifest.
 
+## Cost and reuse
+
+The test layers are cheap once their inputs exist; the expensive parts are a
+first cold image build and the model's own turns. What that means in practice:
+
+- **Reuse a runner image.** `docker buildx bake dev --load` caches its layers,
+  so a rebuild after a control-plane-only change takes seconds. For a change
+  that does not touch `runner/`, skip the build entirely: the Docker smoke test
+  takes any tag (`DSH_YAWN_RUNNER_IMAGE=ghcr.io/zhming0/dsh-yawn-runner:<version>
+  pnpm test:docker`), and a checkout profile can name the same released tag.
+- **Run the layer the change reaches, and let CI cover the rest.** Every branch
+  builds the runner image, runs the Docker smoke test, and runs the Kubernetes
+  test; the whole pipeline finishes in minutes because the images and clusters
+  are the only real work.
+- **A sandbox is as old as its container.** Hibernation and wake keep the same
+  machine, and a rebuilt image reaches a sandbox only when it is created, so a
+  binary added to a Dockerfile can be missing from a sandbox that predates the
+  change. Check the machine (`dpkg -l docker-ce-cli`,
+  `stat -c %y /etc/apt/apt.conf.d/90-dsh-yawn`) before suspecting the image.
+
 ## Automated checks
 
 Run these from the repository root:
@@ -167,6 +187,26 @@ setup, credentials, the control-plane image, or Web UI contributions. Create the
 inspectable development cluster using the commands in
 [`kubernetes.md`](kubernetes.md), rather than `pnpm test:kas`, which removes
 its cluster when it finishes.
+
+### Run it scripted, from the checkout
+
+`scripts/acceptance.mjs` brings up the same control plane without a cluster: a
+disposable `DSH_HOME`, its own state directory, and free ports, so it never
+touches a control plane the operator is using. The loop is documented for
+agents in [`.agents/skills/acceptance-run`](../.agents/skills/acceptance-run/SKILL.md);
+the shape is:
+
+```sh
+node scripts/acceptance.mjs up          # prints { url, home, log, … }
+# drive the UI with agent-browser, then read the sandbox for evidence:
+node scripts/acceptance.mjs sandbox ls
+node scripts/acceptance.mjs sandbox exec <session-id> -- cat /workspace/repository/<file>
+node scripts/acceptance.mjs down        # stops the plane, removes its sandboxes
+```
+
+The UI steps in the middle belong to the feature under test; the skill explains
+how to compose them. The cluster workflow below remains the supported
+Kubernetes version of the same test.
 
 ### Start a real session
 
