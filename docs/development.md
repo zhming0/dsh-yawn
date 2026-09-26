@@ -84,6 +84,13 @@ pnpm install && pnpm build
 dsh plugin --profile web add "$PWD/control-plane"
 ```
 
+`scripts/acceptance.mjs up` does those steps into a scratch `DSH_HOME` instead
+of yours, points it at a Docker sandbox profile, starts `dsh web` on free ports,
+and prints the tokenized URL; `down` stops it and removes the sandboxes it
+created. Use it for acceptance runs, so the profile an operator is using stays
+untouched. The loop and its assertions are in
+[`.agents/skills/acceptance-run`](../.agents/skills/acceptance-run/SKILL.md).
+
 Declare one Docker profile that points at the locally built runner image in
 your profile layer, then run `dsh web` and open the `?token=` URL it prints:
 

@@ -216,7 +216,11 @@ there is no generated-code diff when the contract or generator settings change.
 
 Follow [`docs/e2e-testing.md`](docs/e2e-testing.md) for the complete Docker,
 Kubernetes, and browser/model acceptance workflows, including expected results,
-cleanup, and failure investigation.
+cleanup, and failure investigation. For a change that needs a real session —
+credentials, sandbox lifecycle, tool routing, settings, or a Web UI
+contribution — follow
+[`.agents/skills/acceptance-run`](.agents/skills/acceptance-run/SKILL.md)
+rather than driving the UI by hand.
 
 Update the relevant README or `docs/` page when behavior, configuration,
 security boundaries, setup, or supported limits change.
