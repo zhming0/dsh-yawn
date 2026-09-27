@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  type MediaImage,
+  createMediaTagger,
+  type MediaElement,
   mediaSrcWithSession,
-  tagMediaImage,
+  sessionOf,
+  stockMediaSrc,
 } from "../src/client/media-session.js";
 
 const PAGE = "https://dsh.example.test/";
 const IMAGE = "https://dsh.example.test/api/file?path=%2Fworkspace%2Fa.png";
+const OTHER = "https://dsh.example.test/api/file?path=%2Fworkspace%2Fb.png";
 
 describe("mediaSrcWithSession", () => {
   it("adds the session to a same-origin /api/file URL", () => {
@@ -33,48 +36,145 @@ describe("mediaSrcWithSession", () => {
   });
 });
 
-/** An image with the given source, inside a view for the given session. */
-function fakeImage(src: string | null, sessionId?: string) {
-  const attributes = new Map<string, string>();
-  if (src !== null) {
-    attributes.set("src", src);
+describe("stockMediaSrc", () => {
+  it("drops the session parameter and resolves against the document", () => {
+    expect(stockMediaSrc(`${IMAGE}&dsh-yawn-session=s-one`, PAGE)).toBe(IMAGE);
+    expect(stockMediaSrc("api/file?path=%2Fworkspace%2Fa.png", PAGE)).toBe(
+      IMAGE,
+    );
+    expect(stockMediaSrc("/assets/logo.png", PAGE)).toBeUndefined();
+  });
+});
+
+/** A minimal DOM: elements with attributes, a parent, and children. */
+class FakeElement implements MediaElement {
+  readonly children: FakeElement[] = [];
+  parent: FakeElement | undefined;
+  constructor(
+    readonly tag: string,
+    readonly attributes: Record<string, string> = {},
+  ) {}
+  append(...children: FakeElement[]): this {
+    for (const child of children) {
+      child.parent = this;
+      this.children.push(child);
+    }
+    return this;
   }
-  const image: MediaImage = {
-    getAttribute: (name) => attributes.get(name) ?? null,
-    setAttribute: (name, value) => {
-      attributes.set(name, value);
-    },
-    closest: (selector) =>
-      sessionId === undefined
-        ? null
-        : {
-            getAttribute: (name) =>
-              `[${name}]` === selector ? sessionId : null,
-          },
-  };
-  return { image, src: () => attributes.get("src") };
+  getAttribute(name: string): string | null {
+    return this.attributes[name] ?? null;
+  }
+  setAttribute(name: string, value: string): void {
+    this.attributes[name] = value;
+  }
+  /** Supports the selectors the module uses: tags and `[attribute]` lists. */
+  matches(selector: string): boolean {
+    return selector
+      .split(",")
+      .map((part) => part.trim())
+      .some((part) =>
+        part.startsWith("[")
+          ? part.slice(1, -1) in this.attributes
+          : part === this.tag,
+      );
+  }
+  closest(selector: string): FakeElement | null {
+    if (this.matches(selector)) {
+      return this;
+    }
+    return this.parent?.closest(selector) ?? null;
+  }
+  querySelectorAll(selector: string): FakeElement[] {
+    return this.children.flatMap((child) => [
+      ...(child.matches(selector) ? [child] : []),
+      ...child.querySelectorAll(selector),
+    ]);
+  }
 }
 
-describe("tagMediaImage", () => {
-  it("names the session of the conversation view the image sits in", () => {
-    const one = fakeImage(IMAGE, "s-one");
-    const two = fakeImage(IMAGE, "s-two");
+const img = (src: string) => new FakeElement("img", { src });
 
-    tagMediaImage(one.image, PAGE);
-    tagMediaImage(two.image, PAGE);
+describe("sessionOf", () => {
+  it("reads the conversation view or right sidebar an element sits in", () => {
+    const inChat = img(IMAGE);
+    const inSidebar = img(IMAGE);
+    new FakeElement("div", { "data-conversation-session": "s-chat" }).append(
+      new FakeElement("p").append(inChat),
+    );
+    new FakeElement("div", { "data-sidebar-right-session": "s-side" }).append(
+      inSidebar,
+    );
 
-    expect(one.src()).toBe(`${IMAGE}&dsh-yawn-session=s-one`);
-    expect(two.src()).toBe(`${IMAGE}&dsh-yawn-session=s-two`);
+    expect(sessionOf(inChat)).toBe("s-chat");
+    expect(sessionOf(inSidebar)).toBe("s-side");
+    expect(sessionOf(img(IMAGE))).toBeUndefined();
+  });
+});
+
+describe("createMediaTagger", () => {
+  it("names the session of the view each image sits in", () => {
+    const tagger = createMediaTagger(() => PAGE);
+    const one = img(IMAGE);
+    const two = img(IMAGE);
+    new FakeElement("div", { "data-conversation-session": "s-one" }).append(
+      one,
+    );
+    new FakeElement("div", { "data-sidebar-right-session": "s-two" }).append(
+      two,
+    );
+
+    tagger.tag(one);
+    tagger.tag(two);
+
+    expect(one.attributes.src).toBe(`${IMAGE}&dsh-yawn-session=s-one`);
+    expect(two.attributes.src).toBe(`${IMAGE}&dsh-yawn-session=s-two`);
   });
 
-  it("leaves an image outside any conversation view, or with no source, alone", () => {
-    const outside = fakeImage(IMAGE);
-    const empty = fakeImage(null, "s-one");
+  it("gives the image dialog the session of the thumbnail just clicked", () => {
+    const tagger = createMediaTagger(() => PAGE);
+    const thumbnail = img(IMAGE);
+    new FakeElement("div", { "data-conversation-session": "s-one" }).append(
+      new FakeElement("button").append(thumbnail),
+    );
+    tagger.tag(thumbnail);
 
-    tagMediaImage(outside.image, PAGE);
-    tagMediaImage(empty.image, PAGE);
+    tagger.noteClick(thumbnail);
+    const dialog = img(IMAGE);
+    const unrelated = img(OTHER);
+    tagger.tag(dialog);
+    tagger.tag(unrelated);
 
-    expect(outside.src()).toBe(IMAGE);
-    expect(empty.src()).toBeUndefined();
+    expect(dialog.attributes.src).toBe(`${IMAGE}&dsh-yawn-session=s-one`);
+    expect(unrelated.attributes.src).toBe(OTHER);
+  });
+
+  it("forgets the thumbnail on the next click", () => {
+    const tagger = createMediaTagger(() => PAGE);
+    const thumbnail = img(IMAGE);
+    new FakeElement("div", { "data-conversation-session": "s-one" }).append(
+      new FakeElement("button").append(thumbnail),
+    );
+    tagger.noteClick(thumbnail);
+    tagger.noteClick(new FakeElement("div"));
+
+    const dialog = img(IMAGE);
+    tagger.tag(dialog);
+
+    expect(dialog.attributes.src).toBe(IMAGE);
+  });
+
+  it("leaves an image outside every view, or with no source, alone", () => {
+    const tagger = createMediaTagger(() => PAGE);
+    const outside = img(IMAGE);
+    const empty = new FakeElement("img");
+    new FakeElement("div", { "data-conversation-session": "s-one" }).append(
+      empty,
+    );
+
+    tagger.tag(outside);
+    tagger.tag(empty);
+
+    expect(outside.attributes.src).toBe(IMAGE);
+    expect(empty.attributes.src).toBeUndefined();
   });
 });

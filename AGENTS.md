@@ -118,8 +118,11 @@ likely to mislead you.
   `referrerPolicy="no-referrer"`, so a `Referer` carries nothing. This
   repository's browser half adds a `dsh-yawn-session` query parameter to each
   such image's `src`, taken from the enclosing `[data-conversation-session]`
-  view (the same lookup dsh uses), and `sandbox-media-route` reads it on the
-  `connection/request` waterfall. A cookie would race across tabs, and a path
+  or `[data-sidebar-right-session]` view (the same lookup dsh uses), and
+  `sandbox-media-route` reads it on the `connection/request` waterfall. The
+  full-size image dialog is portalled to `document.body`, outside every view,
+  so it takes the session of the thumbnail just clicked, matched by exact
+  URL. A cookie would race across tabs, and a path
   alone never names a sandbox, so there is deliberately no path-based
   fallback.
 
