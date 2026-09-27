@@ -110,6 +110,18 @@ likely to mislead you.
   `workspace-files` alone leaves the sidebar's Files and Preview tabs without
   their file resource provider, so the tab rows go with it. To change what a
   stock host service does, keep its row and wrap the live instance.
+- The chat's inline images ride `GET /api/file?path=<absolute path>`
+  (`SessionMediaReferences` in `dsh-api-session-controller`), a plain
+  `connection.fetch` route that reads through `ctx.fs` with no session id in
+  its URL and no agent turn around the call. Registering the path twice
+  throws, so it cannot be shadowed. The chat `<img>` sets
+  `referrerPolicy="no-referrer"`, so a `Referer` carries nothing. This
+  repository's browser half adds a `dsh-yawn-session` query parameter to each
+  such image's `src`, taken from the enclosing `[data-conversation-session]`
+  view (the same lookup dsh uses), and `sandbox-media-route` reads it on the
+  `connection/request` waterfall. A cookie would race across tabs, and a path
+  alone never names a sandbox, so there is deliberately no path-based
+  fallback.
 
 ## Write code people can maintain
 

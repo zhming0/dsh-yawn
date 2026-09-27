@@ -186,6 +186,38 @@ wakes a sandbox. One cosmetic limit remains: the Files tab's header label
 comes from the session `cwd` in the browser, so it shows the host anchor
 directory while every entry under it is a sandbox path.
 
+Inline images in the session log — the `![](path)` markdown the model writes
+and the file-mention images — are served by dsh's authenticated `/api/file`
+route, which also reads through the filesystem service from a plain browser
+request. Unlike the sidebar, its URL carries no session id, only a path, so
+there is no scope to wrap the way `sandbox-workspace-files` does, and the
+exact route cannot be re-registered. The bundle's browser half adds the
+identity to the image URL instead (`src/client/media-session.ts`): it
+watches the document and, for each `/api/file` image, adds the session of
+the conversation view the image sits in — the stock view marks its root with
+`data-conversation-session`, the same attribute dsh itself uses to find a
+target's session — as the `dsh-yawn-session` query parameter. The stock
+route reads only `path`, and the stock images load lazily, so the rewritten
+URL is the only one the browser requests. Each image names its own
+conversation, so two tabs, or two sessions whose images share a path, stay
+apart. The `sandbox-media-route` row listens on the `connection/request`
+waterfall — which the connection service runs after authenticating the
+request — and, for `/api/file` GET and HEAD only, resolves that session to
+its live agent and runs the rest of the dispatch inside
+`agents.withInitiator`. The initiator travels down the request's own async
+chain into the route handler and its `ctx.fs` calls, so the read reaches
+exactly the sandbox that conversation uses, subagent lineage included
+(sandbox identity is root-keyed).
+
+Anything but a clean hit — another path or method, an image outside a
+conversation view, a session that cannot be resolved — passes through, and
+the stock route fails as it did before rather than read a guessed sandbox:
+`/workspace/repository/...` exists in every sandbox, so a path alone never
+names one. The rewrite depends on the stock conversation view's attribute,
+which is an implementation detail of the pinned dsh release, not a promised
+interface. The clean long-term fix is the session id in the route's own URL,
+which is an upstream change.
+
 The right sidebar's **Terminal** tab (`terminal-controller`,
 `ui-sidebar-terminal`) opens an interactive shell in the session workspace. The
 stock controller allocates it through `ctx.subprocess.spawnTerminal`, and this
