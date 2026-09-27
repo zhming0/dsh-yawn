@@ -23,6 +23,7 @@ import { RepositoryDirectoryFlow } from "./repository-directory-flow.js";
 import { SandboxStatusTab } from "./sandbox.js";
 import { SandboxesSettings } from "./settings.js";
 import { SecretsSettings } from "./secrets.js";
+import { installMediaSession } from "./media-session.js";
 
 /**
  * The client bundle entry: mounts the Remote endpoints and registers the
@@ -302,6 +303,11 @@ export async function apply(ctx: Context) {
     const sessions = sessionCtx.sessions as unknown as ClientSessions;
     sessionCtx.effect(() => installTurnNotifications(sessions));
   });
+
+  // Chat images load from `/api/file` with no session in the URL; add the
+  // enclosing conversation's session so `sandbox-media-route` can read the
+  // right sandbox on the host.
+  ctx.effect(() => installMediaSession());
 
   ctx.slots.inject(
     "settings.section",

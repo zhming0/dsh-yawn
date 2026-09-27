@@ -142,6 +142,16 @@
     - id: sandbox-terminal-controller
       name: '@zhming0/dsh-yawn/terminal-controller'
 
+    # Runs dsh's /api/file media route (the chat's inline images) as the
+    # session the image belongs to. The stock route reads through ctx.fs with
+    # no agent turn and no session id in its URL; the bundle's browser half
+    # adds the enclosing conversation's session to each image URL as a
+    # query parameter, and this row turns it into the agent boundary the
+    # sandbox filesystem needs. Same
+    # wait-not-inject shape as the two rows above.
+    - id: sandbox-media-route
+      name: '@zhming0/dsh-yawn/media-route'
+
     # Skills authored in this package as TypeScript modules, for the reason the
     # stock skill rows cannot serve a sandbox: `dsh-skill-filesystem` reads its
     # user roots through the sandbox filesystem, so `$DSH_HOME/skills` on the

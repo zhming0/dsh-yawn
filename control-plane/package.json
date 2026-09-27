@@ -55,6 +55,10 @@
       "types": "./dist/terminal/terminal-controller.d.ts",
       "default": "./dist/terminal/terminal-controller.js"
     },
+    "./media-route": {
+      "types": "./dist/media-route.d.ts",
+      "default": "./dist/media-route.js"
+    },
     "./launch-token": {
       "types": "./dist/launch-token.d.ts",
       "default": "./dist/launch-token.js"
