@@ -1,60 +1,21 @@
 # End-to-end testing
 
-Use this guide to validate the boundaries that unit tests cannot cover: the
-control plane talking to a real runner, lifecycle behavior in Docker and
-Kubernetes, and a model driving sandbox tools through the dsh Web UI.
+Use this guide to validate what unit tests cannot cover: the control plane
+talking to a real runner, lifecycle behavior in Docker and Kubernetes, and a
+model driving sandbox tools through the dsh Web UI. The automated checks to run
+first are listed in [`AGENTS.md`](../AGENTS.md#test-the-affected-path).
 
-Run the smallest applicable layer while developing, then run every layer
-affected by the change before opening a pull request.
+| Layer                   | What it proves                                                                           | Needs                                 |
+| ----------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------- |
+| Docker smoke test       | Runner registration, RPC, tools, setup, hibernate/wake, persistence                      | Docker                                |
+| Kubernetes E2E test     | Real images, dial-out RPC, reconnect, warm adoption, suspend/resume, persistence, expiry | Docker, kind, kubectl, Python 3       |
+| Browser acceptance test | dsh Web, workspace creation, model-to-sandbox tools, settings persistence                | Docker, a browser, a model credential |
 
-| Layer                   | What it proves                                                                           | Required infrastructure                           |
-| ----------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| Automated checks        | Provider, protocol, generated code, and runner behavior                                  | Node, pnpm, Go                                    |
-| Docker smoke test       | Runner registration, RPC, tools, setup, hibernate/wake, persistence                      | Docker                                            |
-| Kubernetes E2E test     | Real images, dial-out RPC, reconnect, warm adoption, suspend/resume, persistence, expiry | Docker, kind, kubectl                             |
-| Browser acceptance test | dsh Web, workspace creation, model-to-sandbox tools, settings persistence                | Kubernetes environment, browser, model credential |
-
-## Prerequisites
-
-Install the repository toolchain and dependencies:
-
-```sh
-mise install
-corepack enable pnpm
-pnpm install --frozen-lockfile
-```
-
-The Kubernetes tests additionally need Docker, `kind`, `kubectl`, and Python 3. The scripts install the repository's pinned agent-sandbox version into a
-disposable kind cluster. A full browser test needs a real model credential;
-never put its value in a repository, command transcript, fixture, or manifest.
-
-## Automated checks
-
-Run these from the repository root:
-
-```sh
-pnpm check
-pnpm format:check
-pnpm test
-pnpm build
-
-(cd runner && go test -race ./... && go vet ./... && go build ./...)
-```
-
-Run them sequentially. The build produces `control-plane/dist`, which the Docker
-smoke test imports.
-
-When changing `proto/`, regenerate both clients and ensure the generated files
-are current:
-
-```sh
-pnpm proto:generate
-git diff --exit-code -- control-plane/src/gen runner/gen
-```
+CI runs both smoke tests on every pull request. Run the one your change affects
+locally while developing. Never put a model credential's value in the
+repository, a command transcript, a fixture, or a manifest.
 
 ## Docker lifecycle smoke test
-
-Build the runner image and control plane, then run the smoke test:
 
 ```sh
 docker buildx bake dev --load
@@ -62,81 +23,32 @@ pnpm build
 pnpm test:docker
 ```
 
-Set `DSH_YAWN_RUNNER_IMAGE` to test another local image tag:
-
-```sh
-DSH_YAWN_RUNNER_IMAGE=my-runner:test pnpm test:docker
-```
-
-The test creates a temporary registration token, tunnel server, and container,
-then verifies:
-
-1. the runner registers with the control plane and its health check succeeds over
-   the reversed HTTP/2 tunnel;
-2. secrets reach commands, and the runner's bundled tools are installed,
-   including Python, Node.js, jq, yq, and the Docker client without its daemon;
-3. the sandbox user reaches root through passwordless sudo;
-4. `.agents/setup` runs on a new machine and is recorded at
-   `/var/lib/dsh-yawn/setup-done`, which is not on the workspace volume: a
-   restart that keeps the machine (a Docker hibernate and wake) does not run it
-   again, while a second container on the same volume does;
-5. hibernate/wake reconnects the runner and preserves the machine's setup
-   marker, workspace files, home-directory files, and mise-managed tools.
-
-Success ends with:
+It checks runner registration over the tunnel, secret delivery, the bundled
+tools, sudo, `.agents/setup` running once per machine, and that hibernate/wake
+keeps the machine's setup marker, workspace, home directory, and mise tools.
+`DSH_YAWN_RUNNER_IMAGE=<tag>` tests another local image. Success ends with:
 
 ```text
 PASS: Docker runner registration, tools, setup, and hibernate/wake
 ```
 
-The script removes its container and temporary control-plane state in a `finally`
-block. If an interrupted run leaves a container behind, inspect it before
-removing it so the failure evidence is not lost.
+The script removes its container on exit. If an interrupted run leaves one
+behind, inspect it before removing it.
 
 ## Kubernetes transport and lifecycle test
-
-Build both development images and run the self-contained test:
 
 ```sh
 docker buildx bake dev control-plane-dev --load
 pnpm test:kas
 ```
 
-The test creates the disposable `dsh-kas-e2e` kind cluster and installs the
-pinned agent-sandbox controllers. It loads the development images and runs the
-production `TunnelServer` and `KasBackend` from the control-plane image as a Kubernetes
-Job. Real warm runner pods dial that Job through the same in-cluster Service
-and registration-token path used by the supported deployment.
-
-The sudo probe stays off the network. A package install would need name
-resolution inside a sandbox pod, and kind's default CNI does not enforce the
-sandbox NetworkPolicy's cross-namespace rule that allows DNS to the CoreDNS
-pods, so a sandbox pod in this cluster cannot resolve anything. The probe
-therefore checks the privileged operations the pod template enables, and the
-Docker smoke checks sudo on the same image without a NetworkPolicy in front of
-it.
-
-The transport probe verifies:
-
-1. `KasBackend` claims a real warm Sandbox;
-2. its runner registers and answers an identity-checked health RPC;
-3. secret injection, command streaming, and file RPCs cross the tunnel;
-4. commands receive `DOCKER_HOST` and `docker version` reaches the rootless
-   daemon sidecar over the shared socket;
-5. passwordless sudo reaches root, and root can chown a file, set its setuid
-   bit, and switch to another user, which is what the template's privilege
-   escalation and capability additions exist for;
-6. hibernate/wake recreates the runner connection, preserves workspace and
-   home-directory data, and runs `.agents/setup` again on the new machine
-   (counted by a hook on the surviving workspace volume).
-
-It then runs the controller lifecycle smoke test, which additionally verifies
-sub-second warm adoption, backing-pod identity, a `docker run` from the runner
-container that reads the workspace through the sidecar's mount, PVC survival
-across suspend/resume, the daemon answering again after resume, and foreground
-expiry of a claim, Sandbox, and PVC.
-
-Success ends with:
+It creates the disposable `dsh-kas-e2e` kind cluster with the pinned
+agent-sandbox controllers and runs the production `TunnelServer` and
+`KasBackend` as a Job that real warm runner pods dial. It checks warm adoption,
+RPC, secrets, the rootless Docker sidecar, sudo, hibernate/wake with setup
+rerunning on the new machine, suspend/resume persistence, and expiry. The sudo
+probe stays off the network, because kind's default CNI does not enforce the
+NetworkPolicy rule that lets sandbox pods reach DNS. Success ends with:
 
 ```text
 PASS: Kubernetes runner registration, RPC, reconnect, and hibernate/wake
@@ -144,83 +56,108 @@ PASS: agent-sandbox warm adoption, suspend/resume persistence, and expiry
 PASS: Kubernetes agent-sandbox transport and lifecycle
 ```
 
-The command prints Kubernetes objects, pod descriptions, and available logs on
-failure, then removes the cluster. To preserve it for further investigation:
-
-```sh
-KEEP_KAS_CLUSTER=1 pnpm test:kas
-```
-
-Remove a preserved test cluster with:
-
-```sh
-scripts/kas/teardown.sh --name dsh-kas-e2e
-```
-
-Set `DSH_YAWN_KAS_CLUSTER_NAME`, `DSH_YAWN_RUNNER_IMAGE`, or `DSH_YAWN_CONTROL_PLANE_IMAGE` to use
-non-default names or image tags.
+On failure it prints objects, pod descriptions, and logs, then removes the
+cluster. `KEEP_KAS_CLUSTER=1 pnpm test:kas` keeps it;
+`scripts/kas/teardown.sh --name dsh-kas-e2e` removes it later.
+`DSH_YAWN_KAS_CLUSTER_NAME`, `DSH_YAWN_RUNNER_IMAGE`, and
+`DSH_YAWN_CONTROL_PLANE_IMAGE` override names and image tags.
 
 ## Browser and model acceptance test
 
-Run this manual test for changes to dsh integration, tool routing, workspace
-setup, credentials, the control-plane image, or Web UI contributions. Create the
-inspectable development cluster using the commands in
-[`kubernetes.md`](kubernetes.md), rather than `pnpm test:kas`, which removes
-its cluster when it finishes.
+Run this for changes to dsh integration, tool routing, workspace setup,
+credentials, settings, or Web UI contributions. It runs against a disposable
+control plane started from the checkout, with Docker sandboxes.
 
-### Start a real session
+### Start a session
 
-1. Supply the model credential to the control plane through the model provider's
-   supported host configuration. Do not add it to Kubernetes YAML or the
-   repository.
-2. Forward the dsh server from the control-plane pod:
+1. Build the runner image with `docker buildx bake dev --load`, or pass a
+   published tag with `--runner-image`.
+2. Run `node scripts/dev.mjs start` with `DEEPSEEK_API_KEY` in its
+   environment; the default model reads it from there. It stays in the
+   foreground and prints the tokenized `dsh web` URL. It uses a scratch
+   `DSH_HOME`, so a control plane you use elsewhere is not touched. See
+   [`development.md`](development.md#running-from-a-checkout-laptop--docker)
+   for what it sets up.
+3. Open the URL with `agent-browser` (see the `using-agent-browser` skill). A
+   fresh control plane opens on an **Internal Testing Notice**; dismiss it with
+   **Continue**.
+4. Add a disposable public repository as a Workspace by its URL. This creates
+   the session bound to it in the same step.
 
-   ```sh
-   kubectl -n dsh-yawn port-forward deploy/dsh-yawn-control-plane 3000:3000
-   ```
+What happens next depends on the feature under test. For a change to tool
+routing, ask the model to use its shell and file tools to print `uname -a` and
+the working directory, read a known file from the repository, and write a
+uniquely named file with known content and read it back.
 
-3. Open `http://localhost:3000/launch-token`, which redirects to the tokenized
-   URL when the control plane runs with `DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1` (the oauth2-proxy
-   patch sets it). Otherwise read the token from the control plane log and open it
-   through the port-forward. Then choose the configured model, select **New
-   session**, and add a disposable public repository as a Workspace:
+### Collect evidence from the sandbox
 
-   ```sh
-   kubectl -n dsh-yawn logs deploy/dsh-yawn-control-plane | grep 'dsh web:'
-   # prints http://127.0.0.1:3000/?token=…; open http://localhost:3000/?token=…
-   ```
+A chat answer alone is not evidence that a tool ran in the sandbox. Read the
+sandbox directly:
 
-4. Ask the model to use its shell and file tools to:
-   - print `uname -a` and the working directory;
-   - read a known file from the repository;
-   - write a uniquely named file with known content and read it back;
-   - run a Docker container that bind-mounts the repository and writes a
-     second uniquely named file into it, for example
-     `docker run --rm -v "$PWD:/src" alpine sh -c 'echo <content> > /src/<file>'`.
-5. Find the claimed Sandbox and verify both files independently in its runner
-   container, and confirm the daemon ran the container:
+```sh
+docker ps -a --filter label=dsh.session --format '{{.ID}}\t{{.Names}}\t{{.Label "dsh.session"}}'
+docker exec <container> cat /workspace/repository/<file>
+```
 
-   ```sh
-   kubectl -n dsh-yawn get sandboxclaims,sandboxes,pods
-   kubectl -n dsh-yawn exec <pod> -c runner -- \
-     cat /workspace/repository/<file>
-   kubectl -n dsh-yawn exec <pod> -c docker -- docker images
-   ```
+The model's hostname must be the container's ID, not the host's name, and the
+file must contain the expected text. Secrets are the exception: the runner
+injects them into session commands only, so `docker exec` cannot see them.
+Assert their effect from the host (a file, a git remote) and their values from
+the tool output. Do not paste `docker inspect` output into a transcript; its
+environment carries the registration token.
 
-The model's command hostname must be the Sandbox pod rather than the control plane,
-and the independently read files must contain the expected text. The file the
-container wrote must be owned by UID 1000 in the runner (rootless Docker maps
-container root to the sidecar's user). A chat answer alone is not evidence
-that the tool ran in the sandbox.
+For a UI change, a screenshot alone does not prove persistence or
+model-context injection. Exercise the interaction and check the resulting
+state.
 
-If the control plane Deployment restarts, restart `kubectl port-forward`; it targets a
-specific pod and does not follow the replacement. The browser cookie survives
-the restart; only a new browser needs the new token from the log.
+### Clean up
 
-### Verify UI-managed instructions
+Stop the control plane with Ctrl-C, then run `node scripts/dev.mjs clean`. It
+removes the sandboxes the run created, which outlive the control plane. A later
+`start` does the same before it replaces the scratch home.
 
-Run this scenario for changes to the Instructions page or model-context
-injection:
+### Kubernetes variant
+
+Changes to the control-plane image, the chart, or the Kubernetes backend need
+the same test against a cluster. Create the inspectable development cluster
+from [`kubernetes.md`](kubernetes.md) (not `pnpm test:kas`, which removes its
+cluster), supply the model credential through the provider's host
+configuration, and forward the server:
+
+```sh
+kubectl -n dsh-yawn port-forward deploy/dsh-yawn-control-plane 3000:3000
+```
+
+Open `http://localhost:3000/launch-token` when the control plane runs with
+`DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1` (the oauth2-proxy patch sets it);
+otherwise take the token from `kubectl -n dsh-yawn logs
+deploy/dsh-yawn-control-plane | grep 'dsh web:'`. Restart the port-forward
+after a rollout; it does not follow the replacement pod.
+
+In addition to the steps above, ask the model to run
+`docker run --rm -v "$PWD:/src" alpine sh -c 'echo <content> > /src/<file>'`.
+Read the evidence from the runner container:
+
+```sh
+kubectl -n dsh-yawn get sandboxclaims,sandboxes,pods
+kubectl -n dsh-yawn exec <pod> -c runner -- cat /workspace/repository/<file>
+kubectl -n dsh-yawn exec <pod> -c docker -- docker images
+```
+
+The hostname must be the Sandbox pod, and the file the container wrote must be
+owned by UID 1000 in the runner, because rootless Docker maps container root to
+the sidecar's user.
+
+## Feature scenarios
+
+Run the scenario for the feature you changed, on top of a session started as
+above. To change the `sandbox-manager` row on the checkout control plane, use
+its Web settings form; the write lands in the scratch profile, and the next
+`start` resets it.
+
+### UI-managed instructions
+
+For changes to the Instructions page or model-context injection:
 
 1. Open **Settings → Instructions** and save a distinctive Global instruction.
 2. Select the test Workspace and save a different workspace instruction.
@@ -233,124 +170,103 @@ injection:
 The settings must persist outside the repository checkout. Confirm the test did
 not create or modify an `AGENTS.md` file in the Workspace.
 
-### Verify sandbox profile selection
+### Sandbox profile selection
 
-Run this scenario for changes to profiles, provisioning, or the composer chip.
-It works against a Docker host too: give the `sandbox-manager` row two Docker
-profiles that differ only by name, for example `standard` and `large` both with
-`image: dsh-yawn-runner:dev`.
+For changes to profiles, provisioning, or the composer chip. Give the
+`sandbox-manager` row two Docker profiles that differ only by name, for
+example `standard` and `large`, both with `image: dsh-yawn-runner:dev`.
 
 1. Start a new session and confirm the profile chip is visible in the
    composer's tool row and shows the default profile. It must be absent when
    only one profile is configured.
 2. Pick the other profile and reload the page; the chip must still show it.
 3. Send a prompt that uses the shell. Before that prompt there must be no
-   sandbox for the session (`docker ps` or `kubectl get sandboxclaims`); after
-   it there must be exactly one, and `stateDir/sessions.json` must record the
-   picked profile on the session, with no entry left in `pendingProfiles`.
+   sandbox for the session (`docker ps`); after it there must be exactly one,
+   and `stateDir/sessions.json` must record the picked profile on the session,
+   with no entry left in `pendingProfiles`.
 4. Confirm the chip is now disabled and keeps showing the picked profile.
 
-### Verify sandbox web previews
+### Sandbox web previews
 
-Run this scenario for changes to the preview listener, the relay, or the
-preview surfaces. It works against a Docker host: give the `sandbox-manager`
-row a `preview.domain` (any name — nothing resolves it, the listener routes
-by the `Host` header alone) and read the preview port from the host's port
-bindings (the `preview.port` setting, default 8082).
+For changes to the preview listener, the relay, or the preview surfaces. Give
+the `sandbox-manager` row a `preview.domain`; the listener routes by the `Host`
+header alone, so nothing needs to resolve it. `preview.localhost` works well,
+because browsers resolve `*.localhost` to loopback. The listener's port is the
+`preview.port` setting, default 8082.
 
-Preview links carry no port — in a deployment one front door serves the UI
-and previews on the same scheme and port. The Sandbox tab's links reuse the
-UI page's scheme; the address the model is given is always `https://`, since
-the supported distribution serves previews over TLS. So on a development host
-the browser reaches the listener only at the port those URLs imply. Either
-bind the listener there (`preview.port: 80`, which needs the privilege to
-bind it) or point the browser at the real port, for example by launching
-Chrome with `--host-resolver-rules='MAP *.localhost 127.0.0.1:8082'` for the
-default; for the model's `https://` address, swap the scheme by hand. The
-`curl` step below names the port itself and works either way.
+Preview links carry no port, since a deployment serves the UI and previews on
+one front door, and the address given to the model is always `https://`. On a
+development host, either bind the listener to port 80 (`preview.port: 80`) or
+launch Chrome with `--host-resolver-rules='MAP *.localhost 127.0.0.1:8082'`,
+and swap the scheme of the model's address by hand.
 
-1. Start a session and ask the model to start a web server in the sandbox on
-   a fixed port, detached. The Sandbox tab must list the port under
-   "Listening ports" once it is up, as a link that opens the page in a
-   browser tab; the "Web preview" row links the sandbox's base address.
-2. The model's reply should carry the preview URL to click — the sandbox
-   environment prompt names the address pattern once the sandbox exists.
-   Check the assembled prompt if the model does not offer it.
+1. Ask the model to start a detached web server in the sandbox on a fixed
+   port. The Sandbox tab must list the port under "Listening ports" as a link
+   that opens the page in a browser tab; the "Web preview" row links the
+   sandbox's base address.
+2. The model's reply should carry the preview URL; the sandbox environment
+   prompt names the address pattern once the sandbox exists.
 3. The opened page is a normal top-level tab: absolute-path assets load, and
-   `localStorage` works from the page's own console.
+   `localStorage` works from its console.
 4. From the host, `curl -H "Host: <sandboxId>-p<port>.<preview.domain>"
    http://127.0.0.1:<preview.port>/` must return the same page;
-   `curl -H "Host: other.example.com" …` must return 404, and a sandbox with
-   no runner (hibernate it) must answer 503 with the wake hint.
-5. With `preview.domain` removed from the row, the Sandbox tab's preview row
-   must say previews are not configured.
-6. Keep a preview page open past the idle delay on a page that keeps
-   requesting something (it polls, or reload it by hand): the sandbox must
-   not hibernate while those requests keep arriving. Stop the traffic and it
-   hibernates after the idle delay — a page that loaded once and then sat
-   idle makes no further requests and does not hold the sandbox open.
+   `curl -H "Host: other.example.com" …` must return 404, and a hibernated
+   sandbox must answer 503 with the wake hint.
+5. With `preview.domain` removed, the Sandbox tab must say previews are not
+   configured.
+6. A preview page that keeps making requests past the idle delay must keep
+   the sandbox awake. Once the requests stop, it hibernates after the idle
+   delay.
 
-In a browser, `<anything>.localhost` resolves to loopback in Chrome and
-Firefox, so a `preview.domain` of `preview.localhost` gives real host names
-with no DNS or certificate on a development host; the host mapping above then
-supplies the port.
+### Web plugin management
 
-For UI changes, record the browser state or capture a screenshot when useful,
-but also exercise the interaction and verify the resulting state. A screenshot
-alone does not prove persistence or model-context injection.
-
-### Verify Web plugin management
-
-Run this scenario for changes to the Plugins page, the bundle patch, or
-`dsh-yawn-seed`.
+For changes to the Plugins page, the bundle patch, or `dsh-yawn-seed`. Step 3
+needs the Kubernetes variant, because the seed runs in the control-plane
+image.
 
 1. The sidebar's **Plugins** page must list the official bundles the
    installation ships switched off, the official plugins that carry a
    configuration page, and `@zhming0/dsh-yawn` under **Installed**, switched
    on.
 2. Pack a package that declares a bundle patch (`dsh.bundle.patch` naming a
-   `cordis.patch.yml`) and install it with **Add plugin** by absolute path,
-   then **Enable now**. The page must list it switched on, and the profile
-   manifest on the control plane volume must gain the dependency and the
-   bundle entry:
-
-   ```sh
-   kubectl -n dsh-yawn exec deploy/dsh-yawn-control-plane -c control-plane -- \
-     cat /data/.dsh/profiles/web/package.json
-   ```
-
+   `cordis.patch.yml`), install it with **Add plugin** by absolute path, then
+   **Enable now**. The page must list it switched on, and the profile's
+   `package.json` must gain the dependency and the bundle entry
+   (`/data/.dsh/profiles/web/package.json` in the control-plane pod).
 3. Roll the control plane onto a new image version (for a development build,
    remove the version marker first, as the troubleshooting note below says).
-   After the restart the plugin must still be installed and switched on: this
-   is the `dsh-yawn-seed` carry-forward.
+   After the restart the plugin must still be installed and switched on.
 4. Uninstall the test plugin from its page. The dependency and the bundle
    entry must be gone, and a restart must come up without it.
 
 ## Troubleshooting
 
+- **Docker is unavailable:** report that the Docker, Kubernetes, and browser
+  layers were not run. Unit tests do not substitute for them.
 - **Docker smoke imports fail:** run `pnpm build`; the script imports
   `control-plane/dist`.
+- **A browser tool call fails while direct runner health succeeds:** compare
+  package resolution in the control plane with the control-plane and runner
+  logs; dsh plugins must share the control plane's in-box package instances.
+
+On Kubernetes:
+
 - **A development image does not reflect the checkout:** rebuild with
-  `docker buildx bake dev control-plane-dev --load`, then rerun `dev-cluster.sh` with
-  `--load-runner-image`.
+  `docker buildx bake dev control-plane-dev --load`, then rerun
+  `dev-cluster.sh` with `--load-runner-image`.
 - **A rebuilt control-plane image still runs the old bundle:** `dsh-yawn-seed`
-  refreshes the profile on the control plane volume only when the image version
-  changes, and every development build is `0.0.0-dev`. Remove the marker and
-  restart; the next boot merges the image's manifest fields into the profile
-  and runs `pnpm update @zhming0/dsh-yawn`, which picks up the rebuilt package
-  while the profile's other plugins stay:
+  refreshes the profile only when the image version changes, and every
+  development build is `0.0.0-dev`. Remove the marker and restart; the next
+  boot merges the image's manifest fields and runs
+  `pnpm update @zhming0/dsh-yawn`, keeping the profile's other plugins:
   `kubectl -n dsh-yawn exec deploy/dsh-yawn-control-plane -c control-plane -- rm /data/.dsh/profiles/web/.dsh-yawn-image-version`,
   then `kubectl -n dsh-yawn rollout restart deploy/dsh-yawn-control-plane`.
-- **Plugins disappeared after a control-plane upgrade:** the refresh failed, and
-  the pod log says so. The manifest it was working from is kept at
+- **Plugins disappeared after a control-plane upgrade:** the refresh failed,
+  and the pod log says so. The previous manifest is kept at
   `/data/.dsh/profiles/web/package.json.before-reseed`, and the next boot
-  merges it back in and retries. To recover by hand, copy that file over
-  `package.json` in the profile and run `pnpm install` there.
-- **The warm pool never becomes ready:** inspect agent-sandbox controller
-  deployments, the `dsh-yawn-universal` `SandboxWarmPool`, and runner pod events.
+  merges it back and retries. To recover by hand, copy it over `package.json`
+  in the profile and run `pnpm install` there.
+- **The warm pool never becomes ready:** inspect the agent-sandbox controller
+  deployments, the `dsh-yawn-universal` `SandboxWarmPool`, and runner pod
+  events.
 - **The browser stops loading after a rollout:** restart the port-forward.
-- **A browser tool call fails while direct runner health succeeds:** compare
-  package resolution in the control-plane image as well as control-plane and runner logs;
-  dsh plugins must share the control plane's in-box package instances.
-- **Docker is unavailable:** report that the Docker, Kubernetes, and browser
-  layers were not run. Unit tests do not substitute for those layers.

@@ -220,7 +220,10 @@ there is no generated-code diff when the contract or generator settings change.
 
 Follow [`docs/e2e-testing.md`](docs/e2e-testing.md) for the complete Docker,
 Kubernetes, and browser/model acceptance workflows, including expected results,
-cleanup, and failure investigation.
+cleanup, and failure investigation. For a change that needs a real session —
+credentials, sandbox lifecycle, tool routing, settings, or a Web UI
+contribution — start a disposable control plane with `node scripts/dev.mjs
+start` and assert from the session's sandbox, as that page describes.
 
 Update the relevant README or `docs/` page when behavior, configuration,
 security boundaries, setup, or supported limits change.
