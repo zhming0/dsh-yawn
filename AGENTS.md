@@ -124,7 +124,9 @@ likely to mislead you.
   so it takes the session of the thumbnail just clicked, matched by exact
   URL. A cookie would race across tabs, and a path
   alone never names a sandbox, so there is deliberately no path-based
-  fallback.
+  fallback. `control-plane/tests/media-dsh-contract.test.ts` checks each of
+  these details in the pinned packages; when a dsh bump fails it, re-verify
+  the named detail before adapting the test.
 
 ## Write code people can maintain
 

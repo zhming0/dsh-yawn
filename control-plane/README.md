@@ -220,8 +220,10 @@ the stock route fails as it did before rather than read a guessed sandbox:
 `/workspace/repository/...` exists in every sandbox, so a path alone never
 names one. The rewrite depends on those attributes and on the dialog's
 markup, which are implementation details of the pinned dsh release, not a
-promised interface. The clean long-term fix is the session id in the route's own URL,
-which is an upstream change.
+promised interface. `tests/media-dsh-contract.test.ts` reads the pinned
+packages and fails, naming the assumption, in the change that bumps the dsh
+pin if any of them moves. The clean long-term fix is the session id in the
+route's own URL, which is an upstream change.
 
 The right sidebar's **Terminal** tab (`terminal-controller`,
 `ui-sidebar-terminal`) opens an interactive shell in the session workspace. The
