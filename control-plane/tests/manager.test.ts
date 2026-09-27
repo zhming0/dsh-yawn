@@ -10,6 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CredentialBroker, GLOBAL_SECRET_SCOPE } from "../src/broker.js";
 import { SandboxManager } from "../src/manager/index.js";
+import { McpPool } from "../src/mcp-pool.js";
+import { McpServerStore } from "../src/mcp-store.js";
 import { SessionStore } from "../src/state-store.js";
 import {
   FakeBackend,
@@ -1210,6 +1212,125 @@ describe("repository workspaces and instructions", () => {
         password: "workspace-pat",
       },
     ]);
+  });
+
+  it("scopes MCP servers per workspace and mounts them per agent", async () => {
+    const backend = new FakeBackend();
+    const workspaceRegistry = new FakeWorkspaceRegistry();
+    const ctx = new Context();
+    const mcpStore = new McpServerStore({
+      path: join(directory, "mcp.json"),
+    });
+    await mcpStore.initialize();
+    // A status mount never settles, so views keep the honest "starting"
+    // status without any network; a session mount settles at once.
+    const mounted: string[] = [];
+    const sessionMounts: Array<{ serverName: string; ctx: Context }> = [];
+    const sessionCtx = new Context();
+    const mcpPool = new McpPool({
+      ctx,
+      store: mcpStore,
+      warn: () => {},
+      mount: (config, mountCtx) => {
+        if (mountCtx === sessionCtx) {
+          sessionMounts.push({ serverName: config.serverName, ctx: mountCtx });
+          return { settled: Promise.resolve(), dispose: async () => {} };
+        }
+        mounted.push(config.serverName);
+        return {
+          settled: new Promise(() => {}),
+          dispose: async () => {},
+        };
+      },
+    });
+    const manager = new SandboxManager(
+      ctx,
+      {
+        profiles: { standard: { backend: "docker" } },
+        stateDir: directory,
+        repository: "https://github.com/example/public.git",
+      },
+      {
+        backends: { standard: backend },
+        gateway: gatewayFor(backend),
+        workspaceRegistry,
+        mcpStore,
+        mcpPool,
+      },
+    );
+    await manager.createRepositoryWorkspace(
+      "https://github.com/example/public.git",
+    );
+
+    await manager.setGlobalMcpServer({
+      serverName: "alpha",
+      url: "https://alpha.example/mcp",
+      enabled: true,
+    });
+    await manager.setWorkspaceMcpServer("https://github.com/example/public", {
+      serverName: "beta",
+      url: "https://beta.example/mcp",
+      enabled: true,
+    });
+
+    // Every enabled server has a status mount; only global ones serve.
+    expect(mounted).toEqual(["alpha", "beta"]);
+
+    // A new session of the workspace mounts the workspace's server inside
+    // its own scope before its first step; the global one it already sees.
+    const agent = {
+      id: "session-one",
+      session: { header: {} },
+      ctx: sessionCtx,
+    } as unknown as Agent;
+    await agentEvents(ctx, agent).serial("agent/created", {
+      source: "startup",
+    });
+    expect(sessionMounts).toEqual([{ serverName: "beta", ctx: sessionCtx }]);
+
+    expect(await manager.listMcpServers()).toEqual({
+      servers: [
+        {
+          serverName: "alpha",
+          url: "https://alpha.example/mcp",
+          enabled: true,
+          hasToken: false,
+          scope: "global",
+          status: "starting",
+          toolCount: 0,
+        },
+        {
+          serverName: "beta",
+          url: "https://beta.example/mcp",
+          enabled: true,
+          hasToken: false,
+          scope: "workspace",
+          repositoryUrl: "https://github.com/example/public",
+          status: "starting",
+          toolCount: 0,
+        },
+      ],
+      workspaces: [
+        {
+          repositoryUrl: "https://github.com/example/public",
+          title: "example/public",
+        },
+      ],
+    });
+    await expect(
+      manager.setWorkspaceMcpServer("https://github.com/example/unknown", {
+        serverName: "gamma",
+        url: "https://gamma.example/mcp",
+        enabled: true,
+      }),
+    ).rejects.toThrow("not registered");
+    await expect(
+      manager.setGlobalMcpServer({
+        serverName: "beta",
+        url: "https://other.example/mcp",
+        enabled: true,
+      }),
+    ).rejects.toThrow("already exists");
   });
 
   it("does not create repository anchors without the Web workspace service", async () => {

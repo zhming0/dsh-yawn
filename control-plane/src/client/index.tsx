@@ -96,11 +96,33 @@ export async function apply(ctx: Context) {
     const injectedMcp = () => ({
       listMcpServers: async () =>
         unwrap(await remoteCtx.remote.sandboxManager.listMcpServers()),
-      setMcpServer: async (entry: McpServerEntry) =>
-        unwrap(await remoteCtx.remote.sandboxManager.setMcpServer(entry)),
-      deleteMcpServer: async (serverName: string) =>
+      setGlobalMcpServer: async (entry: McpServerEntry) =>
+        unwrap(await remoteCtx.remote.sandboxManager.setGlobalMcpServer(entry)),
+      setWorkspaceMcpServer: async (
+        repositoryUrl: string,
+        entry: McpServerEntry,
+      ) =>
         unwrap(
-          await remoteCtx.remote.sandboxManager.deleteMcpServer(serverName),
+          await remoteCtx.remote.sandboxManager.setWorkspaceMcpServer(
+            repositoryUrl,
+            entry,
+          ),
+        ),
+      deleteGlobalMcpServer: async (serverName: string) =>
+        unwrap(
+          await remoteCtx.remote.sandboxManager.deleteGlobalMcpServer(
+            serverName,
+          ),
+        ),
+      deleteWorkspaceMcpServer: async (
+        repositoryUrl: string,
+        serverName: string,
+      ) =>
+        unwrap(
+          await remoteCtx.remote.sandboxManager.deleteWorkspaceMcpServer(
+            repositoryUrl,
+            serverName,
+          ),
         ),
       retryMcpServer: async (serverName: string) =>
         unwrap(

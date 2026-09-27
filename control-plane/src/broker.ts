@@ -187,7 +187,7 @@ export function normalizeRepositoryUrl(url: string): string {
  * differently-cased host must not create a second scope that silently
  * receives nothing.
  */
-function workspaceKey(repositoryUrl: string): string {
+export function workspaceKey(repositoryUrl: string): string {
   const normalized = normalizeRepositoryUrl(repositoryUrl.trim())
     .replace(/\.git$/i, "")
     .replace(/\/+$/, "");

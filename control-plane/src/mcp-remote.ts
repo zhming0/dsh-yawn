@@ -14,6 +14,10 @@ export interface McpServerView {
   url: string;
   enabled: boolean;
   hasToken: boolean;
+  /** Where the entry is configured: `global` reaches every session. */
+  scope: "global" | "workspace";
+  /** The workspace a `workspace`-scoped entry belongs to. */
+  repositoryUrl?: string;
   status: McpServerStatus;
   toolCount: number;
   error?: string;
@@ -25,16 +29,40 @@ export interface McpTestResult {
   error?: string;
 }
 
+/** The workspaces the page's scope selector offers. */
+export interface McpWorkspaceView {
+  repositoryUrl: string;
+  title: string;
+}
+
+/** The MCP page's read model: every server in every scope, plus the scopes. */
+export interface McpSettingsView {
+  servers: McpServerView[];
+  workspaces: McpWorkspaceView[];
+}
+
 /**
  * Browser CRUD surface for remote MCP servers. Tokens flow browser→host only;
- * every method answers with the updated view list, never a token.
+ * every method answers with the updated view, never a token.
  * The namespace map declaration lives in remote-contributions.ts.
  */
 export interface SandboxMcpRemote {
-  listMcpServers(): Promise<RemoteResult<McpServerView[]>>;
-  setMcpServer(entry: McpServerEntry): Promise<RemoteResult<McpServerView[]>>;
-  deleteMcpServer(serverName: string): Promise<RemoteResult<McpServerView[]>>;
-  retryMcpServer(serverName: string): Promise<RemoteResult<McpServerView[]>>;
+  listMcpServers(): Promise<RemoteResult<McpSettingsView>>;
+  setGlobalMcpServer(
+    entry: McpServerEntry,
+  ): Promise<RemoteResult<McpSettingsView>>;
+  setWorkspaceMcpServer(
+    repositoryUrl: string,
+    entry: McpServerEntry,
+  ): Promise<RemoteResult<McpSettingsView>>;
+  deleteGlobalMcpServer(
+    serverName: string,
+  ): Promise<RemoteResult<McpSettingsView>>;
+  deleteWorkspaceMcpServer(
+    repositoryUrl: string,
+    serverName: string,
+  ): Promise<RemoteResult<McpSettingsView>>;
+  retryMcpServer(serverName: string): Promise<RemoteResult<McpSettingsView>>;
   testMcpServer(entry: McpServerEntry): Promise<RemoteResult<McpTestResult>>;
 }
 
@@ -110,22 +138,48 @@ const viewSchema: TypertSchema<McpServerView> = {
       typeof record.url !== "string" ||
       typeof record.enabled !== "boolean" ||
       typeof record.hasToken !== "boolean" ||
+      (record.scope !== "global" && record.scope !== "workspace") ||
+      (record.repositoryUrl !== undefined &&
+        typeof record.repositoryUrl !== "string") ||
       !statuses.includes(record.status as McpServerStatus) ||
       typeof record.toolCount !== "number" ||
       (record.error !== undefined && typeof record.error !== "string")
     ) {
       throw new TypeError("expected an MCP server view");
     }
+    if (record.scope === "workspace" && record.repositoryUrl === undefined) {
+      throw new TypeError(
+        "expected a workspace-scoped MCP server view to carry a repositoryUrl",
+      );
+    }
     return value as McpServerView;
   },
 };
 
-const viewsSchema: TypertSchema<McpServerView[]> = {
-  parse(value: unknown): McpServerView[] {
-    if (!Array.isArray(value)) {
-      throw new TypeError("expected an array of MCP server views");
+const settingsSchema: TypertSchema<McpSettingsView> = {
+  parse(value: unknown): McpSettingsView {
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      !("servers" in value) ||
+      !Array.isArray(value.servers) ||
+      value.servers.some((entry) => viewSchema.parse(entry) === undefined) ||
+      !("workspaces" in value) ||
+      !Array.isArray(value.workspaces) ||
+      // Array.isArray narrows to any[]; widen so the entry checks stay typed.
+      (value.workspaces as unknown[]).some(
+        (entry) =>
+          typeof entry !== "object" ||
+          entry === null ||
+          !("repositoryUrl" in entry) ||
+          typeof entry.repositoryUrl !== "string" ||
+          !("title" in entry) ||
+          typeof entry.title !== "string",
+      )
+    ) {
+      throw new TypeError("expected an MCP settings view");
     }
-    return (value as unknown[]).map((entry) => viewSchema.parse(entry));
+    return value as McpSettingsView;
   },
 };
 
@@ -177,21 +231,37 @@ function describe(
 }
 
 export const sandboxMcpDescriptors: InvocationDescriptor[] = [
-  describe("listMcpServers", [], viewsSchema),
+  describe("listMcpServers", [], settingsSchema),
   describe(
-    "setMcpServer",
+    "setGlobalMcpServer",
     [{ name: "entry", schema: entrySchema }],
-    viewsSchema,
+    settingsSchema,
   ),
   describe(
-    "deleteMcpServer",
+    "setWorkspaceMcpServer",
+    [
+      { name: "repositoryUrl", schema: stringSchema },
+      { name: "entry", schema: entrySchema },
+    ],
+    settingsSchema,
+  ),
+  describe(
+    "deleteGlobalMcpServer",
     [{ name: "serverName", schema: stringSchema }],
-    viewsSchema,
+    settingsSchema,
+  ),
+  describe(
+    "deleteWorkspaceMcpServer",
+    [
+      { name: "repositoryUrl", schema: stringSchema },
+      { name: "serverName", schema: stringSchema },
+    ],
+    settingsSchema,
   ),
   describe(
     "retryMcpServer",
     [{ name: "serverName", schema: stringSchema }],
-    viewsSchema,
+    settingsSchema,
   ),
   describe(
     "testMcpServer",

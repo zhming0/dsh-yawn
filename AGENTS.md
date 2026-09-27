@@ -122,6 +122,16 @@ likely to mislead you.
   `connection/request` waterfall. A cookie would race across tabs, and a path
   alone never names a sandbox, so there is deliberately no path-based
   fallback.
+- There is no Workspace scope, but per-agent scopes cover it. A bundle cannot
+  re-parent an agent scope under a workspace scope: `dsh-agent-preset-registry`
+  already binds each agent's scope key to its preset generation, and
+  `bindScopeParent` binds once. What does work is mounting a plugin through
+  `agent.ctx` at `agent/created`: scope-aware registries (tools, system-prompt
+  sections, `mcpResources`) file its contributions under that agent alone.
+  `mcp-client` reserves `serverName` per scope, not per process, so the same
+  server can mount in many agents. Mount at `agent/created`, not
+  `agent/pre-step`: the loop assembles a step's tools and prompt before
+  `agent/pre-step` runs.
 
 ## Write code people can maintain
 
