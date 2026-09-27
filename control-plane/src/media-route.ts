@@ -11,8 +11,8 @@
  * session scope) worked.
  *
  * The missing identity arrives as the `dsh-yawn-session` query parameter:
- * the bundle's browser half adds, to each chat image's URL, the session of
- * the conversation view the image sits in (`src/client/media-session.ts`).
+ * the bundle's browser half adds, to each file image's URL, the session of
+ * the view the image belongs to (`src/client/media-session.ts`).
  * The stock route reads only `path`, so the extra parameter is harmless to
  * it. This row listens on the `connection/request` waterfall — which the
  * connection service runs after it has authenticated the request — and, for
