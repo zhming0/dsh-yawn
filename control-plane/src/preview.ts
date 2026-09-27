@@ -10,8 +10,6 @@
  * Web UI's origin around the frame. The `-p` marker makes the trailing number
  * unambiguous, because sandbox ids already contain hyphens and digits. The
  * runner never learns any of this; it dials `127.0.0.1:<port>`.
- *
- * Design details: docs/plans/sandbox-preview.md.
  */
 
 /** Where the preview listener answers; see docs/kubernetes.md for the Ingress. */

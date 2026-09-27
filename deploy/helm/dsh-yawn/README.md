@@ -1,28 +1,28 @@
 # dsh-yawn Helm chart
 
-Installs the dsh-yawn **control plane**: one control plane, its data volume,
-the tunnel Service runners dial, the shared registration token, and the
-identity and permissions the control plane uses to operate Kubernetes sandboxes.
+Installs the dsh-yawn **control plane**: the dsh process, its data volume, the
+runner tunnel, the shared registration token, and the Kubernetes permissions
+the control plane uses to manage sandboxes.
 
-This chart does not install sandboxes. Setting a runner up is a second phase:
-[installations-control-plane.md](../../../docs/installations-control-plane.md)
-covers this install, then
-[docs/installations.md](../../../docs/installations.md) points to
-[installations-kas.md](../../../docs/installations-kas.md) for the Kubernetes
-sandbox pool in [`deploy/kubernetes/runner`](../../kubernetes/runner), or
-[installations-buildkite.md](../../../docs/installations-buildkite.md) for
-Buildkite agents.
+This chart does not install sandboxes. For the full installation order, see
+[`docs/installations.md`](../../../docs/installations.md). The control-plane
+phase is
+[`docs/installations-control-plane.md`](../../../docs/installations-control-plane.md);
+then install the
+[Kubernetes sandbox pool](../../../docs/installations-kas.md) or
+[Buildkite runners](../../../docs/installations-buildkite.md).
 
-Installing this chart alone gives you a working control plane: the Web UI, sessions,
-secrets, instructions, and repository workspaces all work. The first tool call
-in a session needs a sandbox, so it fails with a message naming the missing
-runner until a runner is set up and the control plane points at it.
+Installing the chart alone gives you a working control plane: the Web UI,
+sessions, secrets, instructions, and repository workspaces all work. The first
+tool call in a session fails with a message naming the missing runner until a
+runner is installed.
 
 ## Prerequisites
 
-- a Kubernetes cluster and an OIDC identity provider, unless you reach the
-  control plane over `kubectl port-forward`
-- a default StorageClass for the control plane data volume, or `controlPlane.persistence.storageClass`
+- A Kubernetes cluster and an OIDC identity provider, unless you reach the
+  control plane over `kubectl port-forward`.
+- A default StorageClass for the control plane data volume, or
+  `controlPlane.persistence.storageClass`.
 
 ## Install
 
@@ -34,68 +34,57 @@ helm install dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
   --set service.type=LoadBalancer
 ```
 
-The release must be named `dsh-yawn-control-plane` and live in one namespace per control plane:
-the pool's manifests read the fixed names `dsh-yawn-control-plane-tunnel`, `dsh-yawn-runner-config`,
-and `dsh-yawn-registration-token`, which this release owns.
+The release must be named `dsh-yawn-control-plane` and live in one namespace
+per control plane. Kubernetes runner manifests read the fixed names
+`dsh-yawn-control-plane-tunnel`, `dsh-yawn-runner-config`, and
+`dsh-yawn-registration-token`, which this release owns.
 
-Create the proxy's OIDC Secret first — NOTES.txt has the command; until it
-exists the pod runs but never becomes Ready. Without `oidc.enabled`, reach the
-control plane over `kubectl port-forward` and open `/launch-token`.
+Create the proxy's OIDC Secret first — the release notes print the command.
+Until it exists the pod runs but never becomes Ready. Without `oidc.enabled`,
+reach the control plane over `kubectl port-forward` and open `/launch-token`.
 
 ## Values
 
-| Key | Default | Description |
-| --- | ------- | ----------- |
-| `controlPlane.image.repository` | `ghcr.io/zhming0/dsh-yawn-control-plane` | Host image |
-| `controlPlane.image.tag` | `.Chart.appVersion` | Released tag |
-| `controlPlane.resources` | `250m/512Mi → 2Gi` | Host container resources |
-| `controlPlane.extraArgs` | `[]` | Extra dsh web app arguments |
-| `controlPlane.extraEnv` | `[]` | Extra control-plane env vars, for a credential it needs itself (`BUILDKITE_API_TOKEN`, say) from a Secret you own; never a sandbox secret |
-| `controlPlane.podAnnotations` / `controlPlane.podLabels` | `{}` | Extra pod metadata |
-| `controlPlane.persistence.enabled` | `true` | `false` swaps the data PVC for an emptyDir — every restart then loses sessions and the credentials store, silently |
-| `controlPlane.persistence.size` | `5Gi` | Host data volume size |
-| `controlPlane.persistence.storageClass` | `""` | Host data volume StorageClass; required when the cluster has no default |
-| `runner.controlPlaneUrl` | `ws://dsh-yawn-control-plane-tunnel.<namespace>.svc.cluster.local:8081/tunnel` | Tunnel address written into `dsh-yawn-runner-config`; set only for an unusual layout |
-| `registrationToken.existingSecret` | `""` | Existing Secret with the shared token under key `token`; no Secret is created |
-| `registrationToken.value` | `""` | Fixed token; a stable random one is generated when empty |
-| `oidc.enabled` | `false` | Add the oauth2-proxy sidecar, `--trusted-host`, and the proxy Service |
-| `oidc.hostname` | `""` | Required when enabled: bare host, no scheme |
-| `oidc.image` | `quay.io/oauth2-proxy/oauth2-proxy:v7.15.4` | Proxy image |
-| `oidc.existingSecret` | `dsh-yawn-oidc` | Secret with the proxy's OIDC and cookie configuration |
-| `oidc.emailDomains` | `*` | `OAUTH2_PROXY_EMAIL_DOMAINS` — restrict before trusting an issuer's whole user base |
-| `oidc.extraEnv` | `[]` | Extra env vars for the proxy, appended after the fixed ones |
-| `service.type` | `ClusterIP` | Exposure type for the proxy Service |
-| `service.port` | `80` | Service port in front of the proxy's 4180 |
-| `service.annotations` | `{}` | Cloud/controller annotations for the Service |
-| `controlPlane.sandboxManager` | `{}` | The deployment base of the control plane's sandbox-manager settings; unset seeds no profile, so no sandbox can be provisioned |
+| Key                                                      | Default                                     | Description                                                                                                                                    |
+| -------------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `controlPlane.image.repository`                          | `ghcr.io/zhming0/dsh-yawn-control-plane`    | Control-plane image                                                                                                                            |
+| `controlPlane.image.tag`                                 | `.Chart.appVersion`                         | Released tag                                                                                                                                   |
+| `controlPlane.resources`                                 | `250m/512Mi → 2Gi`                          | Container resource requests and limits                                                                                                         |
+| `controlPlane.extraArgs`                                 | `[]`                                        | Extra `dsh web` arguments                                                                                                                      |
+| `controlPlane.extraEnv`                                  | `[]`                                        | Extra environment variables for credentials the control plane needs itself, such as `BUILDKITE_API_TOKEN` from a Secret; never sandbox secrets |
+| `controlPlane.podAnnotations` / `controlPlane.podLabels` | `{}`                                        | Extra pod metadata                                                                                                                             |
+| `controlPlane.persistence.enabled`                       | `true`                                      | `false` replaces the data PVC with an emptyDir; every restart then loses sessions and the credential store                                     |
+| `controlPlane.persistence.size`                          | `5Gi`                                       | Data volume size                                                                                                                               |
+| `controlPlane.persistence.storageClass`                  | `""`                                        | Data volume StorageClass; required when the cluster has no default                                                                             |
+| `runner.controlPlaneUrl`                                 | Tunnel Service URL                          | Tunnel address written into `dsh-yawn-runner-config`; only change it for an unusual layout                                                     |
+| `registrationToken.existingSecret`                       | `""`                                        | Existing Secret with the shared token under key `token`; no Secret is created                                                                  |
+| `registrationToken.value`                                | `""`                                        | Fixed token; a stable random one is generated when empty                                                                                       |
+| `oidc.enabled`                                           | `false`                                     | Add the oauth2-proxy sidecar and Service                                                                                                       |
+| `oidc.hostname`                                          | `""`                                        | Required when enabled: bare host, no scheme                                                                                                    |
+| `oidc.image`                                             | `quay.io/oauth2-proxy/oauth2-proxy:v7.15.4` | Proxy image                                                                                                                                    |
+| `oidc.existingSecret`                                    | `dsh-yawn-oidc`                             | Secret with the proxy's OIDC and cookie configuration                                                                                          |
+| `oidc.emailDomains`                                      | `*`                                         | `OAUTH2_PROXY_EMAIL_DOMAINS`; restrict before trusting an issuer's whole user base                                                             |
+| `oidc.extraEnv`                                          | `[]`                                        | Extra environment variables for the proxy                                                                                                      |
+| `service.type`                                           | `ClusterIP`                                 | Service exposure type                                                                                                                          |
+| `service.port`                                           | `80`                                        | Service port in front of the proxy's 4180                                                                                                      |
+| `service.annotations`                                    | `{}`                                        | Annotations for the Service                                                                                                                    |
+| `controlPlane.sandboxManager`                            | `{}`                                        | Default sandbox-manager settings; unset means no profile is seeded, so no sandbox can be provisioned                                           |
 
 ## Sandbox-manager settings as values
 
-`controlPlane.sandboxManager` is the deployment base of the control plane's
-sandbox-manager settings on a chart install. The chart renders the runtime
-slice — profiles, `defaultProfile`, `idleMs`, `expiresAfterMs`, and
-`readyTimeoutMs` — into the
-document's top-level `sandboxManager` section, as one ordinary file mounted at
-`/etc/dsh-yawn/sandbox-settings.yaml`. The control plane resolves the
-settings-form edits in the profile patch over that section. So:
+`controlPlane.sandboxManager` is the deployment base for the control plane's
+sandbox-manager settings. The chart renders the runtime fields — `profiles`,
+`defaultProfile`, `idleMs`, `expiresAfterMs`, and `readyTimeoutMs` — into
+`/etc/dsh-yawn/sandbox-settings.yaml`. The Web UI's **Settings → Sandboxes**
+page layers its own profiles and changes over that file. A profile defined in
+the chart is locked in the page; a values change rolls the pod.
 
-- a values change applies when `helm upgrade` rolls the pod (the chart stamps
-  the rendered values into a pod annotation), not live;
-- **Settings → Sandboxes** in the Web UI adds its own profiles and changes the
-  default profile and timers without a restart, and a reset returns them to
-  what the chart configures. The profiles the chart defines are locked there:
-  the page shows them as deployment and cannot edit or remove them;
-- a `kas` profile that names no namespace is rendered with the release
-  namespace, because the control plane's own default is the fixed name
-  `dsh-yawn`;
-- the section layout is the chart-to-image contract, and the image tag can lag
-  the chart's, so a section this version does not know is ignored. It is not a
-  general settings layer for other dsh plugins;
-- the section is otherwise rendered verbatim — the control plane's own validation is
-  the schema. The chart guard requires at least one profile, rejects startup
-  settings in these values, and requires every `kas` profile to target the
-  release namespace, where the control plane's Role and the tunnel Service
-  live.
+- Profiles from `controlPlane.sandboxManager` are the deployment defaults.
+- A `kas` profile that omits `namespace` uses the release namespace.
+- The section layout is an interface between the chart and the image. The image
+  tag can lag the chart's, so a section the image does not know is ignored.
+- The chart requires at least one profile, rejects startup-only fields in these
+  values, and requires every `kas` profile to target the release namespace.
 
 For a Kubernetes pool, name it in the profile:
 
@@ -108,22 +97,21 @@ helm upgrade dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
 ```
 
 See [control-plane settings](../../../control-plane/README.md#settings) for the
-settings reference. Startup settings are not part of these values; set them in
-the profile's `cordis.patch.yml`.
+full reference. Startup settings are not part of these values; set them in the
+profile's `cordis.patch.yml`.
 
 ## Notes
 
-- The data PVC carries `helm.sh/resource-policy: keep`, so `helm uninstall`
-  leaves sessions, credentials, and the seeded profile on the volume.
+- The data PVC has `helm.sh/resource-policy: keep`, so `helm uninstall` leaves
+  sessions, credentials, and the seeded profile on the volume.
 - The registration token Secret is generated once per release and reused on
-  upgrades; rotating it follows
-  [docs/kubernetes.md](../../../docs/kubernetes.md#the-in-cluster-control-plane).
+  upgrades. To rotate it, see
+  [`docs/kubernetes.md`](../../../docs/kubernetes.md#the-in-cluster-control-plane).
 - **GitOps (Argo CD, Flux):** those renderers have no live cluster, so the
   lookup that keeps the generated token stable cannot find the existing Secret
-  and every sync invents a new one — the release never converges and the token
-  rotates under the warm pods. Set `registrationToken.value` from your secret
-  store, or `registrationToken.existingSecret`.
-- The chart deliberately ships no Ingress: the proxy Service is the anchor.
-  Whatever fronts dsh must serve https, pass WebSockets, and allow large RPC
-  bodies — [docs/kubernetes.md](../../../docs/kubernetes.md) has the
-  nginx-ingress reference values.
+  and every sync invents a new one. Set `registrationToken.value` from your
+  secret store, or use `registrationToken.existingSecret`.
+- The chart deliberately ships no Ingress. Whatever fronts the control plane
+  must serve HTTPS, pass WebSockets, and allow large RPC bodies; see
+  [`docs/kubernetes.md`](../../../docs/kubernetes.md) for nginx-ingress
+  reference values.
