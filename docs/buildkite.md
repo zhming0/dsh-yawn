@@ -139,7 +139,10 @@ has the YAML and the setup steps. What matters to the backend:
 - Hosted Linux agents use `image: "$DSH_YAWN_RUNNER_IMAGE"`, resolved from
   the build environment. Startup hooks run as root, then `runuser -u sandbox`
   launches the runner as UID 1000 with `HOME=/workspace/home`, retaining the
-  `DSH_YAWN_*` job variables. There is no nested runner container.
+  `DSH_YAWN_*` job variables. There is no nested runner container. The step
+  opens the agent's root-owned Docker socket before the `runuser`, because a
+  session's Docker workflows need it; see
+  [`installations-buildkite.md`](installations-buildkite.md#create-the-pipeline).
 - Self-hosted agents use `docker run --user 1000:1000`. Its `-e VAR` flags
   copy `DSH_YAWN_SANDBOX_ID`, `DSH_YAWN_CONTROL_PLANE_URL`, and
   `DSH_YAWN_REGISTRATION_TOKEN` from the job environment into the container.
