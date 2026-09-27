@@ -10,7 +10,7 @@ import {
   type McpClientConfig,
   type McpMount,
 } from "../src/mcp-pool.js";
-import { McpServerStore } from "../src/mcp-store.js";
+import { GLOBAL_MCP_SCOPE, McpServerStore } from "../src/mcp-store.js";
 
 /** A mount stand-in whose startup settlement the test controls. */
 class FakeMount implements McpMount {
@@ -19,7 +19,10 @@ class FakeMount implements McpMount {
   readonly reject: (reason: unknown) => void;
   disposed = false;
 
-  constructor(readonly config: McpClientConfig) {
+  constructor(
+    readonly config: McpClientConfig,
+    readonly ctx: Context,
+  ) {
     let resolve!: () => void;
     let reject!: (reason: unknown) => void;
     this.settled = new Promise<void>((res, rej) => {
@@ -37,13 +40,13 @@ class FakeMount implements McpMount {
 
 function mountRecorder(): {
   mounts: FakeMount[];
-  mount: (config: McpClientConfig) => McpMount;
+  mount: (config: McpClientConfig, ctx: Context) => McpMount;
 } {
   const mounts: FakeMount[] = [];
   return {
     mounts,
-    mount: (config) => {
-      const created = new FakeMount(config);
+    mount: (config, ctx) => {
+      const created = new FakeMount(config, ctx);
       mounts.push(created);
       return created;
     },
@@ -74,6 +77,7 @@ describe("MCP pool", () => {
   let pool: McpPool;
   let mounts: FakeMount[];
   let tools: Set<string>;
+  let rootCtx: Context;
 
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), "dsh-yawn-mcp-"));
@@ -83,6 +87,7 @@ describe("MCP pool", () => {
     mounts = recorder.mounts;
     const registry = registryContext();
     tools = registry.tools;
+    rootCtx = registry.ctx;
     pool = new McpPool({
       ctx: registry.ctx,
       store,
@@ -97,13 +102,13 @@ describe("MCP pool", () => {
   });
 
   it("mounts enabled entries and skips disabled ones", async () => {
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       token: "alpha-token",
       enabled: true,
     });
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "beta",
       url: "https://beta.example/mcp",
       enabled: false,
@@ -133,6 +138,7 @@ describe("MCP pool", () => {
         url: "https://alpha.example/mcp",
         enabled: true,
         hasToken: true,
+        scope: "global",
         status: "starting",
         toolCount: 0,
       },
@@ -141,6 +147,7 @@ describe("MCP pool", () => {
         url: "https://beta.example/mcp",
         enabled: false,
         hasToken: false,
+        scope: "global",
         status: "disabled",
         toolCount: 0,
       },
@@ -155,13 +162,74 @@ describe("MCP pool", () => {
     ]);
   });
 
-  it("reports starting, then connected or error as the fiber settles", async () => {
-    await store.upsert({
+  it("gives every enabled server a status mount and reports scope", async () => {
+    const one = "https://github.com/example/one";
+    const two = "https://github.com/example/two";
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       enabled: true,
     });
-    await store.upsert({
+    await store.upsert(
+      { kind: "workspace", repositoryUrl: one },
+      {
+        serverName: "beta",
+        url: "https://beta.example/mcp",
+        enabled: true,
+      },
+    );
+    await store.upsert(
+      { kind: "workspace", repositoryUrl: two },
+      {
+        serverName: "gamma",
+        url: "https://gamma.example/mcp",
+        enabled: false,
+      },
+    );
+
+    await pool.sync();
+
+    // One status mount per enabled entry, whichever scope it belongs to. The
+    // global one mounts at the root, which is what serves it to every
+    // session; the workspace one mounts in a scope no session sees.
+    expect(mounts.map((mount) => mount.config.serverName)).toEqual([
+      "alpha",
+      "beta",
+    ]);
+    expect(mounts[0]?.ctx).toBe(rootCtx);
+    expect(mounts[1]?.ctx).not.toBe(rootCtx);
+    expect(
+      pool
+        .views()
+        .map((view) => [view.serverName, view.scope, view.repositoryUrl]),
+    ).toEqual([
+      ["alpha", "global", undefined],
+      ["beta", "workspace", one],
+      ["gamma", "workspace", two],
+    ]);
+
+    // Removing a workspace's server unmounts it; the others stay.
+    await store.remove({ kind: "workspace", repositoryUrl: one }, "beta");
+    await pool.sync();
+    expect(mounts.map((mount) => mount.config.serverName)).toEqual([
+      "alpha",
+      "beta",
+    ]);
+    expect(mounts[0]?.disposed).toBe(false);
+    expect(mounts[1]?.disposed).toBe(true);
+    expect(pool.views().map((view) => view.serverName)).toEqual([
+      "alpha",
+      "gamma",
+    ]);
+  });
+
+  it("reports starting, then connected or error as the fiber settles", async () => {
+    await store.upsert(GLOBAL_MCP_SCOPE, {
+      serverName: "alpha",
+      url: "https://alpha.example/mcp",
+      enabled: true,
+    });
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "beta",
       url: "https://beta.example/mcp",
       enabled: true,
@@ -189,7 +257,7 @@ describe("MCP pool", () => {
   });
 
   it("stops reporting connected once a settled mount loses its tools", async () => {
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       enabled: true,
@@ -211,7 +279,7 @@ describe("MCP pool", () => {
   });
 
   it("reports the cause behind a failed mount", async () => {
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       enabled: true,
@@ -235,7 +303,7 @@ describe("MCP pool", () => {
   });
 
   it("keeps one mount when syncs overlap", async () => {
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       enabled: true,
@@ -249,7 +317,7 @@ describe("MCP pool", () => {
   });
 
   it("retry remounts an entry whose tools were unregistered", async () => {
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       enabled: true,
@@ -279,7 +347,7 @@ describe("MCP pool", () => {
   });
 
   it("retry leaves a disabled entry unmounted", async () => {
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       enabled: false,
@@ -290,7 +358,7 @@ describe("MCP pool", () => {
   });
 
   it("replaces a failed mount with a reconnectable one and keeps the error", async () => {
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       enabled: true,
@@ -317,7 +385,7 @@ describe("MCP pool", () => {
   });
 
   it("disposes and re-mounts when the URL or token changes", async () => {
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       token: "one",
@@ -326,7 +394,7 @@ describe("MCP pool", () => {
     await pool.sync();
     expect(mounts).toHaveLength(1);
 
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://changed.example/mcp",
       enabled: true,
@@ -339,7 +407,7 @@ describe("MCP pool", () => {
       Authorization: "Bearer one",
     });
 
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://changed.example/mcp",
       token: "two",
@@ -354,14 +422,14 @@ describe("MCP pool", () => {
   });
 
   it("disposes a mount when its entry is disabled or removed", async () => {
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       enabled: true,
     });
     await pool.sync();
 
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       enabled: false,
@@ -370,13 +438,13 @@ describe("MCP pool", () => {
     expect(mounts[0]?.disposed).toBe(true);
     expect(pool.views()).toMatchObject([{ status: "disabled" }]);
 
-    await store.remove("alpha");
+    await store.remove(GLOBAL_MCP_SCOPE, "alpha");
     await pool.sync();
     expect(pool.views()).toEqual([]);
   });
 
   it("disposes both fibers when a removed entry had already reconnected", async () => {
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       enabled: true,
@@ -389,7 +457,7 @@ describe("MCP pool", () => {
     await tick();
     expect(mounts).toHaveLength(2);
 
-    await store.remove("alpha");
+    await store.remove(GLOBAL_MCP_SCOPE, "alpha");
     await pool.sync();
     await tick();
 
@@ -400,7 +468,7 @@ describe("MCP pool", () => {
   it("picks up configuration written by another store instance", async () => {
     const other = new McpServerStore({ path: join(directory, "mcp.json") });
     await other.initialize();
-    await other.upsert({
+    await other.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       enabled: true,
@@ -431,7 +499,7 @@ describe("MCP pool", () => {
   });
 
   it("falls back to the saved token and disposes a failing probe", async () => {
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       token: "saved",
@@ -457,7 +525,7 @@ describe("MCP pool", () => {
   });
 
   it("probes under a name that does not collide with a live mount", async () => {
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       enabled: true,
@@ -489,12 +557,12 @@ describe("MCP pool", () => {
   });
 
   it("disposes every live mount", async () => {
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       enabled: true,
     });
-    await store.upsert({
+    await store.upsert(GLOBAL_MCP_SCOPE, {
       serverName: "beta",
       url: "https://beta.example/mcp",
       enabled: true,
@@ -503,5 +571,172 @@ describe("MCP pool", () => {
 
     await pool.dispose();
     expect(mounts.map((mount) => mount.disposed)).toEqual([true, true]);
+  });
+
+  describe("session mounts", () => {
+    const one = "https://github.com/example/one";
+    const two = "https://github.com/example/two";
+
+    beforeEach(async () => {
+      await store.upsert(GLOBAL_MCP_SCOPE, {
+        serverName: "alpha",
+        url: "https://alpha.example/mcp",
+        enabled: true,
+      });
+      await store.upsert(
+        { kind: "workspace", repositoryUrl: one },
+        { serverName: "beta", url: "https://beta.example/mcp", enabled: true },
+      );
+      await store.upsert(
+        { kind: "workspace", repositoryUrl: two },
+        {
+          serverName: "gamma",
+          url: "https://gamma.example/mcp",
+          enabled: false,
+        },
+      );
+      await pool.sync();
+    });
+
+    /** Mounts started through one agent's context, by server name. */
+    function mountsIn(ctx: Context): FakeMount[] {
+      return mounts.filter((mount) => mount.ctx === ctx);
+    }
+
+    /** Attach an agent and settle whatever it mounted. */
+    async function attach(
+      agentId: string,
+      repositoryUrl: string | undefined,
+    ): Promise<Context> {
+      const ctx = new Context();
+      const attached = pool.attachAgent(agentId, ctx, repositoryUrl);
+      await tick();
+      for (const mount of mountsIn(ctx)) {
+        mount.resolve();
+      }
+      await attached;
+      return ctx;
+    }
+
+    it("mounts a workspace's servers inside that workspace's agents only", async () => {
+      const inOne = await attach("agent-one", `${one}.git`);
+      const inTwo = await attach("agent-two", two);
+      const inNone = await attach("agent-none", undefined);
+
+      // The global server is never mounted per agent: the root serves it.
+      expect(mountsIn(inOne).map((mount) => mount.config)).toEqual([
+        expect.objectContaining({
+          serverName: "beta",
+          url: "https://beta.example/mcp",
+          // A session must not fail to start because a server is down.
+          failOnStartupError: false,
+        }),
+      ]);
+      expect(mountsIn(inTwo)).toEqual([]);
+      expect(mountsIn(inNone)).toEqual([]);
+    });
+
+    it("waits for a new agent's mounts before its first step", async () => {
+      const ctx = new Context();
+      let done = false;
+      const attached = pool
+        .attachAgent("agent-one", ctx, one)
+        .then(() => (done = true));
+      await tick();
+      expect(done).toBe(false);
+      mountsIn(ctx)[0]?.reject(new Error("refused"));
+      await attached;
+      expect(done).toBe(true);
+    });
+
+    it("follows store edits for attached agents", async () => {
+      const inOne = await attach("agent-one", one);
+      const inTwo = await attach("agent-two", two);
+
+      await store.upsert(
+        { kind: "workspace", repositoryUrl: two },
+        {
+          serverName: "gamma",
+          url: "https://gamma.example/mcp",
+          enabled: true,
+        },
+      );
+      await store.upsert(
+        { kind: "workspace", repositoryUrl: one },
+        { serverName: "beta", url: "https://beta.example/v2", enabled: true },
+      );
+      await pool.sync();
+
+      expect(mountsIn(inTwo).map((mount) => mount.config.serverName)).toEqual([
+        "gamma",
+      ]);
+      const [before, after] = mountsIn(inOne);
+      expect(before?.disposed).toBe(true);
+      expect(after?.config.url).toBe("https://beta.example/v2");
+
+      await store.remove({ kind: "workspace", repositoryUrl: one }, "beta");
+      await pool.sync();
+      expect(after?.disposed).toBe(true);
+    });
+
+    it("disposes an agent's mounts on detach, and restarts them on retry", async () => {
+      const first = await attach("agent-one", one);
+      const second = await attach("agent-two", one);
+
+      await pool.retry("beta");
+      expect(mountsIn(first).map((mount) => mount.disposed)).toEqual([
+        true,
+        false,
+      ]);
+
+      await pool.detachAgent("agent-one", first);
+      expect(mountsIn(first).every((mount) => mount.disposed)).toBe(true);
+      expect(mountsIn(second).at(-1)?.disposed).toBe(false);
+
+      await pool.dispose();
+      expect(mountsIn(second).every((mount) => mount.disposed)).toBe(true);
+    });
+
+    it("records nothing for an agent disposed before its attach ran", async () => {
+      // The manager resolves the workspace before attaching, so a short-lived
+      // subagent's detach can arrive first.
+      const ctx = new Context();
+      await pool.detachAgent("agent-one", ctx);
+      await pool.attachAgent("agent-one", ctx, one);
+      expect(mountsIn(ctx)).toEqual([]);
+
+      // Later syncs must not mount into its disposed scope either.
+      await store.upsert(
+        { kind: "workspace", repositoryUrl: one },
+        {
+          serverName: "delta",
+          url: "https://delta.example/mcp",
+          enabled: true,
+        },
+      );
+      await pool.sync();
+      expect(mountsIn(ctx)).toEqual([]);
+    });
+
+    it("keeps a resumed agent when the old one's detach arrives late", async () => {
+      const old = await attach("agent-one", one);
+      const resumed = await attach("agent-one", one);
+
+      await pool.detachAgent("agent-one", old);
+      await store.upsert(
+        { kind: "workspace", repositoryUrl: one },
+        {
+          serverName: "delta",
+          url: "https://delta.example/mcp",
+          enabled: true,
+        },
+      );
+      await pool.sync();
+
+      expect(mountsIn(resumed).map((mount) => mount.config.serverName)).toEqual(
+        ["beta", "delta"],
+      );
+      expect(mountsIn(resumed).every((mount) => !mount.disposed)).toBe(true);
+    });
   });
 });

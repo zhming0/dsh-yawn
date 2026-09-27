@@ -134,22 +134,40 @@ index follows. The tab refreshes faster while a turn runs, because a turn is
 when a sandbox is provisioned, woken, or replaced.
 
 The **Settings → MCP** page adds remote Model Context Protocol servers over
-Streamable HTTP. An enabled server's tools join the model's tool list as
-`mcp__<serverName>__<tool>`, and its resources join the profile's shared
-`mcp-resources` service, which dsh-base mounts. A token is sent as a static
-`Authorization: Bearer` header and is write-only: the browser receives only
-whether a token is saved, never its value, and saving with **Remove the saved
-token** clears one. Adding, editing, disabling, or removing a server mounts or
-unmounts its tools for new tool calls without restarting the host, and **Test
-connection** probes an unsaved entry without saving it — its probe tools live
-in the shared registry until the probe is disposed, so a session can see them
-for that moment. A server that fails to connect is reported as `error` with
-the reason the client reported, and **Retry** connects it again — the client
-stops reconnecting on its own once its attempt budget runs out, so Retry is
-the only way back short of a restart. A name may not contain `__` or end in
-`_`, because those would make one server's tool prefix match another's. The
-configuration lives in `stateDir/mcp.json`, owner-only like the rest of the
-control plane's state, and never in a sandbox.
+Streamable HTTP, with the same Global/Workspace scope selector the Secrets and
+Instructions pages use. An enabled server's tools join the model's tool list
+as `mcp__<serverName>__<tool>`, its instructions join the system prompt, and
+its resources join the profile's shared `mcp-resources` service, which dsh-base
+mounts. Global servers reach every session. A workspace server reaches that
+workspace's sessions and nothing else — tools, instructions, and resources
+alike. A workspace adds servers of its own; it cannot disable or override a
+global one.
+
+Scoping comes from where a client mounts. `mcp-client` registers its tools,
+resource provider, and instructions in the scope of the context that mounted
+it, and dsh gives every agent (subagents included) a scope of its own. A global
+server mounts once at the root. A workspace server mounts inside each agent of
+that workspace when the agent is created — the loop assembles a step's tools
+before any per-step hook runs — so every such session holds its own connection
+to the server. A new agent waits up to ten seconds for those connections; a
+server that answers later shows up from the next step. Each workspace server
+also keeps one connection in a private scope no session sees, which drives its
+status row.
+
+A token is sent as a static `Authorization: Bearer` header and is write-only:
+the browser receives only whether a token is saved, never its value, and saving
+with **Remove the saved token** clears one. Adding, editing, disabling, or
+removing a server connects or disconnects it for live sessions without
+restarting the host, and **Test connection** probes an unsaved entry in a
+private scope without saving it. A server that fails to connect is reported as
+`error` with the reason the client reported, and **Retry** connects it again,
+sessions included — the client stops reconnecting on its own once its attempt
+budget runs out, so Retry is the only way back short of a restart. A name may
+not contain `__` or end in `_`, because those would make one server's tool
+prefix match another's, and a name belongs to exactly one scope — global or
+one workspace — because a global server's tools are in every session's view.
+The configuration lives in `stateDir/mcp.json`, owner-only like the rest of
+the control plane's state, and never in a sandbox.
 
 The bundle also disables dsh's local shell permission presets and its file
 policy line. The remote shell uses one fixed container boundary and does not

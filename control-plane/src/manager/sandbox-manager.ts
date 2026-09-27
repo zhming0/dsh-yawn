@@ -12,7 +12,11 @@ import type {} from "@deepseek-ai/dsh-typert-registry";
 import { TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
 import { artifactsDirectory } from "../artifacts.js";
-import { CredentialBroker, GLOBAL_SECRET_SCOPE } from "../broker.js";
+import {
+  CredentialBroker,
+  GLOBAL_SECRET_SCOPE,
+  normalizeRepositoryUrl,
+} from "../broker.js";
 import {
   resolveBuildkiteToken,
   type CredentialResolver,
@@ -42,8 +46,12 @@ import { InstructionStore } from "../instruction-store.js";
 import type { InstructionSettingsView } from "../instructions-remote.js";
 import { ManagedInstructions } from "../managed-instructions.js";
 import { McpPool } from "../mcp-pool.js";
-import type { McpServerView, McpTestResult } from "../mcp-remote.js";
-import { McpServerStore, type McpServerEntry } from "../mcp-store.js";
+import type { McpTestResult, McpSettingsView } from "../mcp-remote.js";
+import {
+  GLOBAL_MCP_SCOPE,
+  McpServerStore,
+  type McpServerEntry,
+} from "../mcp-store.js";
 import { yawnHost } from "../remote-contributions.js";
 import {
   PLACEHOLDER_PREVIEW_PORT,
@@ -397,6 +405,22 @@ export class SandboxManager extends TypertRemoteService {
     // After it, so the notice listener reads only when next() has already run
     // the ensureRunning hooks for this step.
     this.notices.install();
+    // Workspace MCP servers mount inside each agent's own scope, and the loop
+    // assembles a step's tools before any per-step hook, so this has to run
+    // at creation. Subagents are agents too, with scopes of their own.
+    ctx.on("agent/created", async ({ agent }) => {
+      await this.attachMcp(agent);
+      return undefined;
+    });
+    ctx.on("agent/disposed", ({ agent }) => {
+      void this.mcpPool.detachAgent(agent.id, agent.ctx);
+    });
+    // Agents that outlived a reload of this plugin were created before the
+    // listener above existed.
+    const registry = this.ctx.agents as { list(): Agent[] } | undefined;
+    for (const agent of registry?.list() ?? []) {
+      void this.attachMcp(agent);
+    }
     ctx.on("agent/status", ({ agent, status }) => {
       if (status === "running") {
         this.idle.markActive(this.rootSessionId(agent));
@@ -630,7 +654,7 @@ export class SandboxManager extends TypertRemoteService {
     value: string,
   ): Promise<SecretSettingsView> {
     await this.ready;
-    await this.setRegisteredWorkspaceSecret(repositoryUrl, (normalized) =>
+    await this.withRegisteredWorkspace(repositoryUrl, (normalized) =>
       this.broker.setSecret(
         { kind: "workspace", repositoryUrl: normalized },
         name,
@@ -651,7 +675,7 @@ export class SandboxManager extends TypertRemoteService {
     name: string,
   ): Promise<SecretSettingsView> {
     await this.ready;
-    await this.setRegisteredWorkspaceSecret(repositoryUrl, (normalized) =>
+    await this.withRegisteredWorkspace(repositoryUrl, (normalized) =>
       this.broker.deleteSecret(
         { kind: "workspace", repositoryUrl: normalized },
         name,
@@ -660,36 +684,70 @@ export class SandboxManager extends TypertRemoteService {
     return this.secretSettings();
   }
 
-  /** Configured MCP servers with their live connection status. */
-  async listMcpServers(): Promise<McpServerView[]> {
+  /**
+   * The MCP page's read model: every server in every scope with its live
+   * connection status, plus the scopes the selector offers.
+   */
+  async listMcpServers(): Promise<McpSettingsView> {
     await this.ready;
     await this.mcpPool.sync();
-    return this.mcpPool.views();
+    return this.mcpSettings();
   }
 
-  /** Add or update one MCP server, then reconcile its live mount. */
-  async setMcpServer(entry: McpServerEntry): Promise<McpServerView[]> {
+  /** Add or update one global MCP server, then reconcile its live mount. */
+  async setGlobalMcpServer(entry: McpServerEntry): Promise<McpSettingsView> {
     await this.ready;
-    await this.mcpStore.upsert(entry);
+    await this.mcpStore.upsert(GLOBAL_MCP_SCOPE, entry);
     await this.mcpPool.sync();
-    return this.mcpPool.views();
+    return this.mcpSettings();
   }
 
-  async deleteMcpServer(serverName: string): Promise<McpServerView[]> {
+  /** Add or update one workspace's MCP server, then reconcile its mount. */
+  async setWorkspaceMcpServer(
+    repositoryUrl: string,
+    entry: McpServerEntry,
+  ): Promise<McpSettingsView> {
     await this.ready;
-    await this.mcpStore.remove(serverName);
+    await this.withRegisteredWorkspace(repositoryUrl, (normalized) =>
+      this.mcpStore.upsert(
+        { kind: "workspace", repositoryUrl: normalized },
+        entry,
+      ),
+    );
     await this.mcpPool.sync();
-    return this.mcpPool.views();
+    return this.mcpSettings();
+  }
+
+  async deleteGlobalMcpServer(serverName: string): Promise<McpSettingsView> {
+    await this.ready;
+    await this.mcpStore.remove(GLOBAL_MCP_SCOPE, serverName);
+    await this.mcpPool.sync();
+    return this.mcpSettings();
+  }
+
+  async deleteWorkspaceMcpServer(
+    repositoryUrl: string,
+    serverName: string,
+  ): Promise<McpSettingsView> {
+    await this.ready;
+    await this.withRegisteredWorkspace(repositoryUrl, (normalized) =>
+      this.mcpStore.remove(
+        { kind: "workspace", repositoryUrl: normalized },
+        serverName,
+      ),
+    );
+    await this.mcpPool.sync();
+    return this.mcpSettings();
   }
 
   /**
    * Connect one stored server again. The client stops reconnecting once its
    * attempt budget runs out, so this is the only way back short of a restart.
    */
-  async retryMcpServer(serverName: string): Promise<McpServerView[]> {
+  async retryMcpServer(serverName: string): Promise<McpSettingsView> {
     await this.ready;
     await this.mcpPool.retry(serverName);
-    return this.mcpPool.views();
+    return this.mcpSettings();
   }
 
   /** Try one configuration without saving it; the probe is always disposed. */
@@ -928,10 +986,10 @@ export class SandboxManager extends TypertRemoteService {
   }
 
   /**
-   * Run one workspace-scoped broker write after checking the workspace is
-   * registered, so a mistyped URL cannot create an unreachable scope.
+   * Run one workspace-scoped write after checking the workspace is registered,
+   * so a mistyped URL cannot create an unreachable scope.
    */
-  private async setRegisteredWorkspaceSecret(
+  private async withRegisteredWorkspace(
     repositoryUrl: string,
     apply: (normalized: string) => Promise<void>,
   ): Promise<void> {
@@ -941,6 +999,14 @@ export class SandboxManager extends TypertRemoteService {
       throw new Error(`workspace is not registered: ${normalized}`);
     }
     await apply(normalized);
+  }
+
+  /** The MCP page's read model over the pool's live views and the scopes. */
+  private async mcpSettings(): Promise<McpSettingsView> {
+    return {
+      servers: this.mcpPool.views(),
+      workspaces: await this.scopes(),
+    };
   }
 
   /**
@@ -1014,6 +1080,45 @@ export class SandboxManager extends TypertRemoteService {
     }
     const agent = this.agentLookup(sessionId);
     return agent === undefined ? sessionId : this.rootSessionId(agent);
+  }
+
+  /** Mount an agent's workspace MCP servers; never fails agent creation. */
+  private async attachMcp(agent: Agent): Promise<void> {
+    try {
+      await this.ready;
+      await this.mcpPool.attachAgent(
+        agent.id,
+        agent.ctx,
+        await this.workspaceOf(agent),
+      );
+    } catch (error) {
+      this.ctx
+        .logger("sandbox")
+        .warn(
+          `could not mount workspace MCP servers for ${agent.id}: ${String(error)}`,
+        );
+    }
+  }
+
+  /**
+   * The workspace a session's MCP servers come from, before any sandbox runs:
+   * the sandbox's own repository once it has one, else the repository the
+   * session will provision from. Undefined when neither is known, which
+   * leaves the session with global servers only.
+   */
+  private async workspaceOf(agent: Agent): Promise<string | undefined> {
+    const sessionId = this.rootSessionId(agent);
+    const recorded = this.engine.record(sessionId)?.repositoryUrl;
+    if (recorded !== undefined) {
+      return recorded;
+    }
+    try {
+      return normalizeRepositoryUrl(
+        await this.repositoryFor(this.agentLookup(sessionId) ?? agent),
+      );
+    } catch {
+      return undefined;
+    }
   }
 
   private async repositoryFor(agent: Agent): Promise<string> {

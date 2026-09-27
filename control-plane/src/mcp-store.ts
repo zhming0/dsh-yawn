@@ -1,6 +1,8 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
+import { workspaceKey } from "./broker.js";
+
 /**
  * One remote Streamable HTTP MCP server. The token never leaves the host.
  * `token: null` clears a saved token on upsert; omitting it, or sending an
@@ -13,9 +15,29 @@ export interface McpServerEntry {
   enabled: boolean;
 }
 
+/**
+ * Where one entry is configured. The global scope reaches every session; a
+ * workspace scope reaches that workspace's sessions. A workspace adds servers
+ * of its own — it cannot disable or override a global one.
+ */
+export type McpScope =
+  | { kind: "global" }
+  | { kind: "workspace"; repositoryUrl: string };
+
+export const GLOBAL_MCP_SCOPE: McpScope = { kind: "global" };
+
+/** One stored entry together with the scope it was written to. */
+export interface ScopedMcpEntry {
+  entry: McpServerEntry;
+  scope: McpScope;
+}
+
 interface McpFile {
-  version: 1;
+  version: 2;
+  /** The global scope's entries. */
   servers: McpServerEntry[];
+  /** Per-workspace entries, keyed by repository URL. */
+  workspaces: Record<string, McpServerEntry[]>;
 }
 
 export interface McpStoreOptions {
@@ -62,7 +84,11 @@ function parseUrl(value: string): URL {
 
 /** Owner-only durable MCP server configuration, mirroring the credential broker. */
 export class McpServerStore {
-  private state: McpFile = { version: 1, servers: [] };
+  private state: McpFile = {
+    version: 2,
+    servers: [],
+    workspaces: {},
+  };
   private writeChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: McpStoreOptions) {}
@@ -81,48 +107,76 @@ export class McpServerStore {
       );
     } catch (error) {
       if (isNotFound(error)) {
-        this.state = { version: 1, servers: [] };
+        this.state = { version: 2, servers: [], workspaces: {} };
       } else {
         throw error;
       }
     }
   }
 
-  /** Every entry without its token, sorted by name for stable output. */
-  list(): McpServerEntry[] {
-    return sorted(this.state.servers).map(({ serverName, url, enabled }) => ({
-      serverName,
-      url,
-      enabled,
-    }));
+  /** Every entry without its token, in every scope, global scope first. */
+  entries(): ScopedMcpEntry[] {
+    return [
+      ...sorted(this.state.servers).map((entry) => ({
+        entry: withoutToken(entry),
+        scope: GLOBAL_MCP_SCOPE,
+      })),
+      ...Object.keys(this.workspacesSorted()).flatMap((repositoryUrl) =>
+        sorted(this.state.workspaces[repositoryUrl] ?? []).map((entry) => ({
+          entry: withoutToken(entry),
+          scope: { kind: "workspace" as const, repositoryUrl },
+        })),
+      ),
+    ];
   }
 
-  /** One entry without its token; undefined when nothing is stored. */
+  /** One scope's entries without their tokens, sorted by name. */
+  list(scope: McpScope): McpServerEntry[] {
+    return this.stored(scope)
+      .map((entry) => withoutToken(entry))
+      .sort(compareByName);
+  }
+
+  /** One entry without its token, searched across scopes; undefined when absent. */
   get(serverName: string): McpServerEntry | undefined {
-    const entry = find(this.state.servers, serverName);
-    if (entry === undefined) {
-      return undefined;
-    }
-    return {
-      serverName: entry.serverName,
-      url: entry.url,
-      enabled: entry.enabled,
-    };
+    const entry = this.entries().find(
+      ({ entry }) => entry.serverName === serverName,
+    )?.entry;
+    return entry === undefined ? undefined : { ...entry };
   }
 
   /** The one accessor that returns a token, for building a request header. */
   tokenFor(serverName: string): string | undefined {
-    const token = find(this.state.servers, serverName)?.token;
+    const token = [
+      ...this.state.servers,
+      ...Object.values(this.state.workspaces).flat(),
+    ].find((candidate) => candidate.serverName === serverName)?.token;
     return token ?? undefined;
   }
 
   /**
-   * Store one entry. An omitted or empty token keeps the saved token, so the
-   * browser can edit a server without ever receiving the value back; `null`
-   * clears it, which is the only way to remove one without deleting the server.
+   * Store one entry in a scope. An omitted or empty token keeps the saved
+   * token, so the browser can edit a server without ever receiving the value
+   * back; `null` clears it, which is the only way to remove one without
+   * deleting the server.
+   *
+   * A server name is taken by exactly one scope. A global server's tools sit
+   * in every agent's view, so a workspace server of the same name would
+   * collide with them there, and the status rows, retry, and token lookup are
+   * all keyed by name.
    */
-  async upsert(entry: McpServerEntry): Promise<void> {
+  async upsert(scope: McpScope, entry: McpServerEntry): Promise<void> {
     validateMcpServerEntry(entry);
+    const conflict = this.entries().find(
+      ({ entry: stored, scope: storedScope }) =>
+        stored.serverName === entry.serverName &&
+        !sameScope(storedScope, scope),
+    );
+    if (conflict !== undefined) {
+      throw new Error(
+        `MCP server name "${entry.serverName}" already exists in ${describeScope(conflict.scope)}; server names are shared by every scope`,
+      );
+    }
     const kept = entry.token === undefined || entry.token === "";
     const token =
       entry.token === null
@@ -143,32 +197,104 @@ export class McpServerStore {
             token,
             enabled: entry.enabled,
           };
-    this.state = {
-      version: 1,
-      servers: [
-        ...this.state.servers.filter(
+    if (scope.kind === "global") {
+      this.state = {
+        ...this.state,
+        servers: [
+          ...this.state.servers.filter(
+            (candidate) => candidate.serverName !== entry.serverName,
+          ),
+          stored,
+        ],
+      };
+    } else {
+      const current = this.state.workspaces[scope.repositoryUrl] ?? [];
+      const next = [
+        ...current.filter(
           (candidate) => candidate.serverName !== entry.serverName,
         ),
         stored,
-      ],
-    };
+      ];
+      this.state = {
+        ...this.state,
+        workspaces: { ...this.state.workspaces, [scope.repositoryUrl]: next },
+      };
+    }
     await this.persist();
   }
 
-  async remove(serverName: string): Promise<void> {
-    const servers = this.state.servers.filter(
-      (candidate) => candidate.serverName !== serverName,
-    );
-    if (servers.length === this.state.servers.length) {
-      return;
+  async remove(scope: McpScope, serverName: string): Promise<void> {
+    if (scope.kind === "global") {
+      const servers = this.state.servers.filter(
+        (candidate) => candidate.serverName !== serverName,
+      );
+      if (servers.length === this.state.servers.length) {
+        return;
+      }
+      this.state = { ...this.state, servers };
+    } else {
+      const current = this.state.workspaces[scope.repositoryUrl];
+      if (current === undefined) {
+        return;
+      }
+      const next = current.filter(
+        (candidate) => candidate.serverName !== serverName,
+      );
+      if (next.length === current.length) {
+        return;
+      }
+      const workspaces = { ...this.state.workspaces };
+      if (next.length === 0) {
+        delete workspaces[scope.repositoryUrl];
+      } else {
+        workspaces[scope.repositoryUrl] = next;
+      }
+      this.state = { ...this.state, workspaces };
     }
-    this.state = { version: 1, servers };
     await this.persist();
+  }
+
+  /**
+   * The stored records of one scope; the caller must not mutate them. A
+   * session's repository can be spelled as a clone URL (a `.git` suffix, a
+   * trailing slash), so the lookup matches the way secrets do.
+   */
+  private stored(scope: McpScope): McpServerEntry[] {
+    if (scope.kind === "global") {
+      return this.state.servers;
+    }
+    const key = workspaceKey(scope.repositoryUrl);
+    return (
+      Object.entries(this.state.workspaces).find(
+        ([repositoryUrl]) => workspaceKey(repositoryUrl) === key,
+      )?.[1] ?? []
+    );
+  }
+
+  /** Workspace keys in plain code-unit order, for stable output. */
+  private workspacesSorted(): Record<string, McpServerEntry[]> {
+    return Object.fromEntries(
+      Object.keys(this.state.workspaces)
+        .sort()
+        .map((repositoryUrl) => [
+          repositoryUrl,
+          this.state.workspaces[repositoryUrl] ?? [],
+        ]),
+    );
   }
 
   private persist(): Promise<void> {
     const snapshot = `${JSON.stringify(
-      { version: 1, servers: sorted(this.state.servers) },
+      {
+        version: 2,
+        servers: sorted(this.state.servers),
+        workspaces: Object.fromEntries(
+          Object.entries(this.workspacesSorted()).map(([url, entries]) => [
+            url,
+            sorted(entries),
+          ]),
+        ),
+      },
       null,
       2,
     )}\n`;
@@ -182,36 +308,69 @@ export class McpServerStore {
   }
 }
 
-function find(
-  servers: McpServerEntry[],
-  serverName: string,
-): McpServerEntry | undefined {
-  return servers.find((entry) => entry.serverName === serverName);
+function withoutToken(entry: McpServerEntry): McpServerEntry {
+  return {
+    serverName: entry.serverName,
+    url: entry.url,
+    enabled: entry.enabled,
+  };
+}
+
+function sameScope(left: McpScope, right: McpScope): boolean {
+  return (
+    left.kind === right.kind &&
+    (left.kind === "global" ||
+      left.repositoryUrl ===
+        (right as { repositoryUrl?: string }).repositoryUrl)
+  );
+}
+
+function describeScope(scope: McpScope): string {
+  return scope.kind === "global"
+    ? "the global scope"
+    : `the workspace ${scope.repositoryUrl}`;
+}
+
+function compareByName(left: McpServerEntry, right: McpServerEntry): number {
+  return left.serverName < right.serverName
+    ? -1
+    : left.serverName > right.serverName
+      ? 1
+      : 0;
 }
 
 function sorted(servers: McpServerEntry[]): McpServerEntry[] {
   // Plain code-unit order keeps the file and the API stable across locales.
-  return [...servers].sort((left, right) =>
-    left.serverName < right.serverName
-      ? -1
-      : left.serverName > right.serverName
-        ? 1
-        : 0,
-  );
+  return [...servers].sort(compareByName);
 }
 
+/** Version 2 is the only format; no deployed install reads the old one. */
 function parseMcpFile(value: unknown): McpFile {
   if (
     typeof value !== "object" ||
     value === null ||
     !("version" in value) ||
-    value.version !== 1 ||
+    value.version !== 2 ||
     !("servers" in value) ||
-    !Array.isArray(value.servers)
+    !Array.isArray(value.servers) ||
+    !("workspaces" in value) ||
+    typeof value.workspaces !== "object" ||
+    value.workspaces === null ||
+    Array.isArray(value.workspaces) ||
+    Object.entries(value.workspaces).some(
+      ([, entries]) => !Array.isArray(entries),
+    )
   ) {
     throw new Error("MCP server file has an unsupported format");
   }
-  return { version: 1, servers: (value.servers as unknown[]).map(parseEntry) };
+  const servers = (value.servers as unknown[]).map(parseEntry);
+  const workspaces: Record<string, McpServerEntry[]> = {};
+  for (const [repositoryUrl, entries] of Object.entries(
+    value.workspaces as Record<string, unknown[]>,
+  )) {
+    workspaces[repositoryUrl] = entries.map(parseEntry);
+  }
+  return { version: 2, servers, workspaces };
 }
 
 /** Keep only the known fields so retired ones drop out on the next write. */
