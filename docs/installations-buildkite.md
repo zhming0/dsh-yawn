@@ -28,6 +28,9 @@ steps:
   - label: dsh sandbox
     image: "$DSH_YAWN_RUNNER_IMAGE"
     command: |
+      # The agent's Docker socket is root-owned; the sandbox account needs it
+      # for the repository's Docker workflows.
+      chmod 666 /var/run/docker.sock 2>/dev/null || true
       exec runuser -u sandbox -- sh -c 'cd /workspace && exec dsh-yawn-runner'
     checkout:
       skip: true
