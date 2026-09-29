@@ -12,6 +12,13 @@ export interface SandboxProfileOptionView {
   fields: Record<string, string>;
   /** The deployment configures it; the page cannot edit or remove it. */
   locked: boolean;
+  /** The idle delay this profile applies: its own, else the top-level one. */
+  idleMs: number;
+  /**
+   * The ready timeout this profile applies, for backends that wait for a
+   * sandbox; absent for Docker and for a profile the host could not apply.
+   */
+  readyTimeoutMs?: number;
 }
 
 /**
@@ -24,11 +31,14 @@ export interface SandboxSettingsView {
   defaultProfile?: string;
   idleMs: number;
   expiresAfterMs: number;
+  /** The top-level ready timeout; absent leaves each backend its default. */
+  readyTimeoutMs?: number;
   /** Whether the page overrides each scalar; a reset returns to the base. */
   overridden: {
     defaultProfile: boolean;
     idleMs: boolean;
     expiresAfterMs: boolean;
+    readyTimeoutMs: boolean;
   };
   /** The settings revision a write must carry. */
   revision: number;
@@ -64,17 +74,23 @@ const viewSchema: TypertSchema<SandboxSettingsView> = {
           typeof profile.name !== "string" ||
           typeof profile.backend !== "string" ||
           !isStringRecord(profile.fields) ||
-          typeof profile.locked !== "boolean",
+          typeof profile.locked !== "boolean" ||
+          typeof profile.idleMs !== "number" ||
+          (profile.readyTimeoutMs !== undefined &&
+            typeof profile.readyTimeoutMs !== "number"),
       ) ||
       (view.defaultProfile !== undefined &&
         typeof view.defaultProfile !== "string") ||
       typeof view.idleMs !== "number" ||
       typeof view.expiresAfterMs !== "number" ||
+      (view.readyTimeoutMs !== undefined &&
+        typeof view.readyTimeoutMs !== "number") ||
       typeof view.overridden !== "object" ||
       view.overridden === null ||
       typeof view.overridden.defaultProfile !== "boolean" ||
       typeof view.overridden.idleMs !== "boolean" ||
       typeof view.overridden.expiresAfterMs !== "boolean" ||
+      typeof view.overridden.readyTimeoutMs !== "boolean" ||
       typeof view.revision !== "number" ||
       typeof view.writable !== "boolean"
     ) {

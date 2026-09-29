@@ -215,10 +215,12 @@ describe("session profile choice", () => {
               organization: "acme",
               pipeline: "dsh-yawn",
               controlPlaneUrl: "wss://dsh.example.com/tunnel",
+              idleMs: 3_600_000,
             },
           },
           defaultProfile: "hosted",
           idleMs: 300_000,
+          readyTimeoutMs: 120_000,
         },
       },
     );
@@ -241,6 +243,7 @@ describe("session profile choice", () => {
         backend: "docker",
         fields: {},
         locked: true,
+        idleMs: 300_000,
       },
       {
         name: "hosted",
@@ -249,22 +252,29 @@ describe("session profile choice", () => {
           organization: "acme",
           pipeline: "dsh-yawn",
           controlPlaneUrl: "wss://dsh.example.com/tunnel",
+          idleMs: "3600000",
         },
         locked: true,
+        // Its own idle delay, and the top-level ready timeout.
+        idleMs: 3_600_000,
+        readyTimeoutMs: 120_000,
       },
       {
         name: "local",
         backend: "docker",
         fields: { image: "page:image" },
         locked: false,
+        idleMs: 300_000,
       },
     ]);
     expect(settings.defaultProfile).toBe("hosted");
     expect(settings.idleMs).toBe(300_000);
+    expect(settings.readyTimeoutMs).toBe(120_000);
     expect(settings.overridden).toEqual({
       defaultProfile: false,
       idleMs: false,
       expiresAfterMs: false,
+      readyTimeoutMs: false,
     });
     // No settings service is mounted in this bare context, so the page has
     // nothing it could write with.
@@ -302,6 +312,7 @@ describe("session profile choice", () => {
         backend: "docker",
         fields: { image: "chart:image" },
         locked: true,
+        idleMs: 600_000,
       },
     ]);
     expect((await manager.getSessionProfile("session-one")).selected).toBe(

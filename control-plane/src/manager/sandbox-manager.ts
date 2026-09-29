@@ -262,6 +262,7 @@ export class SandboxManager extends TypertRemoteService {
         defaultProfile: this.config.defaultProfile,
         idleMs: this.config.idleMs,
         expiresAfterMs: this.config.expiresAfterMs,
+        readyTimeoutMs: this.config.readyTimeoutMs,
       },
       boot.warnings,
       () => this.rawConfig,
@@ -353,8 +354,12 @@ export class SandboxManager extends TypertRemoteService {
     this.idle = new IdleSchedule({
       // Read through the runtime holder: a settings change applies to every
       // countdown armed after it. Timers already armed keep their old delay.
-      get idleMs() {
-        return runtime.idleMs;
+      // The session's own profile may set its delay; a record whose profile
+      // is gone uses the top-level one.
+      idleMsFor: (sessionId) => {
+        const name = this.engine.record(sessionId)?.profile;
+        const profile = name === undefined ? undefined : runtime.profiles[name];
+        return profile?.idleMs ?? runtime.idleMs;
       },
       ready: () => this.ready,
       hibernate: (sessionId, guard) => this.engine.hibernate(sessionId, guard),
@@ -751,22 +756,34 @@ export class SandboxManager extends TypertRemoteService {
     // what the host actually applies: a page default that names a removed
     // profile, for example, reads as the fallback the runtime picked.
     const defaultProfile = this.runtime.defaultProfile;
+    const readyTimeoutMs = this.runtime.readyTimeoutMs;
+    const resolved = this.runtime.profiles;
     return {
-      profiles: Object.entries(profiles).map(([name, profile]) => ({
-        name,
-        backend: profile.backend,
-        fields: stringFields(profile),
-        locked: chart[name] !== undefined,
-      })),
+      profiles: Object.entries(profiles).map(([name, profile]) => {
+        const applied = resolved[name];
+        return {
+          name,
+          backend: profile.backend,
+          fields: stringFields(profile),
+          locked: chart[name] !== undefined,
+          idleMs: applied?.idleMs ?? this.runtime.idleMs,
+          ...(applied !== undefined && "readyTimeoutMs" in applied
+            ? { readyTimeoutMs: applied.readyTimeoutMs }
+            : {}),
+        };
+      }),
       ...(defaultProfile === undefined ? {} : { defaultProfile }),
       idleMs: this.runtime.idleMs,
       expiresAfterMs: this.runtime.expiresAfterMs,
+      ...(readyTimeoutMs === undefined ? {} : { readyTimeoutMs }),
       overridden: {
         defaultProfile:
           readSetting(this.rawConfig.defaultProfile) !== undefined,
         idleMs: readSetting(this.rawConfig.idleMs) !== undefined,
         expiresAfterMs:
           readSetting(this.rawConfig.expiresAfterMs) !== undefined,
+        readyTimeoutMs:
+          readSetting(this.rawConfig.readyTimeoutMs) !== undefined,
       },
       revision: form?.revision ?? 0,
       writable: form?.writable ?? false,

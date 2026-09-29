@@ -392,7 +392,7 @@ describe("idle schedule", () => {
     const warnings: string[] = [];
     let attempts = 0;
     const idle = new IdleSchedule({
-      idleMs: 5,
+      idleMsFor: () => 5,
       ready: async () => {},
       hibernate: async () => {
         attempts += 1;

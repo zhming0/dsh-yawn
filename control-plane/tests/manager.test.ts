@@ -207,6 +207,29 @@ describe("sandbox lifecycle", () => {
     expect(backend.hibernations).toBe(2);
   });
 
+  it("uses the profile's own idle delay over the top-level one", async () => {
+    const backend = new FakeBackend();
+    const manager = new SandboxManager(
+      new Context(),
+      {
+        profiles: { standard: { backend: "docker", idleMs: 60_000 } },
+        stateDir: directory,
+        repository: "https://github.com/example/public.git",
+        idleMs: 10,
+        expiresAfterMs: 60_000,
+      },
+      { backends: { standard: backend }, gateway: gatewayFor(backend) },
+    );
+    const agent = {
+      id: "session-one",
+      session: { header: {} },
+    } as unknown as Agent;
+
+    await manager.ensureRunning(agent);
+    await sleep(100);
+    expect(backend.hibernations).toBe(0);
+  });
+
   it("does not suspend under a live turn and suspends after turn/end", async () => {
     const backend = new FakeBackend();
     const ctx = new Context();

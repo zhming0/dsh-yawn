@@ -2,8 +2,11 @@ import type { Session } from "@deepseek-ai/dsh-session";
 
 /** What the idle controller needs from the lifecycle. */
 export interface IdleScheduleHooks {
-  /** Delay after the last activity before a session may suspend. */
-  idleMs: number;
+  /**
+   * Delay after the last activity before a session may suspend. Per session,
+   * because a profile may set its own delay.
+   */
+  idleMsFor(sessionId: string): number;
   /** Settles once the host stores are loaded. */
   ready(): Promise<void>;
   /**
@@ -30,7 +33,7 @@ export interface IdleScheduleHooks {
  * child's turn/end must not suspend the parent mid-generation. The activity
  * counter is silent during a single long generation, so live-turn tracking is
  * the only signal that suspending would cut a live turn. Rare — a generation
- * has to outlast idleMs — but a mid-stream suspend fails the whole turn, so
+ * has to outlast the idle delay — but a mid-stream suspend fails the whole turn, so
  * the cheap check is worth keeping.
  */
 export class IdleSchedule {
@@ -64,7 +67,7 @@ export class IdleSchedule {
             this.schedule(sessionId);
           }
         }),
-      this.hooks.idleMs,
+      this.hooks.idleMsFor(sessionId),
     );
     timer.unref();
     this.timers.set(sessionId, timer);

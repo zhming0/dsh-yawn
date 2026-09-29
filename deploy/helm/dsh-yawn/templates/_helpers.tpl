@@ -86,7 +86,7 @@ installed. */}}
 {{- end -}}
 {{- end -}}
 sandboxManager:
-{{ pick $managed "profiles" "defaultProfile" "idleMs" "expiresAfterMs" | toYaml | indent 2 }}
+{{ pick $managed "profiles" "defaultProfile" "idleMs" "expiresAfterMs" "readyTimeoutMs" | toYaml | indent 2 }}
 {{- end }}
 
 {{/* Fails the render on combinations that cannot work, so `helm install`
@@ -100,10 +100,10 @@ cannot produce a control plane that never becomes Ready. */}}
 {{- if and $managed (not $managed.profiles) -}}
 {{- fail "controlPlane.sandboxManager needs at least one profile; the control plane rejects an empty profile map at runtime." }}
 {{- end -}}
-{{- $runtimeKeys := list "profiles" "defaultProfile" "idleMs" "expiresAfterMs" }}
+{{- $runtimeKeys := list "profiles" "defaultProfile" "idleMs" "expiresAfterMs" "readyTimeoutMs" }}
 {{- range $key, $_ := $managed }}
 {{- if not (has $key $runtimeKeys) }}
-{{- fail (printf "controlPlane.sandboxManager.%s is not a runtime setting; the chart carries profiles, defaultProfile, idleMs, and expiresAfterMs. Put startup settings in the profile's cordis.patch.yml." $key) }}
+{{- fail (printf "controlPlane.sandboxManager.%s is not a runtime setting; the chart carries profiles, defaultProfile, idleMs, expiresAfterMs, and readyTimeoutMs. Put startup settings in the profile's cordis.patch.yml." $key) }}
 {{- end }}
 {{- end }}
 {{- if and $managed $managed.profiles -}}

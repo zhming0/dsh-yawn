@@ -13,6 +13,7 @@ import type { SandboxProfile } from "./types.js";
 // Queue wait is the unknown here: a hosted queue dispatches in seconds, a
 // self-hosted one may be busy.
 export const DEFAULT_BUILDKITE_READY_TIMEOUT_MS = 10 * 60_000;
+export const DEFAULT_KAS_READY_TIMEOUT_MS = 3 * 60_000;
 
 /** A profile as written in the settings file: a backend plus its settings. */
 export type ProfileConfig =
@@ -21,6 +22,7 @@ export type ProfileConfig =
       image?: string;
       binary?: string;
       controlPlaneUrl?: string;
+      idleMs?: number;
     }
   | {
       backend: "kas";
@@ -28,6 +30,7 @@ export type ProfileConfig =
       warmPool?: string;
       readyTimeoutMs?: number;
       kubeconfig?: string;
+      idleMs?: number;
     }
   | {
       backend: "buildkite";
@@ -36,6 +39,7 @@ export type ProfileConfig =
       controlPlaneUrl: string;
       image?: string;
       readyTimeoutMs?: number;
+      idleMs?: number;
     };
 
 /**
@@ -77,8 +81,14 @@ export interface Config {
   repository?: string;
   revision?: string;
   workspace?: string;
+  /** Idle delay for profiles that do not set their own `idleMs`. */
   idleMs?: RuntimeSetting<number>;
   expiresAfterMs?: RuntimeSetting<number>;
+  /**
+   * Ready timeout for profiles that do not set their own `readyTimeoutMs`.
+   * Unset leaves each backend its own default.
+   */
+  readyTimeoutMs?: RuntimeSetting<number>;
   registrationToken?: string;
   tunnel?: {
     port?: number;
@@ -110,20 +120,21 @@ export interface ResolvedConfig {
   workspace: string;
   idleMs: number;
   expiresAfterMs: number;
+  readyTimeoutMs: number | undefined;
   registrationToken?: string;
   tunnel: { port: number; bind: string };
   preview: { domain: string | undefined; port: number; bind: string };
 }
 
 /**
- * The settings that can change while the host runs: sandbox profiles and the
- * idle and expiry timers. Everything else in {@link Config} shapes the boot
+ * The settings that can change while the host runs: sandbox profiles, the
+ * idle and expiry timers, and the ready timeout. Everything else in {@link Config} shapes the boot
  * (state directories, the tunnel listener, the registration token) and is
  * read once.
  */
 export type RuntimeConfig = Pick<
   Config,
-  "profiles" | "defaultProfile" | "idleMs" | "expiresAfterMs"
+  "profiles" | "defaultProfile" | "idleMs" | "expiresAfterMs" | "readyTimeoutMs"
 >;
 
 /** {@link ResolvedConfig} minus the boot-only fields. */
@@ -136,6 +147,8 @@ export interface ResolvedRuntime {
   defaultProfile: string | undefined;
   idleMs: number;
   expiresAfterMs: number;
+  /** Already folded into each profile; kept for the settings page. */
+  readyTimeoutMs: number | undefined;
 }
 
 /**
@@ -152,13 +165,17 @@ const runtimeFields = () => ({
           image: z.string().default(DEFAULT_RUNNER_IMAGE),
           binary: z.string(),
           controlPlaneUrl: z.string(),
+          idleMs: z.number().min(1),
         }),
         z.object({
           backend: z.const("kas").required(),
           namespace: z.string().default("dsh-yawn"),
           warmPool: z.string().default("dsh-yawn-universal"),
-          readyTimeoutMs: z.number().min(1).default(180_000),
+          // No schema default: an unset value falls back to the top-level
+          // readyTimeoutMs, then to the backend's own default.
+          readyTimeoutMs: z.number().min(1),
           kubeconfig: z.string(),
+          idleMs: z.number().min(1),
         }),
         z.object({
           backend: z.const("buildkite").required(),
@@ -166,10 +183,8 @@ const runtimeFields = () => ({
           pipeline: z.string().required(),
           controlPlaneUrl: z.string().required(),
           image: z.string().default(DEFAULT_RUNNER_IMAGE),
-          readyTimeoutMs: z
-            .number()
-            .min(1)
-            .default(DEFAULT_BUILDKITE_READY_TIMEOUT_MS),
+          readyTimeoutMs: z.number().min(1),
+          idleMs: z.number().min(1),
         }),
       ]),
     )
@@ -183,6 +198,7 @@ const runtimeFields = () => ({
     .number()
     .min(1)
     .default(7 * 24 * 60 * 60_000),
+  readyTimeoutMs: z.number().min(1),
 });
 
 /**
@@ -199,6 +215,7 @@ const volatileRuntimeFields = () => {
     defaultProfile: fields.defaultProfile.volatile(),
     idleMs: fields.idleMs.volatile(),
     expiresAfterMs: fields.expiresAfterMs.volatile(),
+    readyTimeoutMs: fields.readyTimeoutMs.volatile(),
   };
 };
 
@@ -225,7 +242,7 @@ export const configSchema = z.object({
 
 /**
  * The `sandboxManager` section of the deployment document: the runtime slice
- * alone — profiles, the default profile, and the two timers. Startup settings
+ * alone — profiles, the default profile, and the timers. Startup settings
  * and the registration token stay in the profile patch, where the
  * deployment's own values already are.
  *
@@ -299,6 +316,7 @@ function withDeploymentBase(
   defaultProfile: string | undefined;
   idleMs: number | undefined;
   expiresAfterMs: number | undefined;
+  readyTimeoutMs: number | undefined;
 } {
   const profiles = { ...(readSetting(base.profiles) ?? {}) };
   for (const [name, profile] of Object.entries(
@@ -313,6 +331,8 @@ function withDeploymentBase(
     idleMs: readSetting(config.idleMs) ?? readSetting(base.idleMs),
     expiresAfterMs:
       readSetting(config.expiresAfterMs) ?? readSetting(base.expiresAfterMs),
+    readyTimeoutMs:
+      readSetting(config.readyTimeoutMs) ?? readSetting(base.readyTimeoutMs),
   };
 }
 
@@ -327,10 +347,16 @@ export function resolveRuntime(
   base: RuntimeConfig = {},
 ): ResolvedRuntime {
   const raw = withDeploymentBase(config, base);
+  if (
+    raw.readyTimeoutMs !== undefined &&
+    !(Number.isFinite(raw.readyTimeoutMs) && raw.readyTimeoutMs > 0)
+  ) {
+    throw new Error("readyTimeoutMs must be positive");
+  }
   const profiles = Object.fromEntries(
     Object.entries(raw.profiles).map(([name, profile]) => [
       name,
-      resolveProfile(name, profile, tunnelPort),
+      resolveProfile(name, profile, tunnelPort, raw.readyTimeoutMs),
     ]),
   );
   const configured = Object.keys(profiles);
@@ -349,6 +375,7 @@ export function resolveRuntime(
     defaultProfile,
     idleMs: raw.idleMs ?? 10 * 60_000,
     expiresAfterMs: raw.expiresAfterMs ?? 7 * 24 * 60 * 60_000,
+    readyTimeoutMs: raw.readyTimeoutMs,
   };
   for (const [name, value] of [
     ["idleMs", resolved.idleMs],
@@ -417,10 +444,25 @@ export function resolveDegradingRuntime(
   const warnings: string[] = [];
 
   const raw = withDeploymentBase(config, base);
+  let readyTimeoutMs = raw.readyTimeoutMs;
+  if (
+    readyTimeoutMs !== undefined &&
+    !(Number.isFinite(readyTimeoutMs) && readyTimeoutMs > 0)
+  ) {
+    warnings.push(
+      `readyTimeoutMs ${readyTimeoutMs} must be positive; using each backend's default`,
+    );
+    readyTimeoutMs = undefined;
+  }
   const profiles: Record<string, SandboxProfile> = {};
   for (const [name, profile] of Object.entries(raw.profiles)) {
     try {
-      profiles[name] = resolveProfile(name, profile, tunnelPort);
+      profiles[name] = resolveProfile(
+        name,
+        profile,
+        tunnelPort,
+        readyTimeoutMs,
+      );
     } catch (error) {
       warnings.push(
         `ignoring sandbox profile ${name}, which the host cannot apply: ${messageOf(error)}`,
@@ -451,6 +493,7 @@ export function resolveDegradingRuntime(
       7 * 24 * 60 * 60_000,
       warnings,
     ),
+    readyTimeoutMs,
   };
 
   return { runtime, warnings };
@@ -534,7 +577,9 @@ function resolveProfile(
   name: string,
   profile: ProfileConfig,
   tunnelPort: number,
+  defaultReadyTimeoutMs: number | undefined,
 ): SandboxProfile {
+  const idle = profileIdleMs(name, profile.idleMs);
   if (profile.backend === "docker") {
     return {
       name,
@@ -548,6 +593,7 @@ function resolveProfile(
         profile.controlPlaneUrl ??
           `ws://host.docker.internal:${tunnelPort}/tunnel`,
       ),
+      ...idle,
     };
   }
   if (profile.backend === "buildkite") {
@@ -559,7 +605,10 @@ function resolveProfile(
       image: profile.image ?? DEFAULT_RUNNER_IMAGE,
       controlPlaneUrl: checkControlPlaneUrl(name, profile.controlPlaneUrl),
       readyTimeoutMs:
-        profile.readyTimeoutMs ?? DEFAULT_BUILDKITE_READY_TIMEOUT_MS,
+        profile.readyTimeoutMs ??
+        defaultReadyTimeoutMs ??
+        DEFAULT_BUILDKITE_READY_TIMEOUT_MS,
+      ...idle,
     };
   }
   return {
@@ -567,11 +616,29 @@ function resolveProfile(
     backend: "kas",
     namespace: profile.namespace ?? "dsh-yawn",
     warmPool: profile.warmPool ?? "dsh-yawn-universal",
-    readyTimeoutMs: profile.readyTimeoutMs ?? 180_000,
+    readyTimeoutMs:
+      profile.readyTimeoutMs ??
+      defaultReadyTimeoutMs ??
+      DEFAULT_KAS_READY_TIMEOUT_MS,
     ...(profile.kubeconfig === undefined
       ? {}
       : { kubeconfig: profile.kubeconfig }),
+    ...idle,
   };
+}
+
+/** A profile's own idle delay; unset uses the top-level idleMs. */
+function profileIdleMs(
+  profileName: string,
+  idleMs: number | undefined,
+): { idleMs?: number } {
+  if (idleMs === undefined) {
+    return {};
+  }
+  if (!Number.isFinite(idleMs) || idleMs <= 0) {
+    throw new Error(`profile ${profileName}: idleMs must be positive`);
+  }
+  return { idleMs };
 }
 
 /**

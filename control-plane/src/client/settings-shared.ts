@@ -35,11 +35,92 @@ export interface SandboxesSettingsActions {
   getSandboxSettings: () => Promise<SandboxSettingsView>;
 }
 
+/** The top-level timers the Defaults card writes. */
+export type TimerKey = "idleMs" | "expiresAfterMs" | "readyTimeoutMs";
+
 /** One profile as the form edits it: a backend plus its scalar fields. */
 export interface ProfileDraft {
   name: string;
   backend: string;
   fields: Record<string, string>;
+}
+
+export const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+export const DAY = 24 * HOUR;
+
+/** Display names for the backend ids a profile stores. */
+export const BACKEND_LABELS: Record<string, string> = {
+  docker: "Docker",
+  kas: "Kubernetes",
+  buildkite: "Buildkite",
+};
+
+/**
+ * One profile field. `number` parses as an integer; `minutes` is stored in
+ * milliseconds and edited in minutes.
+ */
+export interface ProfileField {
+  key: string;
+  label: string;
+  kind?: "number" | "minutes";
+  optional?: boolean;
+}
+
+const idleField: ProfileField = {
+  key: "idleMs",
+  label: "Idle delay before hibernating",
+  kind: "minutes",
+  optional: true,
+};
+
+const readyTimeoutField: ProfileField = {
+  key: "readyTimeoutMs",
+  label: "Ready timeout",
+  kind: "minutes",
+  optional: true,
+};
+
+/** Fields per backend, in display order. */
+export const BACKEND_FIELDS: Record<string, ProfileField[]> = {
+  docker: [
+    { key: "image", label: "Runner image", optional: true },
+    { key: "binary", label: "Docker command", optional: true },
+    { key: "controlPlaneUrl", label: "Control plane URL", optional: true },
+    idleField,
+  ],
+  kas: [
+    { key: "namespace", label: "Namespace" },
+    { key: "warmPool", label: "Warm pool" },
+    { key: "kubeconfig", label: "Kubeconfig path", optional: true },
+    readyTimeoutField,
+    idleField,
+  ],
+  buildkite: [
+    { key: "organization", label: "Organization" },
+    { key: "pipeline", label: "Pipeline" },
+    { key: "controlPlaneUrl", label: "Control plane URL" },
+    { key: "image", label: "Runner image", optional: true },
+    readyTimeoutField,
+    idleField,
+  ],
+};
+
+/** A duration in the largest unit that divides it evenly, such as "3 minutes". */
+export function formatDuration(ms: number): string {
+  const units: Array<[number, string]> = [
+    [DAY, "day"],
+    [HOUR, "hour"],
+    [MINUTE, "minute"],
+    [1000, "second"],
+  ];
+  for (const [size, name] of units) {
+    if (ms >= size && ms % size === 0) {
+      const count = ms / size;
+      return `${count} ${name}${count === 1 ? "" : "s"}`;
+    }
+  }
+  return `${ms} ms`;
 }
 
 // The settings page's own vocabulary, matching the cards this package already

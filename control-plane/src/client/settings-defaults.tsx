@@ -3,38 +3,37 @@ import { useState } from "react";
 import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
 
 import {
+  DAY,
+  MINUTE,
   cardStyle,
   controlStyle,
   sectionHeadingStyle,
+  type TimerKey,
 } from "./settings-shared.js";
-
-const MINUTE = 60_000;
-const DAY = 24 * 60 * MINUTE;
 
 export interface DefaultsCardProps {
   /** The effective values: deployment settings with the page's edits applied. */
   defaultProfile?: string;
   idleMs: number;
   expiresAfterMs: number;
+  /** Unset leaves each backend its own default. */
+  readyTimeoutMs?: number;
   /** Which scalars the page overrides; those get a reset control. */
-  overridden: {
-    defaultProfile: boolean;
-    idleMs: boolean;
-    expiresAfterMs: boolean;
-  };
+  overridden: Record<"defaultProfile" | TimerKey, boolean>;
   profileNames: string[];
   writable: boolean;
   pending: boolean;
   onSetDefault: (name: string) => void;
   onUnset: (path: string[], note: string) => void;
-  onSetTimer: (key: "idleMs" | "expiresAfterMs", valueMs: number) => void;
+  onSetTimer: (key: TimerKey, valueMs: number) => void;
 }
 
-/** The default profile and the two lifecycle timers, each one reset away. */
+/** The default profile and the lifecycle timers, each one reset away. */
 export function DefaultsCard({
   defaultProfile,
   idleMs,
   expiresAfterMs,
+  readyTimeoutMs,
   overridden,
   profileNames,
   writable,
@@ -46,9 +45,17 @@ export function DefaultsCard({
   const disabled = pending || !writable;
   return (
     <>
-      <h3 style={{ ...sectionHeadingStyle, margin: "28px 0 12px" }}>
-        Defaults
-      </h3>
+      <h3 style={{ ...sectionHeadingStyle, margin: "28px 0 4px" }}>Defaults</h3>
+      <p
+        style={{
+          margin: "0 0 12px",
+          color: "var(--dsw-alias-label-secondary)",
+          fontSize: 13,
+        }}
+      >
+        The idle delay and ready timeout apply to profiles that do not set their
+        own.
+      </p>
       <div
         style={{
           display: "flex",
@@ -114,6 +121,18 @@ export function DefaultsCard({
             onUnset(["expiresAfterMs"], "reset the retention window")
           }
         />
+        <TimerRow
+          label="Ready timeout"
+          unit="minutes"
+          current={
+            readyTimeoutMs === undefined ? undefined : readyTimeoutMs / MINUTE
+          }
+          unsetText="Kubernetes 3 minutes, Buildkite 10 minutes"
+          overridden={overridden.readyTimeoutMs}
+          disabled={disabled}
+          onSave={(minutes) => onSetTimer("readyTimeoutMs", minutes * MINUTE)}
+          onReset={() => onUnset(["readyTimeoutMs"], "reset the ready timeout")}
+        />
       </div>
     </>
   );
@@ -123,6 +142,7 @@ function TimerRow({
   label,
   unit,
   current,
+  unsetText,
   overridden,
   disabled,
   onSave,
@@ -131,6 +151,8 @@ function TimerRow({
   label: string;
   unit: string;
   current: number | undefined;
+  /** What applies while no value is set. */
+  unsetText?: string;
   overridden: boolean;
   disabled: boolean;
   onSave: (steps: number) => void;
@@ -155,8 +177,9 @@ function TimerRow({
             fontSize: 13,
           }}
         >
-          {rounded === undefined ? "—" : `${rounded} ${unit}`} ·{" "}
-          {overridden ? "custom" : "deployment"}
+          {rounded === undefined
+            ? (unsetText ?? "—")
+            : `${rounded} ${unit} · ${overridden ? "custom" : "deployment"}`}
         </div>
       </div>
       <Input

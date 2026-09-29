@@ -73,7 +73,8 @@ control plane over `kubectl port-forward` and open `/launch-token`.
 
 `controlPlane.sandboxManager` is the deployment base of the control plane's
 sandbox-manager settings on a chart install. The chart renders the runtime
-slice — profiles, `defaultProfile`, `idleMs`, and `expiresAfterMs` — into the
+slice — profiles, `defaultProfile`, `idleMs`, `expiresAfterMs`, and
+`readyTimeoutMs` — into the
 document's top-level `sandboxManager` section, as one ordinary file mounted at
 `/etc/dsh-yawn/sandbox-settings.yaml`. The control plane resolves the
 settings-form edits in the profile patch over that section. So:
