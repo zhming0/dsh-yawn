@@ -1,369 +1,43 @@
 # dsh-yawn control plane
 
 This package connects DeepSeek Harness sessions to isolated environments. It
-owns the sandbox lifecycle and supplies remote filesystem, shell, and subprocess
-implementations to the normal dsh tools.
+owns the sandbox lifecycle and replaces dsh's host filesystem, shell, and
+subprocess services with sandbox-backed ones. The normal dsh tools keep working
+and run inside the session's sandbox.
 
-It ships pre-installed in the `ghcr.io/zhming0/dsh-yawn-control-plane` image and is not
-published to npm. For development, install a checkout:
+The package ships pre-installed in the
+`ghcr.io/zhming0/dsh-yawn-control-plane` image and is not published to npm. For
+development, install a checkout:
 
 ```sh
 dsh plugin --profile web add "$PWD/control-plane"
 ```
 
 The [repository README](../README.md) covers the whole setup. This page is the
-reference: what the bundle patch does and every setting.
+package reference: what the package changes, every setting, and its limits.
+For dsh plugin internals and implementation notes, see
+[`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-## What installing it changes
+## What the package changes
 
-The package declares a bundle patch. Once the package is installed in a
-profile, dsh includes that patch in the layer stack on boot. It replaces three
-host capability rows (`fs-sandbox`, `bash-sandbox`, `subprocess`) with
-sandbox-backed ones. The tool rows are left alone: the stock tools keep their
-names, schemas, prompt guidance, and caps, and reach the sandbox through those
-three services without knowing one exists.
-
-The stock `tool-fs-search` row (`glob`, `grep`) is the case that needs the
-subprocess seam to translate paths, not just relay them. It spawns the host's
-packaged `@vscode/ripgrep` binary with the session working directory and the
-model's search root, all in host coordinates that do not exist in a sandbox.
-The seam maps every path it can prove is the session workspace onto the sandbox
-workspace — the workdir and any absolute argv element under the session
-workspace — and resolves an executable path the sandbox cannot have to the
-sandbox's own build of the same tool name (`rg` on the runner image). Anything
-else in argv passes through unchanged. This is the same translation the shell
-and filesystem seams apply to their paths, so a stock row that assumes the host
-world runs against the sandbox whether the Web surface mounts it from a shipped
-agent preset, a copied one, or the [`examples/`](../examples/agent.cordis.yml)
-preset.
-
-Subagent sessions share the root session's sandbox. Every sandbox lookup keys
-on the agent's top-level session — resolved from the durable `parentSession`
-lineage of a child session header that carries `origin: subagent` — so
-delegation reads and writes one working copy, a child's first tool call boots
-the root's sandbox, and a child turn holds it against idle and release exactly
-as a root turn does (turns are counted per key, so a parent and a child turning
-at once keep the sandbox alive until both close). There is no locking or
-conflict detection between a parent and its subagents; the sandbox boundary is
-the containment. Resolution is memoized per session, so a child never switches
-sandboxes when an ancestor is disposed mid-run; a child whose parent cannot be
-resolved at all (absent or disposed ancestor) falls back to its own sandbox,
-and the fallback is logged as a warning.
-
-A Fork is not a subagent. dsh records a fork's source in the same
-`parentSession` field, but a fork is a top-level session that owns a fresh
-working copy, so it never shares the source's sandbox: starting a fork wakes
-nothing and hibernating or releasing it leaves the source's sandbox alone. The
-two are told apart by `origin`, which only a real subagent child sets. That
-field is doing load-bearing work here even though dsh describes it as
-presentation metadata, so a dsh change to how subagent children are marked
-would silently cost delegation its shared working copy; see the risk note in
-[`src/manager/root-session.ts`](src/manager/root-session.ts).
-
-Uploaded attachments are copied into the sandbox on demand. dsh stores an
-upload on the host and asks the filesystem row to map its host path into the
-tool execution world; a sandbox shares no path with that host, so before each
-model request the filesystem copies every attachment the request references
-into `<workspace>/.dsh-attachments` and answers that mapping. Copies are keyed
-by root session, so a subagent reads its root's copy, and they survive
-hibernation because the workspace volume does. The mapping itself lives in
-host memory, so the first request after a host restart copies again.
-
-In the Web profile, the package replaces directory picking with a repository
-URL dialog. It creates an owner-only host anchor, registers it as a dsh
-Workspace named `owner/repo`, and returns that path through dsh's normal picker
-contract. dsh therefore sets the immutable session `cwd` before creation and
-groups its history normally, while repository files remain inside the sandbox.
-
-The Web profile also replaces dsh's stock `@` file discovery
-(`file-reference-local`). The stock row walks the session `cwd` on the host
-filesystem, which here is the anchor directory above — it holds only
-`repository.json`, so `@` would never see repository files. A
-`sandbox-file-reference` row answers the same `fileReferences` service by
-asking the runner to walk the sandbox workspace (one recursive `Tree` RPC per
-refresh), and returns the same workspace-relative candidates with the same
-exclusions and ranking as the stock provider. The listing is cached per
-session and refreshed after the next tool result.
-
-Typing `@` neither wakes a hibernated sandbox nor creates a session's first
-one. The completion menu asks for file candidates on every keystroke whether
-or not the user wants a file, so file discovery never starts a machine: a
-session with no sandbox record answers an empty file list, and the next `@`
-after the first prompt sees the files. As a sandbox hibernates, the manager
-walks its workspace once and saves the listing under
-`<stateDir>/file-index/<session>.json`; a hibernated workspace cannot change,
-because every write goes through a tool call that first wakes the sandbox, so
-that saved listing is exact until the next wake. `@` on a hibernated session
-reads it, and the file is removed with the session record. If no index exists
-for a session that has a sandbox (the host restarted while the sandbox was
-running, or the walk failed), `@` falls back to waking the sandbox.
-
-The Web profile also gains a **Settings → Secrets** page. It edits the
-control plane's broker store: the browser sends names and values in and receives
-only names back, never a value. **Settings → Sandboxes** edits the live slice
-of the sandbox-manager settings described under
-[Settings](#settings): sandbox profiles, the default profile, and the idle
-and expiry timers, applied on the host without a restart.
-
-The **Settings → Instructions** page manages AGENTS.md-style guidance at two
-scopes: one global layer and one layer for each repository Workspace. These
-layers live in host state rather than in repository checkouts.
-
-The **Settings → Notifications** page turns on a browser notification when a
-turn finishes while the page is in another tab or window; clicking the
-notification opens that session. The browser already receives one running/idle
-bit per session on the session list feed, so this needs no host round-trip and
-no new endpoint, and the on/off choice is stored in the browser rather than on
-the control plane. It needs the page to stay open: a fully closed browser
-receives nothing. It also needs the Notifications API, which is not universal:
-an insecure page and a browser that does not offer the API at all get separate
-messages, because only the first is fixed by serving the page over https.
-
-The conversation gains a third view beside **Chat** and **Trajectory**: a
-read-only **Sandbox** tab describing the session's environment. It reports the
-backend, profile, runner image, sandbox ID, lifecycle state, start time, and
-deletion deadline from the control plane's own record, plus what the machine
-says about itself — hostname, distribution, kernel, architecture, CPU, memory,
-uptime, and disk use for the workspace and the container filesystem. The
-lifecycle half is always available. The machine half needs a live runner, so it
-appears only while the sandbox is running with a runner attached.
-
-Reading the tab never provisions, wakes, or counts as activity, so a hibernated
-sandbox is described rather than started; that is the same rule the `@` file
-index follows. The tab refreshes faster while a turn runs, because a turn is
-when a sandbox is provisioned, woken, or replaced.
-
-The **Settings → MCP** page adds remote Model Context Protocol servers over
-Streamable HTTP. An enabled server's tools join the model's tool list as
-`mcp__<serverName>__<tool>`, and its resources join the profile's shared
-`mcp-resources` service, which dsh-base mounts. A token is sent as a static
-`Authorization: Bearer` header and is write-only: the browser receives only
-whether a token is saved, never its value, and saving with **Remove the saved
-token** clears one. Adding, editing, disabling, or removing a server mounts or
-unmounts its tools for new tool calls without restarting the host, and **Test
-connection** probes an unsaved entry without saving it — its probe tools live
-in the shared registry until the probe is disposed, so a session can see them
-for that moment. A server that fails to connect is reported as `error` with
-the reason the client reported, and **Retry** connects it again — the client
-stops reconnecting on its own once its attempt budget runs out, so Retry is
-the only way back short of a restart. A name may not contain `__` or end in
-`_`, because those would make one server's tool prefix match another's. The
-configuration lives in `stateDir/mcp.json`, owner-only like the rest of the
-control plane's state, and never in a sandbox.
-
-The bundle also disables dsh's local shell permission presets and its file
-policy line. The remote shell uses one fixed container boundary and does not
-claim to enforce those per-command sandbox modes. Both halves of the preset
-surface go: since 0.1.7 the Web settings row reads the presets through a
-`permissionPresets` catalog Remote that the client mounts whether or not the
-host row loaded, so with the service off the row would render an error rather
-than disappear. The policy line would tell
-the model it may write under the session workspace and name that workspace by
-its host anchor path, which does not exist inside the sandbox; the model only
-ever needs sandbox paths, and it finds its working directory the way any shell
-user does.
-
-The right sidebar's **Files** and **Preview** tabs and the file cards under
-each turn (`workspace-files`, `ui-sidebar-files`, `ui-sidebar-documentpreview`,
-`ui-deliverables`) read the session workspace through dsh's filesystem service
-from plain browser requests, outside any agent turn, while this package's
-filesystem finds a session's sandbox through the agent that is asking. The
-bundle keeps those stock rows and adds two of its own: `sandbox-workspace-files`
-wraps the live `workspaceFiles` service so each request runs as the agent of the
-session it names, and `sandbox-workspace-policy` publishes the `sandboxPolicy`
-service those rows require, reporting the sandbox workspace, adding nothing to
-the prompt, and answering every call as `danger-full-access` — in dsh, "run the
-command as it is, with no extra file sandbox". The container is the boundary, so
-there is nothing to add. The rows that would add one — the persistent shell
-behind the shipped `minimal` preset, and the PTC runtime — wrap the command in
-the host's `landlock-run` launcher under any other answer. No sandbox can run
-that launcher, so the command fails instead of being confined. See the Terminal
-tab paragraph below. Browsing a file behaves like any other request against the
-session: it wakes a hibernated sandbox and counts as activity for the idle
-timer. [`docs/plans/web-sidebar.md`](../docs/plans/web-sidebar.md) records why
-the stock rows fail on their own and a deferred design in which browsing never
-wakes a sandbox. One cosmetic limit remains: the Files tab's header label
-comes from the session `cwd` in the browser, so it shows the host anchor
-directory while every entry under it is a sandbox path.
-
-Inline images in the session log — the `![](path)` markdown the model writes
-and the file-mention images, the full-size dialog a click on one opens, and
-images in a Markdown file previewed in the right sidebar — are served by
-dsh's authenticated `/api/file`
-route, which also reads through the filesystem service from a plain browser
-request. Unlike the sidebar, its URL carries no session id, only a path, so
-there is no scope to wrap the way `sandbox-workspace-files` does, and the
-exact route cannot be re-registered. The bundle's browser half adds the
-identity to the image URL instead (`src/client/media-session.ts`): it
-watches the document and, for each `/api/file` image, adds the session of
-the view the image sits in — the stock conversation view and right sidebar
-mark their roots with `data-conversation-session` and
-`data-sidebar-right-session`, the same attributes dsh itself uses to find an
-element's session — as the `dsh-yawn-session` query parameter. The
-full-size image dialog is rendered straight under `document.body`, outside
-every view, so it takes the session of the thumbnail just clicked, and only
-when its URL is exactly that thumbnail's. The stock route reads only
-`path`, and the inline images load lazily, so the rewritten URL is the only
-one the browser requests for them. Each image names its own conversation,
-so two tabs, or two sessions whose images share a path, stay apart. The `sandbox-media-route` row listens on the `connection/request`
-waterfall — which the connection service runs after authenticating the
-request — and, for `/api/file` GET and HEAD only, resolves that session to
-its live agent and runs the rest of the dispatch inside
-`agents.withInitiator`. The initiator travels down the request's own async
-chain into the route handler and its `ctx.fs` calls, so the read reaches
-exactly the sandbox that conversation uses, subagent lineage included
-(sandbox identity is root-keyed).
-
-Anything but a clean hit — another path or method, any other image outside
-a view, a session that cannot be resolved — passes through, and
-the stock route fails as it did before rather than read a guessed sandbox:
-`/workspace/repository/...` exists in every sandbox, so a path alone never
-names one. The rewrite depends on those attributes and on the dialog's
-markup, which are implementation details of the pinned dsh release, not a
-promised interface. The clean long-term fix is the session id in the route's own URL,
-which is an upstream change.
-
-The right sidebar's **Terminal** tab (`terminal-controller`,
-`ui-sidebar-terminal`) opens an interactive shell in the session workspace. The
-stock controller allocates it through `ctx.subprocess.spawnTerminal`, and this
-package implements that seam over a bidirectional runner RPC that owns a real
-PTY in the sandbox: a session leader with the PTY as its controlling terminal,
-so the terminal driver owns signal generation, the foreground process group,
-and the window size. Input, resize, foreground and activity queries, and
-signals travel one way; output and one final exit status come back the other.
-Ending the request stream runs a TERM-to-KILL ladder over the session's process
-group and hangs up what remains. Like file browsing, the allocation reaches the
-sandbox through the agent that is asking, so the bundle keeps the stock rows
-and adds `sandbox-terminal-controller`, which wraps the live
-`terminalController` service: shell discovery and terminal creation run inside
-`agents.withInitiator(agent, ...)`, and input and resize reset the session's
-idle timer so a sandbox is not hibernated out from under a terminal someone is
-typing in. Terminal output stays out of the agent transcript. The same seam is
-what dsh's persistent-shell backend (`dsh-terminal-bash`, used by the shipped
-`minimal` preset) waits on: that preset swaps the one-shot `bash` tool for a
-persistent shell that opens its PTY through `ctx.subprocess.spawnTerminal`.
-Before opening it, the backend reads `ctx.sandboxPolicy` and, for any answer but
-`danger-full-access`, wraps the shell in the host's `landlock-run` launcher.
-The sandbox has no such launcher, so every `minimal` command failed with ENOENT;
-answering full access is what keeps the preset working. The shell still runs in
-the sandbox, through this seam, like every other command.
-
-The header's **Open in...** button (`open-in-app`, `ui-open-in-app`) is off:
-it launches a desktop application on the host against the session `cwd`.
-That `cwd` is the anchor, and the application probe would run through the
-sandbox subprocess seam and report programs installed in the sandbox.
-
-The bundle also corrects the model-facing system prompt. dsh's stock opener
-names the session working directory in host coordinates — the anchor directory
-above — and adds paragraphs about the host's dsh implementation checkout and
-its Web GUI, none of which holds inside a sandbox. The `sandbox-context` row
-shadows the `cwd` prompt variable with the sandbox workspace, answers the
-artifacts folder beside it and what the session's backend keeps across a sleep
-as two more prompt variables, contributes a short environment section naming
-the sandbox mount, the durable output folder, and the GUI paragraph's
-still-true claim about what "this page" means, and drops the host-only
-checkout and GUI sections from the assembled prompt. The drop matches those
-sections by their text, not by name or position, so it survives dsh refactors
-of its prompt composition. If a dsh update rewords or removes those
-paragraphs, the drop matches nothing, logs a warning once per host process,
-and the sections ship unchanged while the environment section still states the
-facts. Tests run the drop against an assembly built by the pinned
-`@deepseek-ai/dsh-system-prompt` service, and a wording test downloads the
-pinned composer packages (`@deepseek-ai/dsh-app-boot`, `@deepseek-ai/dsh-web-app`)
-and fails CI when either paragraph changes, so a dsh bump cannot silently
-reword them. The markers themselves are pinned to the observed wording.
-
-The bundle also serves skills authored in this package. dsh's stock local
-provider discovers skills from disk, and this package's filesystem seam reads
-that disk inside the sandbox, so a `SKILL.md` under `$DSH_HOME/skills` on the
-host is never seen by a sandboxed session: the path does not exist in the pod.
-The `skills` row instead registers a provider over the TypeScript modules in
-[`src/skills/`](src/skills/) into the global layer of dsh's skill registry,
-which every agent's merged catalog carries.
-
-A skill is a folder: an `index.ts` exporting an `AuthoredSkill` and a
-`SKILL.md` beside it, listed in `src/skills/index.ts`. The list is explicit
-rather than a directory scan, because a scan of TypeScript sources can only
-find compiled files and would leave the catalog silently empty when the layout
-changes. An unlisted folder is not served, and a listed one fails as it loads
-if its import does not resolve or its `SKILL.md` is missing, so a mistake names
-its path instead of appearing as a skill that lists but cannot be read. The
-build copies the bodies into `dist`, and the served bodies are held in host
-memory, so no machine's disk is read at session time. Authored skills take the
-bundled rank, so a repository's own `.agents/skills` still wins a name
-collision. dsh's `minimal` agent preset mounts no skill tool, so a session on
-it sees no catalog regardless.
-
-The one shipped skill, `using-agent-browser`, covers driving a browser from a
-session: `install-browser` once per sandbox, then the CLI. The runner image
-carries both commands; Chrome, the libraries it links against, and the font it
-draws with are larger than the rest of the image, so `install-browser` adds
-them on demand, into the workspace volume so a wake keeps them. The script
-ships in the image rather than in the skill body, which keeps the body short
-and pins the script to the image the session is running. The skill writes media
-to the session's artifacts folder, defined under
-[Idle and hibernation](#idle-and-hibernation).
-
-One module is not part of the bundle patch:
-`@zhming0/dsh-yawn/launch-token`. Mounted as a row, it serves
-`GET /launch-token`, which redirects the browser to dsh's tokenized login URL so
-users behind an authenticating proxy never read the token from the host log. It
-is not a sign-in: anyone who reaches dsh's port can use it, so the row is off by
-default. The control-plane image mounts it only when `DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1`,
-which the Kubernetes oauth2-proxy manifest sets. To mount it yourself, insert
-the row in a patch layer:
-
-```yaml
-- insert:
-    - id: sandbox-launch-token
-      name: "@zhming0/dsh-yawn/launch-token"
-```
-
-A second module rides in the bundle patch itself: `@zhming0/dsh-yawn/owns-host`.
-It injects `__DSH_TRANSPORT__ = { ownsHost: true }` into the served index, which
-tells the web client the page is served by the dsh host — always true for this
-distribution — so client settings persist to the host on any address. Without
-it, dsh's client treats a non-loopback page (an Ingress name, a LAN address) as
-untrusted for settings and keeps them in browser memory, and the
-model-provider page fails with "settings are unavailable in this browser"; that
-is why editing model credentials used to require `kubectl port-forward`. The
-injection grants no access: `/api` keeps the same Host/Origin fence and the
-same authentication. `tests/ui-owns-host.test.ts` pins the two dsh-internal
-seams this rides on, so a dsh bump that moves either fails CI.
-
-The image runs dsh as its own uid 1000 user. Its entrypoint starts as root only
-long enough to read the mounted Docker socket's group and join it, then drops
-root before seeding the profile or starting anything. A socket's group id only
-means something inside the container it is mounted into — rootless or
-userns-remapped Docker does not map the host-side value at all — so the lookup
-belongs in the image and the run command needs no `--group-add`. A pod that sets
-`runAsUser`, as the Helm chart does, skips the drop and never starts as root.
-
-`DSH_YAWN_BIND_ALL=1` applies `bind-all.patch.yml`, which binds the Web UI to
-`0.0.0.0` so a published port reaches it. Kubernetes leaves it unset and keeps
-dsh on pod loopback behind oauth2-proxy.
-
-The default backend uses Docker on the same machine as dsh. The Kubernetes
-backend uses Kubernetes SIG agent-sandbox. The Buildkite backend runs each
-sandbox as one build on a pipeline you create. Runners connect out to the host's
-tunnel listener, so the host never dials into a sandbox; it only needs to be
-reachable by the runners it manages. The tunnel is a WebSocket, so an HTTPS
-proxy or Ingress can carry it next to the Web UI; see
-[Tunnel](#tunnel) below.
-
-A host can offer several **sandbox profiles**. A profile is a complete
-description of one kind of sandbox: which backend provisions it and that
-backend's settings, such as a runner image for Docker or a warm pool for
-Kubernetes. When more than one profile is
-configured, a chip in the composer's tool row lets the user pick one for a new
-session. The sandbox is provisioned on the first prompt, not when the session
-is created, so the choice can still change until then. Once a sandbox exists
-the chip shows the profile in use and is disabled.
+- `read`, `write`, `edit`, `present`, `bash`, `glob`, and `grep` run in the
+  session's sandbox instead of on the control-plane host.
+- Sessions can provision sandboxes through Docker, Kubernetes
+  agent-sandbox, or a Buildkite pipeline. A **sandbox profile** names one
+  backend and its settings; a session picks a profile on its first prompt.
+- The Web UI gains pages for secrets, sandbox profiles, instructions,
+  notifications, MCP servers, plugins, a Sandbox tab, a right sidebar for
+  files and terminal access, and repository URL Workspaces.
+- Uploaded attachments and `@` file references are copied from or resolved in
+  the sandbox workspace.
+- Sessions can install plugins from the Web Plugins page, but those run in the
+  control-plane process with the control plane's access to sessions and
+  credentials.
 
 ## What changes for the agent
 
-The tool rows keep their names, schemas, and prompt guidance; what changes is
-where they run.
+The tools keep their names, schemas, and prompt guidance; only where they run
+changes.
 
 |                                    | Before                    | After                                     |
 | ---------------------------------- | ------------------------- | ----------------------------------------- |
@@ -375,29 +49,31 @@ where they run.
 | Session logs, spill files          | your disk                 | unchanged, still your disk                |
 | Uploaded attachments               | your disk                 | copied into the sandbox workspace         |
 
-On Kubernetes the `docker` row is the rootless `dockerd` sidecar; see
+On Kubernetes the `docker` tool uses a rootless `dockerd` sidecar; see
 [Docker inside a sandbox](../docs/kubernetes.md#docker-inside-a-sandbox) for
 the security trade it makes and how to remove it.
 
 ## Plugins
 
-The Web sidebar's **Plugins** page manages the profile's bundles: it installs
-a package name, a Git address, a tarball, or a local path; enables, disables,
-and removes bundles; and switches individual plugin rows. The same operations
-are `dsh plugin --profile web ...` in the control-plane pod. The stock `cordis`
-agent preset also enables the `plugin_manager` tool, which asks for approval on
-each call.
+The Web sidebar's **Plugins** page manages the profile's plugins (dsh calls an
+installed package a _bundle_). It installs a package name, a Git address, a
+tarball, or a local path; enables, disables, and removes plugins; and switches
+individual plugin entries. The same operations
+are `dsh plugin --profile web ...` in the control-plane pod. A package without
+`dsh.bundle.patch` installs as a plain dependency and changes nothing. The
+stock `cordis` agent preset also enables the `plugin_manager` tool, which asks
+for approval on each call.
 
-Bundles run in the control-plane process, outside every sandbox and with the
+Plugins run in the control-plane process, outside every sandbox and with the
 control plane's access to sessions and credentials, so the page is operator
-access. The page also lists this package's own bundle: switching
-`@zhming0/dsh-yawn` off drops it from the profile's bundle list and unmounts
+access. The page also lists this package's own plugin: switching
+`@zhming0/dsh-yawn` off drops it from the profile's plugin list and unmounts
 the sandbox services until it is switched back on (the next image upgrade
-merges the image's bundle list back in).
+merges the image's plugin list back in).
 
 `dsh-yawn-seed` seeds the profile from `/opt/dsh-yawn/profile` on first boot.
 On an image upgrade it merges the image's manifest fields — the
-`@zhming0/dsh-yawn` dependency and the bundle selection the image ships — into
+`@zhming0/dsh-yawn` dependency and the plugin selection the image ships — into
 the profile on the data volume and runs `pnpm update @zhming0/dsh-yawn`, so
 everything the user installed stays. `cordis.patch.yml` and
 `pnpm-workspace.yaml` are seeded once and then the user's; the workspace file
@@ -409,8 +85,8 @@ marker alone: the next boot merges that manifest back in and retries.
 ## Settings
 
 Configuration is YAML in the profile's own layer,
-`$DSH_HOME/profiles/<name>/cordis.patch.yml`. A patch entry replaces the whole
-`config` of the row it names, so restate the fields you want to keep.
+`$DSH_HOME/profiles/<name>/cordis.patch.yml`. A plugin's `config` replaces
+the previous config entirely, so restate every field you want to keep.
 
 ```yaml
 - id: sandbox-manager
@@ -421,8 +97,8 @@ Configuration is YAML in the profile's own layer,
     idleMs: 300000
 ```
 
-The live fields below are volatile row config, so everything marked _live_ can
-be changed at runtime through the Web UI's **Settings → Sandboxes** page and
+The fields below are live settings, so everything marked _live_ can be changed
+at runtime through the Web UI's **Settings → Sandboxes** page and
 applies without a restart. Since dsh 0.1.7 those edits persist back into the
 profile's own `cordis.patch.yml` (the same file the image seeds once), a reset
 returns to the value beneath the edit, and a change re-resolves the profiles
@@ -432,20 +108,21 @@ hibernation. Sessions that already have a sandbox keep it; a profile whose
 sessions are still on record can be removed, and those sessions behave exactly
 as they do across a restart with the profile missing.
 
-A deployment can supply a **base** beneath that row config in the top-level
+A deployment can supply defaults beneath those settings in the top-level
 `sandboxManager` section of `/etc/dsh-yawn/sandbox-settings.yaml`: the same
-runtime slice as one ordinary file. The chart renders
-`controlPlane.sandboxManager` there. It is a file and not a dsh patch layer on
-purpose: dsh gives a home patch precedence over the profile patch, which would
-make the Web page's writes fail as overridden. The base merges under the row
-config field by field. A profile the deployment defines is locked: the page
+runtime settings as an ordinary file. The chart renders
+`controlPlane.sandboxManager` there. A plain file is deliberate here: dsh gives
+a home-level setting precedence over the profile's, which would make the Web
+page's writes appear overridden. The base merges field by field into the
+plugin's config. A profile the deployment defines is locked: the page
 shows it as deployment and cannot edit or remove it, and the deployment's
 definition wins if a page entry reuses its name. The page's default profile
 and timers win over the deployment's, and a reset returns to them. An absent
 file means the deployment sets nothing.
 
-The section layout is the chart-to-image contract, and the image tag can lag
-the chart's, so a section this package does not know is ignored. The file
+The section layout is an interface between the chart and the image, and the
+image tag can lag the chart's, so a section this package does not know is
+ignored. The file
 stays specific to this package; other plugins own their own settings.
 
 Writes are validated where they land: the host keeps the last good values
@@ -472,23 +149,23 @@ the intended state while installing the control plane before its sandbox
 backend exists, and it keeps a mistyped profile map from stopping the host from
 starting, so the settings can still be corrected.
 
-| Setting             | When | Default                 | Meaning                                                                       |
-| ------------------- | ---- | ----------------------- | ----------------------------------------------------------------------------- |
-| `profiles.<name>`   | live | none                    | One sandbox profile; its fields are listed in the next table                  |
-| `defaultProfile`    | live | first profile           | Profile used when a session does not pick one                                 |
-| `idleMs`            | live | 10 minutes              | Idle delay after the last turn or wake before hibernating                     |
-| `expiresAfterMs`    | live | 7 days                  | How long a hibernated workspace is retained                                   |
-| `readyTimeoutMs`    | live | per backend             | Ready timeout for `kas` and `buildkite` profiles that do not set their own    |
-| `repository`        | boot | session repository      | Fallback repository for non-anchor sessions                                   |
-| `revision`          | boot | repository default      | Optional branch, tag, or commit to check out                                  |
-| `workspace`         | boot | `/workspace/repository` | Repository checkout and working directory                                     |
-| `stateDir`          | boot | `~/.dsh-yawn`           | Records, broker data, token, instructions, MCP servers, and Workspace anchors |
-| `registrationToken` | boot | see below               | Token(s) runners must present, comma-separated                                |
-| `tunnel.port`       | boot | `8081`                  | Port the host listens on for runner tunnels (see Tunnel)                      |
-| `tunnel.bind`       | boot | `0.0.0.0`               | Address the tunnel listener binds to                                          |
-| `preview.domain`    | boot | none                    | Domain serving previews (see Previews); unset disables them                   |
-| `preview.port`      | boot | `8082`                  | Port the preview listener binds to                                            |
-| `preview.bind`      | boot | `0.0.0.0`               | Address the preview listener binds to                                         |
+| Setting             | When | Default                 | Meaning                                                                        |
+| ------------------- | ---- | ----------------------- | ------------------------------------------------------------------------------ |
+| `profiles.<name>`   | live | none                    | One sandbox profile; its fields are listed in the next table                   |
+| `defaultProfile`    | live | first profile           | Profile used when a session does not pick one                                  |
+| `idleMs`            | live | 10 minutes              | Idle delay after the last turn or wake before hibernating                      |
+| `expiresAfterMs`    | live | 7 days                  | How long a hibernated workspace is retained                                    |
+| `readyTimeoutMs`    | live | per backend             | Ready timeout for `kas` and `buildkite` profiles that do not set their own     |
+| `repository`        | boot | session repository      | Fallback repository for non-anchor sessions                                    |
+| `revision`          | boot | repository default      | Optional branch, tag, or commit to check out                                   |
+| `workspace`         | boot | `/workspace/repository` | Repository checkout and working directory                                      |
+| `stateDir`          | boot | `~/.dsh-yawn`           | Records, secret store, token, instructions, MCP servers, and Workspace anchors |
+| `registrationToken` | boot | see below               | Token(s) runners must present, comma-separated                                 |
+| `tunnel.port`       | boot | `8081`                  | Port the host listens on for runner tunnels (see Tunnel)                       |
+| `tunnel.bind`       | boot | `0.0.0.0`               | Address the tunnel listener binds to                                           |
+| `preview.domain`    | boot | none                    | Domain serving previews (see Previews); unset disables them                    |
+| `preview.port`      | boot | `8082`                  | Port the preview listener binds to                                             |
+| `preview.bind`      | boot | `0.0.0.0`               | Address the preview listener binds to                                          |
 
 Each profile carries the settings of its own backend. Profiles do not share
 settings with each other, so two Kubernetes profiles in one namespace both
@@ -611,9 +288,9 @@ backend:
 - A backend that cannot hibernate checkpoints instead. The manager commits the
   Git working tree inside the sandbox (as `dsh <dsh@localhost>`, only if there
   are changes), writes the commits that `origin`'s default branch does not
-  have to a Git bundle, stores that bundle under `stateDir/checkpoints/` on
-  the host, tars the artifacts folder alongside it, and then destroys the
-  sandbox. Nothing is pushed. The next prompt
+  have to a Git bundle (a file Git can restore commits from), stores that
+  bundle under `stateDir/checkpoints/` on the host, tars the artifacts folder
+  alongside it, and then destroys the sandbox. Nothing is pushed. The next prompt
   provisions a fresh sandbox, clones and runs `.agents/setup` as for a new
   session, unpacks the bundle, checks the original branch out at the saved
   commit, undoes the checkpoint commit so the changes are uncommitted once
@@ -682,11 +359,11 @@ The Buildkite backend checkpoints; Docker and Kubernetes hibernate.
 
 ### Search
 
-`glob` and `grep` are the stock `@deepseek-ai/dsh-tool-fs-search` row, so
-their caps are that package's settings, set where the row is mounted. On the
-Web surface that is the agent preset, not this profile layer: shipped presets
-restate the row by its stock name, and a preset copied from one carries the
-same rows to edit.
+The stock `@deepseek-ai/dsh-tool-fs-search` plugin supplies `glob` and `grep`,
+so their caps are that package's settings, set where the plugin is mounted. In
+the Web UI that is the agent preset, not this profile layer: shipped presets
+restate the plugin by its stock name, and a preset copied from one carries the
+same settings to edit.
 
 ### AGENTS.md instructions
 
@@ -715,7 +392,7 @@ same normalized repository URL restores its saved layer.
 
 Secrets and tokens never go in YAML, because a profile layer is a plain file
 and a chat transcript is durable. They go through the Web UI's
-**Settings → Secrets** page, which stores them in the broker file under
+**Settings → Secrets** page, which stores them in the secret store file under
 `stateDir`.
 
 The page edits two kinds of scope, picked in the same Global/Workspace
@@ -724,15 +401,16 @@ per-workspace pages). Global secrets reach every sandbox. A workspace secret
 reaches that workspace's sandboxes and overrides a global secret of the same
 name; a sandbox receives exactly the global set with its workspace's
 overrides applied. Scoping limits which sandbox receives a value — one control
-plane is still one trust domain, and global secrets still reach every sandbox.
+plane still lets every admitted user reach every sandbox, and global secrets
+reach every sandbox.
 
 The Buildkite API token is the one control-plane-owned token the UI also
 stores: **Settings → Sandboxes** writes it, write-only, to the host credential
 document (`$DSH_HOME/.credentials.yaml`). That document is host-side and never
-pushed to a sandbox, which is what keeps this token out of the broker store
+pushed to a sandbox, which is what keeps this token out of the secret store
 that runners receive.
 
-The control plane reloads the broker file before the next sandbox command, so a
+The control plane reloads the secret store file before the next sandbox command, so a
 saved change takes effect without restarting dsh.
 
 A secret named `GITHUB_TOKEN` doubles as the Git credential for github.com, so
@@ -741,7 +419,7 @@ name is the simplest way to reach private repositories — no OAuth app
 required. A workspace-scoped `GITHUB_TOKEN` serves that workspace's clones in
 place of the global one.
 
-Sandbox code can read injected secrets, which is their purpose. The broker
+Sandbox code can read injected secrets, which is their purpose. The store
 improves storage and cleanup, not confidentiality from the repository being run.
 Skip `GITHUB_TOKEN` entirely if you only work on public repositories.
 
@@ -767,7 +445,7 @@ status (401 bad token, 409 sandbox already registered) and an acceptance with
 host is the HTTP/2 client and the runner the server. `GET /healthz` on the
 same port answers 200 so an HTTP load balancer can health-check it.
 
-The listener itself is plaintext. A runner inside the trust domain, such as a
+The listener itself is plaintext. A runner on a trusted network, such as a
 Kubernetes sandbox in the host's cluster, dials it directly with
 `ws://host:8081/tunnel`. A runner that reaches the host over a network you do
 not control must dial `wss://`, with TLS terminated by the same HTTPS proxy or
@@ -816,9 +494,8 @@ headers to the sandbox, cookies included, because the previewed app's own
 session has to work — but that also carries whatever authenticates the
 wildcard host into untrusted sandbox code. `preview.authCookieNames`, which
 drops configured auth-cookie names from the request before it enters the
-tunnel, lands with the exposure half (chart, Service, and Ingress) described
-in `docs/plans/sandbox-preview.md`; keep previews on a development host until
-it does. For the same reason, the listener binds `0.0.0.0` by default: on the
+tunnel, is not implemented yet; keep previews on a development host until it
+lands. For the same reason, the listener binds `0.0.0.0` by default: on the
 Kubernetes backend the reference NetworkPolicy lets sandbox egress reach only
 the tunnel port, so a sandbox cannot dial it, but on the Docker development
 path the sandboxes share the host's network and can. Set `preview.bind` to
@@ -829,9 +506,8 @@ The Sandbox tab links the sandbox's listening ports (the runner reports them)
 and its preview address, each opening in a browser tab. The sandbox
 environment prompt tells the model the address pattern once its sandbox
 exists, so it can start a server detached and hand the user a clickable URL.
-Without a `preview.domain` the Sandbox tab's preview row says previews are
-not configured. Design and follow-ups (WebSocket upgrades
-for HMR, supervised services): `docs/plans/sandbox-preview.md`.
+Without a `preview.domain` the Sandbox tab's preview area says previews are
+not configured.
 
 ## Registration token
 
@@ -857,7 +533,8 @@ see
 
 ## Limits
 
-- The subprocess seam translates a path argument only when it is a whole argv
+- The subprocess implementation translates a path argument only when it is a
+  whole argv
   element under the session workspace. A session-frame path embedded in a
   `--flag=value` pair reaches the sandbox untranslated.
 - Streaming subprocess input is not implemented: one-shot stdin, streamed

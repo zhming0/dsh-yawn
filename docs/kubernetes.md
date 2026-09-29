@@ -1,272 +1,118 @@
-# Kubernetes deployment
+# Kubernetes backend
 
-This reference runs one universal DSH runner behind Kubernetes SIG
-agent-sandbox. It is intentionally pinned to **agent-sandbox v1.0.2** and its
-`agents.x-k8s.io/v1beta1` and `extensions.agents.x-k8s.io/v1beta1` APIs. Do not
-assume these manifests work with another release.
+This backend runs sessions in Kubernetes pods managed by
+[agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox). It is
+pinned to **v1.0.2** and the `agents.x-k8s.io/v1beta1` and
+`extensions.agents.x-k8s.io/v1beta1` APIs. Do not assume these manifests work
+with another release.
 
-Setting this backend up is [`installations-kas.md`](installations-kas.md).
-This page is the reference: what the manifests do, the isolation model, the
-tunnel, and the development walkthrough, which builds both images locally and
-applies them to a kind cluster.
+Installation is [`installations-kas.md`](installations-kas.md). This page
+covers how the pieces work, the isolation model, the tunnel, and local
+development.
 
-## Prerequisites
+## Security model
 
-- Linux or macOS with Docker, `kind`, `kubectl`, and Python 3
-- a locally built DSH runner image, or an image the cluster can pull
-- the runner must run as UID 1000, serve port 8080, implement `GET /health`,
-  and contain `sh`, `cat`, and the `docker` CLI for the smoke test
-- nodes that allow a privileged container, which the Docker daemon sidecar
-  needs (see [Docker inside a sandbox](#docker-inside-a-sandbox))
+Each sandbox pod has two containers:
 
-From a blank machine, install Docker, then install
-[kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) and
-[`kubectl`](https://kubernetes.io/docs/tasks/tools/). From the repository root:
+- **runner** — runs as UID 1000, serves the file, shell, and subprocess RPCs,
+  and holds the session's tools. It has `allowPrivilegeEscalation: true` and a
+  small set of capabilities so apt, dpkg, and sudo can install system packages.
+  Seccomp stays `RuntimeDefault`.
+- **docker** — a rootless Docker daemon sidecar. The runner's Docker CLI talks
+  to it over a shared socket, so sessions can run `docker build` and
+  `docker run` without access to the node's Docker daemon.
 
-```sh
-docker buildx bake dev control-plane-dev --load
+The pod uses the `runc` runtime by default, which is container isolation, not a
+virtual-machine boundary for hostile code. For a stronger boundary, install and
+verify a gVisor `RuntimeClass` on every eligible node and add
+`runtimeClassName: gvisor` under `podTemplate.spec`. The Docker sidecar has
+only been tested under `runc`.
 
-scripts/kas/dev-cluster.sh \
-  --runner-image dsh-yawn-runner:dev \
-  --control-plane-image dsh-yawn-control-plane:dev \
-  --load-runner-image
+The pod does not mount a service-account token. A NetworkPolicy default-denies
+both directions: ingress is empty, and egress allows only the control-plane
+tunnel (TCP 8081), DNS (TCP/UDP 53), and HTTP/HTTPS (80 and 443). The broad
+80/443 rule reaches cluster and private addresses too, so production clusters
+should narrow it to approved CIDRs or use an FQDN-aware network policy.
+Connectivity rules are not a sandbox boundary.
 
-scripts/kas/smoke-test.sh --namespace dsh-yawn
-scripts/kas/teardown.sh
-```
-
-For the self-contained control-plane-to-runner transport and lifecycle test used by
-CI, build both images and run `pnpm test:kas`; see
-[`e2e-testing.md`](e2e-testing.md#kubernetes-transport-and-lifecycle-test).
-
-With `--control-plane-image`, the control plane itself runs in the cluster and runners dial
-its `dsh-yawn-control-plane-tunnel` Service. The script applies the kustomize base, so the
-dev control plane runs without the OIDC proxy and is reached over
-`kubectl port-forward` — no identity provider needed. To run dsh outside the
-cluster instead, omit it and tell the runners where to dial:
-
-```sh
-scripts/kas/dev-cluster.sh \
-  --runner-image dsh-yawn-runner:dev \
-  --control-plane-url ws://192.0.2.10:8081/tunnel \
-  --load-runner-image
-```
-
-`--load-runner-image` is for images already present in the local Docker daemon.
-Omit it when the images are pullable by the cluster. The script generates a
-registration token (or reads `--registration-token-file`) and stores it in the
-`dsh-yawn-registration-token` Secret, which both the control plane Deployment and the warm
-runner pods read. With `--control-plane-url`, hand the same token to the external control
-plane through `DSH_YAWN_REGISTRATION_TOKEN`, make the address reachable
-from pods, and widen the sandbox NetworkPolicy egress to it.
-The script creates `kind-dsh-kas`,
-installs exactly the v1.0.2 release asset `sandbox-with-extensions.yaml`, waits
-for its CRDs and controllers, and applies both phases: the control plane from
-the Helm chart (rendered, not installed) and the sandbox pool from kustomize. It
-is noninteractive. Use `--name NAME` on both cluster scripts to choose another
-kind cluster name.
-
-For an existing cluster, follow
-[`installations-kas.md`](installations-kas.md). The short form is the chart,
-then the sandbox pool:
-
-```sh
-kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.2/sandbox-with-extensions.yaml
-kubectl wait --for=condition=Established \
-  crd/sandboxes.agents.x-k8s.io \
-  crd/sandboxclaims.extensions.agents.x-k8s.io \
-  crd/sandboxtemplates.extensions.agents.x-k8s.io \
-  crd/sandboxwarmpools.extensions.agents.x-k8s.io --timeout=120s
-kubectl -n agent-sandbox-system wait --for=condition=Available deployment --all --timeout=180s
-
-kubectl create namespace dsh-yawn
-kubectl -n dsh-yawn create secret generic dsh-yawn-oidc \
-  --from-literal=OAUTH2_PROXY_OIDC_ISSUER_URL=https://your-idp/realm \
-  --from-literal=OAUTH2_PROXY_CLIENT_ID=dsh-yawn-control-plane \
-  --from-literal=OAUTH2_PROXY_CLIENT_SECRET=… \
-  --from-literal=OAUTH2_PROXY_COOKIE_SECRET="$(openssl rand -base64 32 | tr -- '+/' '-_')"
-
-helm install dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
-  --namespace dsh-yawn --create-namespace \
-  --set oidc.enabled=true --set oidc.hostname=dsh.example.com
-
-# Sandbox pool, after the agent-sandbox controllers above are installed. The
-# base names no namespace, so name the release namespace in an overlay and pin
-# the runner image to the release you installed.
-mkdir -p dsh-yawn-runner
-cat >dsh-yawn-runner/kustomization.yaml <<'EOF'
-namespace: dsh-yawn
-resources:
-  - ../deploy/kubernetes/runner
-images:
-  - name: ghcr.io/zhming0/dsh-yawn-runner
-    newTag: <release-tag>
-EOF
-kubectl apply -k dsh-yawn-runner
-kubectl -n dsh-yawn wait --for=jsonpath='{.status.readyReplicas}'=1 \
-  sandboxwarmpool/dsh-yawn-universal --timeout=300s
-```
-
-**Upgrading from v0.5.x.** First check `status.storedVersions` on all four
-CRDs. If any still lists `v1alpha1`, follow the
-[upstream migration guide](https://github.com/kubernetes-sigs/agent-sandbox/blob/v1.0.2/docs/api-migration-guide.md)
-before upgrading, because v1.0.2 serves only `v1beta1` and the API server
-rejects removing a stored version. Then apply the v1.0.2 asset over the old
-one. The upgrade drops the conversion webhook, and its namespaced Service, TLS
-Secret, Role, and RoleBinding are not in the v1.0.2 asset. Delete those four
-leftovers once the controller is available; the `agent-sandbox-controller`
-ClusterRole and ClusterRoleBinding are still current and stay:
-
-```sh
-kubectl -n agent-sandbox-system delete \
-  svc/agent-sandbox-webhook-service secret/agent-sandbox-webhook-certs \
-  role/agent-sandbox-controller rolebinding/agent-sandbox-controller \
-  --ignore-not-found
-```
-
-The template contains no session-specific environment variables or Secrets;
-the registration token is the same for every runner by design. Claim `env` or
-`volumeClaimTemplates` overrides force a cold start instead of adopting a warm
-Sandbox, so both injection policies are deliberately `Disallowed`.
+The control plane's `dsh-yawn-control-plane` Role is namespace-scoped. It can
+manage `sandboxclaims` and read and patch `sandboxes`; it grants nothing
+cluster-wide or outside sandbox management.
 
 ## Docker inside a sandbox
 
-Each sandbox pod runs a second container, `docker`, from the upstream
-`docker:29.8.0-dind-rootless` image. It is a rootless Docker daemon: the
-process is UID 1000 and creates its own user namespace with rootlesskit, so
-"root" inside any container it starts is UID 1000 on the node and nested
-containers never hold real root. The runner container has the Docker CLI,
-Buildx, and Compose, and its `DOCKER_HOST` points at the daemon's socket,
-`unix:///run/user/1000/docker.sock`, on a tmpfs both containers mount. The
-runner forwards `DOCKER_HOST` to every command, so a model can `docker run`,
-`docker build`, and `docker compose up` with no setup.
+The `docker` sidecar runs the upstream `docker:29.8.0-dind-rootless` image. It
+is a rootless daemon: the process runs as UID 1000 and creates its own user
+namespace, so "root" inside containers it starts is UID 1000 on the node.
 
-Bind mounts work because the sidecar mounts the workspace volume at the same
-`/workspace` path as the runner: `docker run -v /workspace/repository:/src`
-sees the session's checkout. Files the runner owns appear as root-owned inside
-a container, and files a container writes as root land as UID 1000, so the
-runner can edit them afterwards. A published port (`-p 8080:80`) binds in the
-pod, so the runner reaches it at `localhost:8080`; containers cannot reach the
-pod's own loopback (`--disable-host-loopback`), including the runner's health
-port.
+The sidecar and the runner mount the workspace volume at the same `/workspace`
+path, so bind mounts see the session checkout. Files the runner owns appear
+root-owned inside a container, and files a container writes as root come back
+as UID 1000. A published port is reachable at the pod's `localhost`.
 
-Container traffic leaves through the pod's network namespace, so the sandbox
-NetworkPolicy applies to it unchanged: registries on 443, plain HTTP on 80, and
-kube-dns are reachable, nothing else is. Both image pulls and the model's own
-commands share that allow-list.
+Container images, containers, and volumes live on a 10Gi `emptyDir`, not on the
+workspace volume. A hibernated sandbox loses that sidecar storage, so a woken
+session keeps its files but pulls images again. This is deliberate: it avoids
+the kubelet `fsGroup` ownership pass over every image layer on every pod start.
+Raise the `sizeLimit` in the template if sessions build large images.
 
-Images, containers, and volumes live on an `emptyDir` sized at 10Gi, not on
-the workspace volume. Hibernation removes the pod and that storage with it, so
-a woken session keeps its files but pulls images again. This is deliberate:
-the workspace volume is small, and kubelet's `fsGroup` ownership pass at every
-pod start would rewrite the group of every file inside every image layer. A
-sandbox that fills the 10Gi limit is evicted by kubelet; raise `sizeLimit` in
-the template if your sessions build large images.
-
-**Why the sidecar is `privileged`.** rootlesskit needs to create user and
-mount namespaces, and the nested runc needs to mount a fresh `/proc`. Both are
-refused under the default seccomp profile, AppArmor, and the masked `/proc`
-paths runtimes apply to ordinary containers. The only Kubernetes switch that
-lifts all three is `privileged: true`; the alternative, `procMount: Unmasked`,
-is accepted only for pods running in a user namespace (`hostUsers: false`),
-which needs kernel and runtime support not every cluster has. Privileged mode
-does not change the process identity: rootlesskit runs as UID 1000 with an
-empty effective capability set, the daemon's capabilities exist only inside
-the user namespace it creates, and the node's device nodes, although exposed
-to the container, stay root-owned and unreadable to it. What privileged mode
-does remove is the kernel attack-surface reduction from seccomp and AppArmor
-for that one container. Because the pod has no cgroup delegation, the daemon
-also runs without cgroups: `docker run --memory` and similar limits are not
-enforced on nested containers. The runner container, where the model's commands
-run, keeps `RuntimeDefault` seccomp and stays a non-root UID 1000, but it
-allows privilege escalation and adds back the capabilities apt, dpkg, and sudo
-need, because the image gives the sandbox user passwordless sudo and a
-repository's setup hook may install system packages. See
-[System packages in a sandbox](#system-packages-in-a-sandbox).
-The template no longer satisfies the `baseline` Pod Security Standard; a
-namespace enforcing it rejects the pod. If that trade is wrong for your
-cluster, delete the `docker` container and its two `emptyDir` volumes from the
-template and the runner's `DOCKER_HOST` entry; the CLI then reports that no
-daemon is reachable.
+The sidecar is privileged because rootlesskit needs user and mount namespaces
+and nested runc needs a fresh `/proc`. The default seccomp profile, AppArmor,
+and masked `/proc` paths refuse those; `privileged: true` is the only
+Kubernetes switch that lifts all three. The process stays UID 1000 with an
+empty effective capability set, and privileged mode does not give it root on
+the node — but it does remove seccomp and AppArmor protection for that
+container. The pod no longer satisfies the `baseline` Pod Security Standard; a
+namespace that enforces it rejects the pod. To drop the sidecar, delete the
+`docker` container and its two `emptyDir` volumes from the template and the
+runner's `DOCKER_HOST` entry.
 
 ## System packages in a sandbox
 
-The sandbox user has passwordless sudo, so an unmodified repository whose setup
-installs system packages, as `mise bootstrap packages apply` does for an
-`apt:` entry in `mise.toml`, works without a custom image. Two things bound
-what that buys:
+The sandbox user has passwordless sudo, so a repository whose setup installs
+system packages works without a custom image. The permission stays inside the
+runner container, but code in the sandbox can write anywhere in that
+container, including over the runner's files. If that is the wrong trade for a
+shared cluster, remove the sudoers file in a custom image.
 
-- **The privilege stays inside the runner container.** The template sets
-  `allowPrivilegeEscalation: true` (otherwise `no_new_privs` makes the setuid
-  transition a no-op) and adds `AUDIT_WRITE`, `CHOWN`, `DAC_OVERRIDE`,
-  `FOWNER`, `FSETID`, `MKNOD`, `SETFCAP`, `SETGID`, `SETPCAP`, and `SETUID`
-  back to a container that otherwise drops `ALL`. The network, kill, and chroot
-  capabilities stay out, `SYS_ADMIN` above all, so the session cannot mount a
-  filesystem, and seccomp stays `RuntimeDefault`. The pod is still UID 1000
-  with no host mounts, but code in the sandbox can now write anywhere in the
-  container, including over the runner's own files. Treat this as part of the
-  same trust decision as the privileged Docker sidecar, and drop the sudoers
-  file in a custom image if that is the wrong trade for a shared cluster.
-- **It does not survive a wake by itself.** apt writes to `/usr` and `/var`,
-  which come from the image again when the pod is rebuilt; only the workspace
-  volume survives. The repository gets its packages back through
-  `.agents/setup`, which the runner runs again on every new machine, and
-  through the `.deb` cache on the workspace volume at
-  `/workspace/.dsh-yawn/apt-cache`, which spares the second download. A
-  repository that wants a package to survive without setup can still install
-  into `$HOME` instead, as `install-browser` does with `dpkg-deb -x`.
+Packages installed by apt do not survive a wake: `/usr` and `/var` come from
+the image again when the pod is rebuilt. The repository's `.agents/setup` runs
+on the new machine, and downloaded `.deb` files are cached on the workspace
+volume at `/workspace/.dsh-yawn/apt-cache`, so they do not need downloading
+twice. Packages installed under `$HOME` persist on their own.
 
 ## The in-cluster control plane
 
-The control plane chart runs the `ghcr.io/zhming0/dsh-yawn-control-plane` distribution image
-as a single-replica Deployment. Its home directory is the data volume, which
-carries everything durable: dsh sessions and storages, the seeded `web` profile
-with your `cordis.patch.yml` and any plugins installed from the Web Plugins
-page, and the control plane's session records. Deleting the
-pod loses nothing; deleting the PVC loses all of it.
+The Helm chart runs the control-plane image as a single-replica Deployment. Its
+home directory is a data volume that holds everything durable: sessions and
+storage, the seeded `web` profile, installed plugins, workspace anchors, and
+credentials. Deleting the pod loses nothing; deleting the volume loses all of
+it.
 
-The pod sets `fsGroup` so uid 1000 can write the volume, which on block-CSI
-StorageClasses makes the kubelet re-add group-read/write to every file on the
-volume at each pod start. The control plane's credentials document
-(`/data/.dsh/.credentials.yaml`) must stay owner-only — dsh refuses to boot
-otherwise — so the Deployment runs a small init container that restores mode
-`0600` after the walk and before dsh starts. Nothing to configure; if you
-inspect the pod, the init container is expected.
+The pod sets `fsGroup` so UID 1000 can write the volume. The control plane's
+credentials file (`/data/.dsh/.credentials.yaml`) must stay owner-only or dsh
+refuses to boot, so an init container restores mode `0600` after the volume's
+ownership pass and before dsh starts. This is expected and needs no
+configuration.
 
-**Slow model API egress.** The control-plane image is Node 24, where Happy Eyeballs
-(`net.autoSelectFamily`) is on by default and abandons each resolved address
-attempt after 250 ms. A model API endpoint further than that in TCP connect
-time fails every model call as an instant `ETIMEDOUT`, and a pod network
-without an IPv6 route has no working family to fall through to. The
-Deployment therefore sets
-`NODE_OPTIONS=--network-family-autoselection-attempt-timeout=3000` to give
-each attempt 3 s while keeping dual-stack failover.
+The control plane starts with no sandbox profile, so the Web UI, sessions,
+secrets, and workspaces work but the first tool call fails until a profile is
+configured. On a chart install, profile defaults come from
+`controlPlane.sandboxManager` values, mounted at
+`/etc/dsh-yawn/sandbox-settings.yaml`. **Settings → Sandboxes** adds its own
+profiles and changes the default and timers without a restart. Profiles defined
+in the chart are locked in the Web UI, and a values change rolls the pod.
 
-The control plane starts with no sandbox profile: it serves the Web UI, and sessions
-provision once the pool exists and the settings name it. On a chart install the
-sandbox-manager settings come from `controlPlane.sandboxManager` values, which the
-chart mounts as the `/etc/dsh-yawn/sandbox-settings.yaml` deployment base. The
-control plane resolves the profile-patch edits over that base, so **Settings →
-Sandboxes** in the Web UI adds its own profiles and changes the default and
-timers without a restart — adding a profile for a new warm pool needs no
-`helm upgrade` and no pod restart — while the profiles the chart defines stay
-locked, and a reset returns the rest to what the chart configures. A values
-change rolls the pod.
+The control plane uses the `dsh-yawn-control-plane` ServiceAccount token to
+manage `sandboxclaims` and `sandboxes` through the chart's Role and
+RoleBinding.
 
-The control plane talks to the API server with the automounted `dsh-yawn-control-plane`
-ServiceAccount token; the chart's Role and RoleBinding are what give it
-`sandboxclaims` and `sandboxes` access.
-
-**Several pod sizes.** A sandbox's resources come from its warm pool's
-template, so a second size is a second `SandboxTemplate` and `SandboxWarmPool`
-pair: copy
-[`20-sandbox-template.yaml`](../deploy/kubernetes/runner/20-sandbox-template.yaml)
+**Several pod sizes.** A sandbox's resources come from its warm-pool template,
+so a second size means a second `SandboxTemplate` and `SandboxWarmPool` pair.
+Copy [`20-sandbox-template.yaml`](../deploy/kubernetes/runner/20-sandbox-template.yaml)
 and [`30-warm-pool.yaml`](../deploy/kubernetes/runner/30-warm-pool.yaml) under a
-new name such as `dsh-large`, change the container `resources` and the volume
-request, and add them as resources in your kustomization. The
-[`installations-kas.md`](installations-kas.md#several-pools) walkthrough
-lists both pools in the control plane settings; the composer shows a profile chip
-when more than one exists:
+new name, change the resources and volume request, and add both to your
+kustomization. Then list a profile for each pool:
 
 ```yaml
 - id: sandbox-manager
@@ -283,42 +129,36 @@ when more than one exists:
         warmPool: dsh-large
 ```
 
-The same cluster still owns every template; a repository or a session picks
-among the pools the operator published and nothing else.
-
-**The registration token** authenticates every runner tunnel. The control plane reads
-it from `DSH_YAWN_REGISTRATION_TOKEN`, and each runner pod reads the same
-`dsh-yawn-registration-token` Secret into that variable at start. To rotate it, set the
-new value in the Secret, restart the control plane, and recycle the warm pods so they
-pick it up:
+**Registration token rotation.** The control plane reads accepted tokens from
+`DSH_YAWN_REGISTRATION_TOKEN`, and every runner pod reads the same
+`dsh-yawn-registration-token` Secret. To rotate without dropping tunnels, first
+add the new token alongside the old one, update the Secret, recycle the warm
+pods, then remove the old token from the control plane:
 
 ```sh
+# 1. Set DSH_YAWN_REGISTRATION_TOKEN on the control-plane Deployment to
+#    "new,old" (new first). The control plane accepts every listed token.
+# 2. Replace the Secret value with the new token.
 kubectl -n dsh-yawn create secret generic dsh-yawn-registration-token \
   --from-literal=token="$(openssl rand -hex 32)" \
   --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n dsh-yawn rollout restart deployment/dsh-yawn-control-plane
+# 3. Recycle the warm pods and restart the control plane.
 kubectl -n dsh-yawn delete sandbox --all
+kubectl -n dsh-yawn rollout restart deployment/dsh-yawn-control-plane
+# 4. Set the control plane's DSH_YAWN_REGISTRATION_TOKEN to the new token alone.
 ```
 
-For a gap-free rotation, first patch the control plane Deployment's
-`DSH_YAWN_REGISTRATION_TOKEN` to a literal `new,old` value (comma
-separated, new first — the control plane accepts every listed token), then update the
-Secret to the new token alone, recycle the warm pods, and finally drop the old
-token from the control plane.
+For a gap-free rotation, do step 4 only after warm runners have recycled and
+reconnected.
 
-**Credentials and secrets** are in [`credentials.md`](credentials.md): which
-secrets sandbox commands receive, how to set them in the Web UI's
-**Settings → Secrets** page, and which two credentials belong to the control plane
-instead. Never put secret values in YAML.
+## Reaching the Web UI
 
-**Reaching the UI.** dsh binds pod loopback by design and has no user
-authentication of its own, so the distribution fronts it with
-[oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/): the
-chart's `oidc.enabled` runs an oauth2-proxy
-next to dsh, terminating OIDC and forwarding over pod-local loopback. The
-manifests deliberately stop at the proxy's pod port, 4180 — how to expose it
-is your cluster's business. A ClusterIP Service plus an ingress-nginx Ingress
-looks like this:
+dsh binds to pod loopback and has no user authentication of its own, so the
+chart can put oauth2-proxy in front of it. With `oidc.enabled`, the proxy
+terminates the OIDC flow and forwards over pod-local loopback. The chart stops
+at the proxy's pod port, 4180; exposing that port is up to your cluster.
+
+A ClusterIP Service plus an ingress-nginx Ingress looks like this:
 
 ```yaml
 apiVersion: v1
@@ -340,11 +180,10 @@ metadata:
   name: dsh-yawn-control-plane
   namespace: dsh-yawn
   annotations:
-    # dsh's browser transport holds WebSockets open at /api/events.* and can
-    # carry large RPC bodies (attachments); nginx's defaults for read timeout
-    # and body size are both too small.
-    nginx.ingress.kubernetes.io/proxy-read-timeout: '3600'
-    nginx.ingress.kubernetes.io/proxy-send-timeout: '3600'
+    # The Web UI holds WebSockets open at /api/events.* and can carry large
+    # attachments; nginx's defaults are too small.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-body-size: 300m
 spec:
   ingressClassName: nginx
@@ -359,9 +198,8 @@ spec:
                 name: dsh-yawn-control-plane
                 port:
                   name: http
-          # Only for runners outside the cluster, such as Buildkite agents:
-          # the runner tunnel, bypassing oauth2-proxy. Omit it when every
-          # runner is in-cluster. See "Connectivity and isolation".
+          # Only for runners outside the cluster. Omit it when every runner is
+          # in-cluster. See "Connectivity and isolation".
           - path: /tunnel
             pathType: Exact
             backend:
@@ -374,100 +212,71 @@ spec:
       secretName: dsh-yawn-tls
 ```
 
-One dsh-side detail is already handled by the patch: dsh's browser-trust
-fence rejects any `/api` request whose `Host` header is neither loopback nor
-explicitly trusted — its defense against DNS rebinding. The proxy passes the
-browser's Host through, so the external hostname is handed to dsh as
-`--trusted-host`. If you change the hostname, change it there too.
+The chart's oauth2-proxy patch also sets `--trusted-host` for the external
+hostname, because dsh rejects `/api` requests whose `Host` header is neither
+loopback nor explicitly trusted. If you change the hostname, change it there
+too.
 
-Behind the proxy, dsh still asks each browser for its own launch token, the one
-it prints at startup. The patch sets `DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1` on the dsh
-container, which mounts a `/launch-token` route that redirects the browser to
-the tokenized URL, so once the proxy lets a user through they open
-
-```
-https://dsh.example.com/launch-token
-```
-
-and land signed in. The redirect keeps the hostname the browser used, which is
-the one dsh binds the cookie to. The route is not a sign-in of its own: it
-hands the token to anyone who can reach port 3000, which in this pod is only
-the proxy and your own port-forward; do not enable it on a control plane whose port 3000
-is exposed some other way. Without the variable the route does not exist and
-the token has to come from the control plane log:
+Behind the proxy, open `https://dsh.example.com/launch-token`. The patch sets
+`DSH_YAWN_CONTROL_PLANE_LAUNCH_TOKEN_ROUTE=1`, which mounts a route that
+redirects the browser to dsh's tokenized URL, so users never copy a token from
+the logs. The route is not a sign-in: it hands the token to anyone who can
+reach port 3000, which in this pod is only the proxy or your port-forward. Do
+not enable it when port 3000 is exposed some other way. Without the route, take
+the token from the log:
 
 ```sh
 kubectl -n dsh-yawn logs deploy/dsh-yawn-control-plane | grep 'dsh web:'
-# prints http://127.0.0.1:3000/?token=…; open https://dsh.example.com/?token=…
+# open https://dsh.example.com/?token=…
 ```
 
-The cookie lasts 30 days and its signing secret lives on the data volume, so a
-control-plane restart does not sign browsers out. A new browser, or a cookie that has
-expired, goes through `/launch-token` again.
-
-For yourself, a port-forward always works, with or without the proxy
-configured:
+A port-forward always works, with or without the proxy:
 
 ```sh
 kubectl -n dsh-yawn port-forward deploy/dsh-yawn-control-plane 3000:3000
+# open http://localhost:3000/launch-token
 ```
 
-then open `http://localhost:3000/launch-token`, or `http://localhost:3000/?token=…`
-with the token from the log. Loopback is trusted, so no extra flags are needed.
-
-The proxy authenticates users; it does not isolate them from each other. One
-control plane is one trust domain — everyone the issuer lets through shares the
-same sessions, credentials, and sandboxes. Restrict
-`OAUTH2_PROXY_EMAIL_DOMAINS` accordingly.
+The browser cookie lasts 30 days and is signed with a secret on the data
+volume, so a control-plane restart does not sign users out. The proxy
+authenticates users but does not isolate them from each other. Everyone the
+issuer admits shares the same sessions, secrets, and sandboxes. Restrict `OAUTH2_PROXY_EMAIL_DOMAINS` accordingly.
 
 ## Connectivity and isolation
 
-A Sandbox has no Service (`service: false`) and accepts no ingress at all. The
-runner opens a WebSocket to the control plane's `dsh-yawn-control-plane-tunnel` Service on port 8081
+A sandbox has no Service and accepts no ingress. The runner opens a WebSocket
+to the `dsh-yawn-control-plane-tunnel` Service on port 8081
 (`ws://dsh-yawn-control-plane-tunnel.dsh-yawn.svc.cluster.local:8081/tunnel`),
-authenticates with the registration token, and all RPCs flow control-plane→runner over
-that runner-initiated tunnel. The claim's `status.sandbox.name` identifies the
-Sandbox; the runner presents the same name in its handshake and the control plane
-verifies it. In-cluster the tunnel is plaintext: control-plane authenticity rests on
-the cluster network being inside the trust domain.
+registers with the registration token, and serves RPCs over that connection.
+The claim's `status.sandbox.name` identifies the sandbox; the runner presents
+the same name during registration, and the control plane verifies it.
 
-Runners outside the cluster, such as the [Buildkite backend's](buildkite.md)
-agents, get TLS from the Ingress that already fronts the Web UI: the
-`/tunnel` path rule in the Ingress above sends that one path to the
-`dsh-yawn-control-plane-tunnel` Service, so those runners dial
-`wss://dsh.example.com/tunnel` under the UI's certificate while oauth2-proxy
-never sees the tunnel. The tunnel authenticates itself with the registration
-token, which is also why the rule is `Exact`: nothing else on the tunnel port
-should be reachable. Keep the ingress-nginx read and send timeouts above the
-UI's 3600 seconds on this Ingress as well; a tunnel that the proxy cuts costs
-the runner one redial and the RPC in flight. `GET /healthz` on the tunnel
-port answers 200 for load balancers that need an HTTP health check.
+Inside the cluster the tunnel is plaintext; control-plane authenticity rests
+on the cluster network being trusted. Runners outside the cluster
+should use `wss://` through the Ingress that fronts the Web UI. The `/tunnel`
+path must be `Exact` and must bypass oauth2-proxy: the registration token is
+the tunnel's authentication. `GET /healthz` on the tunnel port answers 200 for
+load-balancer health checks.
 
 ### Exposing the runner tunnel beyond the cluster
 
-The Kubernetes backend reaches the tunnel over the cluster network, but a
-runner on a network you do not control — a Buildkite hosted agent, or any
-machine outside the cluster — needs an internet-reachable endpoint. The tunnel
-is a WebSocket that, once upgraded, carries plain HTTP/2 with the roles
-reversed, so an HTTPS proxy or Ingress can terminate TLS in front of it with
-the same certificate the Web UI uses. Two shapes work:
+The tunnel is a WebSocket that, once upgraded, carries HTTP/2-with-reversed-
+roles. An HTTPS proxy or Ingress can terminate TLS in front of it using the
+same certificate as the Web UI. Two shapes work:
 
-- **An HTTP ingress with a WebSocket-capable path rule**, exactly as above:
-  `/tunnel` goes straight to the `dsh-yawn-control-plane-tunnel` Service, under the UI's
-  certificate, with `proxy-read-timeout` and `proxy-send-timeout` above the
-  UI's 3600 seconds. This is the simplest option when your ingress controller
-  supports WebSocket upgrades, which ingress-nginx does by default.
-- **An L4 stream proxy** (nginx `stream`, HAProxy) or a Gateway API `TLSRoute`
-  in passthrough mode, forwarding to the Service on 8081. Use this when the
-  endpoint must not share the UI's listener, or when policy forbids the
-  ingress from carrying it.
+- An HTTP Ingress with a WebSocket-capable path rule; `/tunnel` goes straight
+  to the tunnel Service under the UI certificate. This is the simplest option
+  when the ingress controller supports WebSocket upgrades.
+- An L4 stream proxy (nginx `stream`, HAProxy) or a Gateway API `TLSRoute` in
+  passthrough mode, forwarding to the tunnel Service on 8081. Use this when the
+  endpoint must not share the UI's listener.
 
-What does not work is a proxy that terminates the WebSocket and buffers or
-inspects it — an HTTP-aware CDN in front of the ingress, for example. The
-agent-facing name also needs a DNS record pointing at the proxy; on Cloudflare
-and similar, use a DNS-only record when you terminate TLS yourself.
+A proxy that terminates the WebSocket and buffers or inspects it, such as an
+HTTP-aware CDN, does not work. Use a DNS-only record when you terminate TLS
+yourself. Keep the ingress read and send timeouts above the Web UI's 3600
+seconds; a cut tunnel costs one redial and the RPC in flight.
 
-An nginx `stream` proxy in front of the tunnel Service:
+An nginx `stream` proxy:
 
 ```nginx
 stream {
@@ -480,113 +289,55 @@ stream {
 }
 ```
 
-Then give the profile the name agents dial; the port is whatever the proxy
-listens on, 8443 here only as an example:
+Then set the profile's `controlPlaneUrl` to the name agents dial, for example
+`tls://dsh.example.com:8443`. The registration token still authenticates every
+runner; exposure changes reachability, not trust.
 
-```yaml
-- id: sandbox-manager
-  config:
-    profiles:
-      hosted:
-        backend: buildkite
-        organization: acme
-        pipeline: dsh-yawn
-        controlPlaneUrl: tls://dsh.example.com:8443
+## Local development
+
+Build both images, start a `kind` cluster with the sandbox pool, and run the
+smoke test:
+
+```sh
+docker buildx bake dev control-plane-dev --load
+
+scripts/kas/dev-cluster.sh \
+  --runner-image dsh-yawn-runner:dev \
+  --control-plane-image dsh-yawn-control-plane:dev \
+  --load-runner-image
+
+scripts/kas/smoke-test.sh --namespace dsh-yawn
+scripts/kas/teardown.sh
 ```
 
-The registration token still authenticates every runner; exposure changes
-reachability, not trust.
+Omit `--control-plane-image` to run dsh outside the cluster and pass
+`--control-plane-url ws://<host>:8081/tunnel` instead. The script generates a
+registration token, or reads one from `--registration-token-file`, and stores
+it in the `dsh-yawn-registration-token` Secret. Use `--name NAME` on both
+cluster scripts to choose a different kind cluster name. For the full transport
+and lifecycle test, see
+[`e2e-testing.md`](e2e-testing.md#kubernetes-transport-and-lifecycle-test).
 
-The template asks the extension controller to manage a default-deny
-NetworkPolicy. Ingress is empty. The egress allow-list contains the tunnel to
-the dsh-yawn-control-plane pod (TCP 8081), DNS to kube-dns (TCP/UDP 53), and HTTP
-and HTTPS (TCP 80 and 443).
-The tunnel peer is a `podSelector` with no `namespaceSelector`, so it selects
-that pod in the pool's own namespace and follows an overlay's `namespace:`.
-Everything else is denied by a conforming NetworkPolicy CNI. The broad 80/443
-rule also permits cluster and private addresses on those ports, potentially
-including the API server; production deployments should replace it with approved
-CIDRs or an FQDN-aware CNI policy and adapt DNS labels for their DNS provider.
-[`installations-kas.md`](installations-kas.md#configure-the-pool) has the patch
-recipes. NetworkPolicy is connectivity control, not a sandbox boundary.
+The smoke test verifies warm-pod adoption, suspend/resume persistence, workspace
+and home-directory survival, the rootless Docker sidecar, and expiry. Hibernation
+suspends the Sandbox (there is no `spec.paused`); running it again recreates the
+pod around the surviving PVC. Expiry deletes the claim and its PVC. A closed
+tunnel does not return a sandbox to the warm pool: an adopted pod is not
+recycled, and the pool creates a new one after adoption.
 
-The pod does not mount a service-account token and runs non-root. The runner
-container drops `ALL` capabilities and adds back only the subset apt, dpkg, and
-sudo use, with `RuntimeDefault` seccomp and privilege escalation allowed so
-passwordless sudo works; the `docker`
-sidecar is privileged for the reasons in
-[Docker inside a sandbox](#docker-inside-a-sandbox). The `dsh-yawn-control-plane` Role is
-namespace scoped: it manages claims and reads/patches Sandboxes for lifecycle
-operations. It ships with the control plane chart, in the namespace the pool
-lives in, and grants nothing cluster-wide or outside sandbox operations.
-
-The checked-in template uses the cluster's default runtime (normally `runc`) so
-it works in kind. `runc` provides container isolation, not a VM security
-boundary for hostile code. For gVisor, install and verify a `RuntimeClass` (for
-example `gvisor`) on every eligible node, then add
-`runtimeClassName: gvisor` under `podTemplate.spec`; plain kind does not provide
-it. Use node selectors/tolerations where only some nodes support gVisor. The
-Docker sidecar has only been exercised under `runc`; verify it under gVisor
-before relying on it there.
-
-## Smoke test and lifecycle
-
-Typical output resembles:
-
-```text
-Adopted Sandbox/dsh-yawn-universal-abc12 in 180ms
-Docker sidecar: container read the workspace sentinel
-Suspended: pod removed; PVC/workspace-dsh-yawn-universal-abc12 remains
-Resumed in 2400ms; workspace and home sentinels verified
-Docker sidecar answered after resume
-shutdownTime foreground deletion and workspace cleanup verified
-PASS: agent-sandbox warm adoption, suspend/resume persistence, and expiry
-```
-
-The test creates unique claims, discovers the underlying Sandbox through
-`.status.sandbox.name`, and uses `spec.operatingMode: Suspended` on that
-**Sandbox** (there is no `spec.paused`). Suspension removes compute while the
-PVC survives; Running recreates the pod and the test verifies workspace and
-home-directory sentinels. In between it runs `docker run` from the runner
-container: a busybox image imported from the sidecar itself, so the check does
-not depend on the cluster's external DNS, reads the sentinel through the
-sidecar's own workspace mount. If pods cannot resolve `registry-1.docker.io`,
-the test prints a note that models will not be able to pull images. On failure
-the main claim is intentionally preserved for debugging; on success it is
-removed.
-
-The PVC carries the whole `/workspace` tree: the checkout, the home directory
-at `/workspace/home` (mise's data and shims, package caches, and anything else
-installed under `$HOME`), the artifacts folder, and the apt cache at
-`/workspace/.dsh-yawn/apt-cache`. A wake therefore keeps mise-installed
-toolchains, home files, and the downloaded `.deb` files, while `/tmp`, the
-installed apt packages, processes, and anything else in the container are gone;
-the runner runs the repository's setup again on the new machine to put those
-packages back. The checked-in template requests 6Gi, which holds all of that
-including up to 2GiB of `.deb` files. Home caches share the claim's storage
-quota, so size it for the toolchains a session installs.
-
-Expiry/deletion is terminal and the owned PVC is garbage-collected. A
-hibernated PVC survives only while its Sandbox/Claim remain. Suspended or
-expired Sandboxes never return to the warm pool. A pool replenishes with a new
-Sandbox after adoption; an adopted Sandbox is not recycled. A claim that
-arrives before the controller has observed the warm pod's IP waits two seconds
-and then starts cold instead of adopting.
-
-Agent-sandbox names a warm Sandbox's backing pod after the Sandbox itself, so
-the pod name the runner reads through the downward API is the assigned Sandbox
-name. The runner presents it as its identity in the tunnel handshake and Health
-responses, and the control plane checks it against the Sandbox the claim returned.
-The smoke test verifies this identity rule and fails closed if a future
-controller changes it.
+The PVC carries `/workspace`: the repository checkout, `/workspace/home`, the
+artifacts folder, and the apt cache. `/tmp`, running processes, installed apt
+packages, and everything else in the container are gone after a wake; the
+runner runs `.agents/setup` again on the new machine. The checked-in template
+requests 6Gi and can hold up to 2GiB of `.deb` files. Size the claim for the
+toolchains a session installs.
 
 ## OpenTelemetry
 
-The control plane records claim time, resume time, lifecycle changes, and command
-time through the control plane's OpenTelemetry setup.
+The control plane records claim time, resume time, lifecycle changes, and
+command time through dsh's OpenTelemetry setup.
 
-For the runner, add standard `OTEL_EXPORTER_OTLP_*`, `OTEL_TRACES_EXPORTER`,
-or `OTEL_METRICS_EXPORTER` variables to its container in the template to send
-traces and command-duration metrics to a collector. Their endpoint must also
-be allowed by the egress policy. No exporter is started when none of these
-variables is set.
+To export from runners, add standard `OTEL_EXPORTER_OTLP_*`,
+`OTEL_TRACES_EXPORTER`, or `OTEL_METRICS_EXPORTER` variables to its container
+in the template. Their endpoint must also be allowed by the egress policy. With
+no exporter variables set, the runner does not contact a collector.

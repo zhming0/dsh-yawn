@@ -1,18 +1,21 @@
 # dsh-yawn-runner
 
-`dsh-yawn-runner` is the in-sandbox ConnectRPC server. It dials the control plane rather
-than accepting inbound connections: `DSH_YAWN_CONTROL_PLANE_URL` names its tunnel
-endpoint as a WebSocket URL (`ws://host:port/tunnel`, or `wss://host/tunnel`
-through an HTTPS proxy that terminates TLS in front of the control plane), and the
-runner registers with `DSH_YAWN_SANDBOX_ID` plus the shared secret in
+`dsh-yawn-runner` is the process that runs inside each sandbox. It connects
+out to the control plane and serves file, shell, subprocess, Docker, and
+terminal requests; it accepts no inbound RPCs.
+
+`DSH_YAWN_CONTROL_PLANE_URL` is the tunnel endpoint as a WebSocket URL
+(`ws://host:port/tunnel`, or `wss://host/tunnel` through an HTTPS proxy that
+terminates TLS in front of the control plane). The runner identifies itself
+with `DSH_YAWN_SANDBOX_ID` and authenticates with the shared secret in
 `DSH_YAWN_REGISTRATION_TOKEN` (or a file named by
 `DSH_YAWN_REGISTRATION_TOKEN_FILE`), sent as a bearer token and the
 `X-Dsh-Yawn-Sandbox-Id` header on the upgrade request.
-After a registration is accepted, the runner serves its RPCs over that same
-WebSocket with HTTP/2 roles reversed, and redials with backoff whenever the
-tunnel drops. RPCs are reachable only over tunnels the runner itself opened.
-`wss://` certificates are checked against the system CA bundle; point
-`SSL_CERT_FILE` at a private CA if the proxy uses one.
+
+Once connected, the runner serves RPCs over that same WebSocket and redials
+with backoff whenever the tunnel drops. RPCs are reachable only over tunnels
+the runner itself opened. `wss://` certificates are checked against the system
+CA bundle; point `SSL_CERT_FILE` at a private CA if the proxy uses one.
 
 Secrets and Git credentials exist only in process memory. Child processes get a
 small allowlisted base environment, the current secrets, and RPC-supplied

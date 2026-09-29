@@ -1,31 +1,35 @@
 # Runner on Kubernetes agent-sandbox
 
-This phase ends at a **sandbox warm pool**: pre-started pods a session claims
-instead of waiting for a cold start. The control plane creates a SandboxClaim per
-session and watches the Sandbox behind it; the runner in that pod dials back to
-the control plane's tunnel, and nothing dials in.
+This backend runs each session in a Kubernetes pod managed by
+[agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox). A warm pool
+is a set of pre-started pods, so a new session usually claims one instead of
+waiting for a cold start. The control plane creates a `SandboxClaim` per
+session, the runner in the pod connects back to the control plane's tunnel, and
+nothing connects in.
 
-This is the supported backend, pinned to
-[agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) **v1.0.2**
-(`agents.x-k8s.io/v1beta1`, `extensions.agents.x-k8s.io/v1beta1`). Do not
+This is the supported backend. It is pinned to agent-sandbox **v1.0.2**
+(`agents.x-k8s.io/v1beta1` and `extensions.agents.x-k8s.io/v1beta1`). Do not
 assume these manifests work with another release.
 
-Install the [control plane](installations-control-plane.md) first. For what the
-pieces do and the isolation model, see [`kubernetes.md`](kubernetes.md).
+Install the [control plane](installations-control-plane.md) first. For how the
+pieces fit together and the isolation model, see
+[`kubernetes.md`](kubernetes.md).
 
 ## Prerequisites
 
-- **the pool in the release namespace.** The control plane's `dsh-yawn-control-plane` Role, the
-  tunnel Service, and the names the pool reads all live there, and the chart
-  requires every Kubernetes profile to target that namespace.
-- **the agent-sandbox controllers**, pinned at v1.0.2, installed below. A
-  chart cannot own another project's CRDs, so this is a manual step.
-- **nodes that allow a privileged container.** Each sandbox runs a rootless
+- **Agent-sandbox controllers v1.0.2**, installed below. A Helm chart cannot
+  own another project's CRDs, so this is a manual step.
+- **The pool must be in the control-plane release namespace.** Its template
+  reads the `dsh-yawn-runner-config` ConfigMap and the
+  `dsh-yawn-registration-token` Secret from that namespace, and the control
+  plane's Role and tunnel Service live there. The chart also requires every
+  Kubernetes profile to target that namespace.
+- **Nodes that allow a privileged container.** Each sandbox runs a rootless
   Docker daemon sidecar so sessions can build images. To drop it, delete the
   `docker` container and its two `emptyDir` volumes from the template and the
-  runner's `DOCKER_HOST` entry; the CLI then reports that no daemon is
+  runner's `DOCKER_HOST` entry. The Docker CLI then reports that no daemon is
   reachable. [`kubernetes.md`](kubernetes.md#docker-inside-a-sandbox) explains
-  why it is privileged.
+  why the sidecar is privileged.
 
 ## Install the controllers
 
@@ -39,13 +43,16 @@ kubectl wait --for=condition=Established \
 kubectl -n agent-sandbox-system wait --for=condition=Available deployment --all --timeout=180s
 ```
 
+If you are upgrading from v0.5.x, follow the
+[agent-sandbox migration guide](https://github.com/kubernetes-sigs/agent-sandbox/blob/v1.0.2/docs/api-migration-guide.md)
+first.
+
 ## Apply the sandbox pool
 
-The pool has to land in the release namespace: its template reads the
-`dsh-yawn-runner-config` ConfigMap and the `dsh-yawn-registration-token` Secret the chart
-wrote there, and the control plane's Role and tunnel Service are there too. The base
-therefore names no namespace — the placeholder in it is not a namespace any
-cluster has, and applying the base as-is fails. Write an overlay:
+The checked-in base names no namespace, so applying it directly fails. Write an
+overlay that sets the namespace and pins the runner image to the same release
+as the control plane. Use one concrete version in both `<release-tag>`
+placeholders.
 
 ```yaml
 # dsh-yawn-runner/kustomization.yaml
@@ -57,6 +64,9 @@ images:
     newTag: <release-tag>
 ```
 
+From a checkout, point `resources` at `../deploy/kubernetes/runner` instead of
+the remote base. Then apply it:
+
 ```sh
 kubectl apply -k dsh-yawn-runner
 
@@ -64,30 +74,16 @@ kubectl -n dsh-yawn wait --for=jsonpath='{.status.readyReplicas}'=1 \
   sandboxwarmpool/dsh-yawn-universal --timeout=300s
 ```
 
-In a checkout, point `resources` at `../deploy/kubernetes/runner` instead of
-the remote base.
-
-Substitute one concrete version for both `<release-tag>` placeholders: the ref
-and the image tag have to name the same release. The base names the runner
-image without a tag, because the image is one artifact for every release and
-which version a cluster runs is the version of the control plane it registers
-with — `kubectl get deploy dsh-yawn-control-plane -o jsonpath='{.spec.template.spec.containers[0].image}'`
-prints the one the chart installed. Nothing checks it at install time: a warm
-pod from another version fails when it dials the tunnel.
-
-The base is a `SandboxTemplate` describing the pod a sandbox runs, a
-`SandboxWarmPool` keeping some warm, and nothing else. Apart from the runner
-tag, it is static: the template reads `DSH_YAWN_CONTROL_PLANE_URL` and
-`DSH_YAWN_REGISTRATION_TOKEN` from what the control plane wrote, and its
-tunnel egress rule selects the control-plane pod in the pool's own namespace,
-so the `namespace:` above is the only place a namespace appears.
+The base contains a `SandboxTemplate` describing the sandbox pod, a
+`SandboxWarmPool` keeping pods warm, and nothing else. It reads the control
+plane's URL and registration token from what the chart wrote, so the namespace
+is the only cluster-specific value.
 
 ## Configure the pool
 
-An overlay varies the pool with JSON patches. **Address a list as a whole,
-never by index.** Kubernetes sees a custom resource's list as one value, so an
-index is only a position in the base revision you vendored; a release that
-reorders an entry moves it.
+Change a pool with a JSON patch in your overlay. Address lists as a whole
+rather than by index: Kubernetes treats a custom resource list as one value,
+and a new release may reorder entries.
 
 ```yaml
 patches:
@@ -98,8 +94,6 @@ patches:
         value: 4
   - target: { kind: SandboxTemplate, name: dsh-yawn-universal }
     patch: |-
-      # Replacing the whole list restates every part you keep, `accessModes`
-      # included.
       - op: replace
         path: /spec/volumeClaimTemplates
         value:
@@ -111,7 +105,6 @@ patches:
               resources:
                 requests:
                   storage: 10Gi
-      # Pod resources: one ceiling the kubelet splits across the containers.
       - op: add
         path: /spec/podTemplate/spec/resources
         value:
@@ -119,17 +112,12 @@ patches:
           limits: {cpu: "4", memory: 6Gi}
 ```
 
-Egress is a list as well: `/spec/networkPolicy/egress/-` appends a rule, and
-replacing `/spec/networkPolicy/egress` as a whole changes the existing ones.
-The checked-in list is the tunnel to the control plane (TCP 8081), DNS to
-kube-dns (TCP/UDP 53), and HTTP and HTTPS (80 and 443); narrow the 80/443 rule
-in production.
-`podTemplate.spec.volumes`, which carries the Docker data mount's `emptyDir`
-sizeLimit, takes the same whole-list patch.
-
-An overlay that patched the tunnel rule's `namespaceSelector` (a path like
-`/spec/networkPolicy/egress/0/to/0/namespaceSelector/...`) must delete that op
-when it bumps `?ref=`: the path is gone, and the render fails until then.
+The checked-in network policy allows the tunnel to the control plane (TCP
+8081), DNS (TCP/UDP 53), and HTTP/HTTPS (80 and 443). Narrow the 80/443 rule in
+production. The runner's Docker data `emptyDir` is patched the same way, as a
+whole list under `/spec/podTemplate/spec/volumes`. See
+[`kubernetes.md`](kubernetes.md#connectivity-and-isolation) for the security
+model and more patch recipes.
 
 ## Point the control plane at the pool
 
@@ -149,20 +137,19 @@ helm upgrade dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
   --values dsh-yawn.values.yaml
 ```
 
-Values are the deployment base for this row: the chart mounts them as
-`/etc/dsh-yawn/sandbox-settings.yaml`, the Web UI's **Settings → Sandboxes**
-page adds its own profiles and changes the default and timers over them, and a
-values change rolls the pod. The profiles the values name are locked on that
-page. A `kas` profile that omits `namespace` is rendered with the release
+The chart mounts these values at `/etc/dsh-yawn/sandbox-settings.yaml`, and the
+Web UI's **Settings → Sandboxes** page layers its own profiles and changes over
+them. A values change rolls the control plane pod. Profiles defined in values
+are locked in the page. A `kas` profile that omits `namespace` uses the release
 namespace, which is where the pool and the control plane's Role live.
 
-Then run a session and send a prompt: a warm pod is claimed, the repository is
-cloned into it, and the tools run there.
+Now run a session and send a prompt: a warm pod is claimed, the repository is
+cloned into it, and tools run there.
 
 ## Several pools
 
-A second pool is a second template and warm-pool pair plus a second profile.
-The usual reason is size: copy the two files in
+A second pool needs a second template and warm-pool pair, plus a second
+profile. Copy the two YAML files in
 [`deploy/kubernetes/runner`](../deploy/kubernetes/runner) under a new name,
 change the container resources and the volume request, add them to your
 kustomization, and list both profiles:
@@ -180,11 +167,11 @@ kustomization, and list both profiles:
         warmPool: dsh-large
 ```
 
-The same works for a structurally different pool — gVisor, custom tolerations,
-a different security context. The cluster owns every template; a session picks
-among the pools you published and nothing else.
+The same approach works for a structurally different pool: gVisor, custom
+tolerations, or a different security context. A session can only pick from the
+pools the cluster operator publishes.
 
 ## Next
 
-[`credentials.md`](credentials.md) gives sessions their credentials,
-`GITHUB_TOKEN` first.
+[`credentials.md`](credentials.md) gives sessions their credentials, starting
+with `GITHUB_TOKEN`.

@@ -15,8 +15,7 @@
  * `sessionController.resolveAgent`, which returns the live agent or resumes a
  * stored session. A request then reaches the sandbox the way a tool call
  * does: a hibernated sandbox wakes, and the read counts as activity for the
- * idle timer. docs/plans/web-sidebar.md records the never-wake design that
- * would change that, should browsing turn out to keep sandboxes up.
+ * idle timer. There is no never-wake mode; browsing wakes the sandbox.
  *
  * The stock row has to stay mounted, and under its own name, because its
  * browser half comes with it: the Web app serves a package's client bundle

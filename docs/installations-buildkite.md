@@ -1,27 +1,30 @@
 # Runner on a Buildkite agent
 
-Each sandbox is one build on a Buildkite pipeline you own: the control plane triggers
-the build, the agent runs the runner container, and the runner dials back over
-the tunnel. Pick this when sessions should run outside the cluster. The
-backend's internals are in [`buildkite.md`](buildkite.md).
+This backend runs each sandbox as one build on a Buildkite pipeline you own.
+The control plane triggers the build; the agent runs the runner container; the
+runner connects back over the tunnel. Choose it when sessions should run
+outside the cluster.
+
+This backend is a development path, like Docker. It is unit tested against a
+fake Buildkite API, but the pipeline shapes below have not been tested against
+every agent fleet; watch the first build in your organization. The backend's
+internals and limits are in [`buildkite.md`](buildkite.md).
 
 Install the [control plane](installations-control-plane.md) first.
 
 ## Prerequisites
 
-- a Buildkite organization and permission to create a pipeline, an
-  [API access token](https://buildkite.com/docs/apis/managing-api-tokens) with
-  the `read_builds` and `write_builds` scopes, and either hosted Linux agents
-  or self-hosted agents that can run Docker.
-- the tunnel reachable from wherever those agents run. Agents are never on the
-  host machine, so an in-cluster address will not do; see
-  [Reaching the tunnel](#reaching-the-tunnel) below.
+- A Buildkite organization and permission to create a pipeline.
+- An [API access token](https://buildkite.com/docs/apis/managing-api-tokens)
+  with `read_builds` and `write_builds`.
+- Hosted Linux agents, or self-hosted agents that can run Docker.
+- A tunnel address the agents can reach. Agents are not on the control-plane
+  host, so an in-cluster address will not work.
 
 ## Create the pipeline
 
-For hosted Linux agents, create a pipeline with this one command step. The
-control plane never uploads steps: the pipeline's own definition is the whole
-contract.
+For hosted Linux agents, use this one command step. The control plane never
+uploads steps: the pipeline's own definition is the only place they are defined.
 
 ```yaml
 steps:
@@ -41,12 +44,11 @@ steps:
       queue: hosted-amd64-small
 ```
 
-Set `queue` to your hosted Linux queue. Hosted agents resolve `image` from the
-build environment. The agent and its startup hooks run as root with
-`HOME=/root`; the command then launches the runner as `sandbox` (UID 1000)
-with `HOME=/workspace/home`. Do not add `--login` or `--preserve-environment`
-to `runuser`: the command needs to retain the `DSH_YAWN_*` job variables while
-resetting `HOME` for the sandbox account.
+Set `queue` to your hosted Linux queue. The agent and its startup hooks run as
+root; the command launches the runner as `sandbox` (UID 1000) with
+`HOME=/workspace/home`. Do not add `--login` or `--preserve-environment` to
+`runuser`: the command needs to keep the `DSH_YAWN_*` job variables while
+resetting `HOME`.
 
 For self-hosted agents, use Docker instead:
 
@@ -66,31 +68,28 @@ steps:
       queue: self-hosted
 ```
 
-- `DSH_YAWN_RUNNER_IMAGE`, `DSH_YAWN_SANDBOX_ID`, and `DSH_YAWN_CONTROL_PLANE_URL` come from the build
-  environment the control plane sets, so the pipeline never pins a runner image and
-  cannot drift from the control plane.
-- `secrets` maps a [Buildkite secret](https://buildkite.com/docs/pipelines/security/secrets/buildkite-secrets)
-  into the job environment: the key on the left is the variable the runner
-  reads, and the value on the right is the secret's key in Buildkite, which may
-  contain only letters, numbers, and underscores. Create
-  `dsh_yawn_registration_token` with the same value the control plane holds —
-  the `dsh-yawn-registration-token` Secret in the cluster — so the runner can
-  register on the tunnel. This needs agent 3.106.0 or later.
-- Turn off **Skip intermediate builds** and **Cancel intermediate builds** in
-  the pipeline's **Settings → Builds**. Every sandbox build lands on the same
-  branch (`main`), so either setting would skip or cancel another live
-  sandbox's build. Both are off by default.
-- `agents.queue` selects your fleet. Keep it explicit in the pipeline; the
-  hosted `image` behavior does not imply that other step attributes resolve
-  arbitrary build variables. To offer two fleets, create two pipelines and
-  point two profiles at them.
-- `timeout_in_minutes` bounds a sandbox's life even if the control plane never cancels
-  it; the control plane cancels on idle. Buildkite applies its own ceilings on top.
-- The pipeline should not trigger builds on its own. Turn off its repository
-  webhook, or leave it without a repository integration, so the only builds are
-  the ones the control plane creates.
+Things the pipeline must get right:
 
-[`buildkite.md`](buildkite.md#the-pipeline) explains each of these in full.
+- `DSH_YAWN_RUNNER_IMAGE`, `DSH_YAWN_SANDBOX_ID`, and
+  `DSH_YAWN_CONTROL_PLANE_URL` come from the build environment the control
+  plane sets. Never pin a runner image in the pipeline.
+- `secrets` maps a
+  [Buildkite secret](https://buildkite.com/docs/pipelines/security/secrets/buildkite-secrets)
+  into the job: the key on the left is the variable the runner reads, and the
+  value on the right is the secret's key, which may contain only letters,
+  numbers, and underscores. Create `dsh_yawn_registration_token` with the same
+  value as the control plane's `dsh-yawn-registration-token` Secret. This
+  needs agent 3.106.0 or later.
+- Turn off **Skip intermediate builds** and **Cancel intermediate builds** in
+  the pipeline's **Settings → Builds**. Every sandbox build uses branch
+  `main`, so either setting would skip or cancel another live sandbox.
+- Keep `agents.queue` explicit. It selects the fleet, and a second fleet means
+  a second pipeline and profile.
+- `timeout_in_minutes` bounds a sandbox's life if the control plane never
+  cancels it. Buildkite may apply a lower ceiling of its own.
+- Turn off the repository webhook, or leave the pipeline without a repository
+  integration. Builds started by Buildkite alone have no sandbox variables and
+  fail immediately.
 
 ## Point the control plane at the pipeline
 
@@ -112,12 +111,9 @@ controlPlane:
           key: token
 ```
 
-The control plane creates every build on `main`. The branch is only a label
-because the step skips checkout; if the pipeline limits its build branches,
-that list has to include `main`.
-Put the token in that Secret first, as
-[control-plane credentials](installations-control-plane.md#credentials)
-describes, then upgrade:
+Put the API token in that Secret first, following
+[control-plane credentials](installations-control-plane.md#credentials), then
+upgrade:
 
 ```sh
 helm upgrade dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
@@ -125,27 +121,25 @@ helm upgrade dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
   --values dsh-yawn.values.yaml
 ```
 
-The token is resolved for each Buildkite request and never sent to a build, and
-it does not go in the control plane's secret store. Then run a session: the
-control plane creates a build, an agent picks it up, and the sandbox is live
-once its runner registers.
+The control plane resolves the token for each Buildkite request and never sends
+it to a build or a runner. Every build uses branch `main`; if the pipeline
+limits its build branches, include `main`. Then run a session: the control
+plane creates a build, an agent picks it up, and the runner registers.
 
 ## Reaching the tunnel
 
-An HTTP Ingress that passes WebSocket upgrades can carry the tunnel — one
+An HTTP Ingress that passes WebSocket upgrades can carry the tunnel as one
 `/tunnel` path rule on the Ingress that fronts the Web UI, under the same
-certificate. An endpoint you expose separately has to be L4: a TCP stream proxy
-or a Gateway API `TLSRoute` in passthrough mode. Never put an HTTP-terminating
-proxy or CDN in the path.
+certificate. An endpoint exposed separately must be L4: a TCP stream proxy or a
+Gateway API `TLSRoute` in passthrough mode. Never put an HTTP-terminating proxy
+or CDN in the path.
 [`kubernetes.md`](kubernetes.md#exposing-the-runner-tunnel-beyond-the-cluster)
-has the shapes and constraints. Exposure changes reachability, not trust: the
-registration token still authenticates every runner.
+has the details.
 
 ## Several fleets
 
-`agents.queue` is per pipeline, so a second fleet is a second pipeline and a
-second profile. That is also how a session gets a choice between sandbox
-places; the composer shows a profile chip when more than one exists:
+`agents.queue` is per pipeline, so a second fleet means a second pipeline and a
+second profile. The composer shows a profile picker when more than one exists:
 
 ```yaml
 - id: sandbox-manager
@@ -166,5 +160,5 @@ places; the composer shows a profile chip when more than one exists:
 
 ## Next
 
-[`credentials.md`](credentials.md) gives sessions their credentials,
-`GITHUB_TOKEN` first.
+[`credentials.md`](credentials.md) gives sessions their credentials, starting
+with `GITHUB_TOKEN`.
