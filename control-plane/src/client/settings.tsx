@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { Button, Tag } from "@deepseek-ai/dsh-client-ui-primitives";
+import { Button } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { SettingsSectionOwnerProps } from "@deepseek-ai/dsh-client-ui-settings/client";
 import type { JsonValue } from "@deepseek-ai/dsh-util-values";
 
@@ -8,9 +8,11 @@ import { defaultBuildkiteTokenCredential } from "../buildkite-credential.js";
 import type { SandboxSettingsView } from "../sandbox-settings-remote.js";
 import { DefaultsCard } from "./settings-defaults.js";
 import { ProfileForm } from "./settings-form.js";
+import { ProfileCard } from "./settings-profile-card.js";
 import {
   cardStyle,
   describeError,
+  type TimerKey,
   sectionHeadingStyle,
   type ProfileDraft,
   type SandboxesSettingsActions,
@@ -183,7 +185,7 @@ export function SandboxesSettings({
     });
   };
 
-  const setTimer = (key: "idleMs" | "expiresAfterMs", valueMs: number) => {
+  const setTimer = (key: TimerKey, valueMs: number) => {
     void write((revision) =>
       updateSettings(NS, { [key]: valueMs }, revision),
     ).then((saved) => {
@@ -219,6 +221,7 @@ export function SandboxesSettings({
     (view.overridden.defaultProfile ||
       view.overridden.idleMs ||
       view.overridden.expiresAfterMs ||
+      view.overridden.readyTimeoutMs ||
       view.profiles.some((profile) => !profile.locked));
 
   return (
@@ -283,82 +286,22 @@ export function SandboxesSettings({
             </p>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {view.profiles.map((profile) => {
-                const summary = Object.entries(profile.fields)
-                  .map(([key, entry]) => `${key}: ${entry}`)
-                  .join(", ");
-                return (
-                  <div key={profile.name} style={cardStyle}>
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 12,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          flexWrap: "wrap",
-                          minWidth: 0,
-                        }}
-                      >
-                        <span style={{ fontWeight: 600 }}>{profile.name}</span>
-                        <Tag tone="neutral">{profile.backend}</Tag>
-                        <Tag tone={profile.locked ? "quiet" : "info"}>
-                          {profile.locked ? "deployment" : "custom"}
-                        </Tag>
-                        {view.defaultProfile === profile.name ? (
-                          <Tag tone="outline">default</Tag>
-                        ) : null}
-                      </div>
-                      {profile.locked ? null : (
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            disabled={pending || !writable}
-                            onClick={() =>
-                              openEditor({
-                                name: profile.name,
-                                backend: profile.backend,
-                                fields: { ...profile.fields },
-                              })
-                            }
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            disabled={pending || !writable}
-                            onClick={() => removeProfile(profile.name)}
-                          >
-                            Reset
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                    {summary !== "" ? (
-                      <div
-                        style={{
-                          marginTop: 6,
-                          color: "var(--dsw-alias-label-secondary)",
-                          fontSize: 13,
-                          overflowWrap: "anywhere",
-                        }}
-                      >
-                        {summary}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
+              {view.profiles.map((profile) => (
+                <ProfileCard
+                  key={profile.name}
+                  profile={profile}
+                  isDefault={view.defaultProfile === profile.name}
+                  disabled={pending || !writable}
+                  onEdit={() =>
+                    openEditor({
+                      name: profile.name,
+                      backend: profile.backend,
+                      fields: { ...profile.fields },
+                    })
+                  }
+                  onReset={() => removeProfile(profile.name)}
+                />
+              ))}
             </div>
           )}
 
@@ -382,6 +325,9 @@ export function SandboxesSettings({
               : { defaultProfile: view.defaultProfile })}
             idleMs={view.idleMs}
             expiresAfterMs={view.expiresAfterMs}
+            {...(view.readyTimeoutMs === undefined
+              ? {}
+              : { readyTimeoutMs: view.readyTimeoutMs })}
             overridden={view.overridden}
             profileNames={profileNames}
             writable={writable}

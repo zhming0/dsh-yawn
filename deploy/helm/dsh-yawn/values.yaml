@@ -40,8 +40,8 @@ controlPlane:
     # stays Pending.
     # storageClass: ""
   # The sandbox-manager settings, stated as the chart's own values. The chart
-  # mounts the runtime slice of them — profiles, defaultProfile, idleMs, and
-  # expiresAfterMs — as a file the control plane reads as the deployment base
+  # mounts the runtime slice of them — profiles, defaultProfile, idleMs,
+  # expiresAfterMs, and readyTimeoutMs — as a file the control plane reads as the deployment base
   # beneath the Web UI: Settings → Sandboxes adds its own profiles and changes
   # the default and timers at runtime, without a restart, and a reset returns
   # them to what this chart configures. The profiles named here are locked on
@@ -57,6 +57,8 @@ controlPlane:
   #    standard:
   #      backend: kas
   #      warmPool: dsh-yawn-universal
+  #      # Optional; overrides the top-level idleMs for this profile.
+  #      idleMs: 3600000
 
 runner:
   # The in-cluster tunnel address handed to sandbox runners.

@@ -19,6 +19,8 @@ export interface DockerProfile {
   binary?: string;
   /** The tunnel endpoint runners dial, such as ws://host.docker.internal:8081/tunnel. */
   controlPlaneUrl: string;
+  /** Idle delay before hibernating; unset uses the top-level idleMs. */
+  idleMs?: number;
 }
 
 export interface KasProfile {
@@ -29,6 +31,8 @@ export interface KasProfile {
   warmPool: string;
   readyTimeoutMs: number;
   kubeconfig?: string;
+  /** Idle delay before hibernating; unset uses the top-level idleMs. */
+  idleMs?: number;
 }
 
 export interface BuildkiteProfile {
@@ -42,6 +46,8 @@ export interface BuildkiteProfile {
   /** The tunnel endpoint runners dial; Buildkite agents are never local. */
   controlPlaneUrl: string;
   readyTimeoutMs: number;
+  /** Idle delay before hibernating; unset uses the top-level idleMs. */
+  idleMs?: number;
 }
 
 /**

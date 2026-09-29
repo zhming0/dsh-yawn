@@ -6,6 +6,9 @@ import type { JsonValue } from "@deepseek-ai/dsh-util-values";
 
 import { defaultBuildkiteTokenCredential } from "../buildkite-credential.js";
 import {
+  BACKEND_FIELDS,
+  BACKEND_LABELS,
+  MINUTE,
   cardStyle,
   controlStyle,
   labelStyle,
@@ -14,32 +17,19 @@ import {
   type SandboxesSettingsActions,
 } from "./settings-shared.js";
 
-const BACKENDS = ["docker", "kas", "buildkite"] as const;
+/** The stored fields as the form shows them: minute fields in minutes. */
+function toFormFields(draft: ProfileDraft): ProfileDraft {
+  const fields = { ...draft.fields };
+  for (const field of BACKEND_FIELDS[draft.backend] ?? []) {
+    const raw = fields[field.key];
+    if (field.kind === "minutes" && raw !== undefined && raw !== "") {
+      fields[field.key] = String(Number(raw) / MINUTE);
+    }
+  }
+  return { ...draft, fields };
+}
 
-/** Text inputs per backend, in display order; `number` fields parse as ints. */
-const BACKEND_FIELDS: Record<
-  string,
-  Array<{ key: string; label: string; kind?: "number" }>
-> = {
-  docker: [
-    { key: "image", label: "Runner image (optional)" },
-    { key: "binary", label: "Docker command (optional)" },
-    { key: "controlPlaneUrl", label: "Control plane URL (optional)" },
-  ],
-  kas: [
-    { key: "namespace", label: "Namespace" },
-    { key: "warmPool", label: "Warm pool" },
-    { key: "readyTimeoutMs", label: "Ready timeout (ms)", kind: "number" },
-    { key: "kubeconfig", label: "Kubeconfig path (optional)" },
-  ],
-  buildkite: [
-    { key: "organization", label: "Organization" },
-    { key: "pipeline", label: "Pipeline" },
-    { key: "controlPlaneUrl", label: "Control plane URL" },
-    { key: "image", label: "Runner image (optional)" },
-    { key: "readyTimeoutMs", label: "Ready timeout (ms)", kind: "number" },
-  ],
-};
+const BACKENDS = ["docker", "kas", "buildkite"] as const;
 
 export interface ProfileFormProps {
   /** The profile to edit, or a blank draft for a new one. */
@@ -78,7 +68,7 @@ export function ProfileForm({
   onClearToken,
   onCancel,
 }: ProfileFormProps) {
-  const [draft, setDraft] = useState<ProfileDraft>(initial);
+  const [draft, setDraft] = useState<ProfileDraft>(() => toFormFields(initial));
   /** The Buildkite token typed in this form; never read back from the host. */
   const [token, setToken] = useState("");
   const [tokenInfo, setTokenInfo] = useState<CredentialInfo>();
@@ -120,7 +110,11 @@ export function ProfileForm({
         continue;
       }
       profile[field.key] =
-        field.kind === "number" ? Number.parseInt(raw, 10) : raw;
+        field.kind === "number"
+          ? Number.parseInt(raw, 10)
+          : field.kind === "minutes"
+            ? Math.round(Number.parseFloat(raw) * MINUTE)
+            : raw;
     }
     void onSubmit(draft.name, profile, token);
   };
@@ -175,7 +169,7 @@ export function ProfileForm({
       >
         {BACKENDS.map((backend) => (
           <option key={backend} value={backend}>
-            {backend}
+            {BACKEND_LABELS[backend] ?? backend}
           </option>
         ))}
       </select>
@@ -186,10 +180,24 @@ export function ProfileForm({
             style={labelStyle}
           >
             {field.label}
+            {field.kind === "minutes" ? " (minutes)" : ""}
+            {field.optional === true ? (
+              <span style={{ color: "var(--dsw-alias-label-secondary)" }}>
+                {" "}
+                optional
+              </span>
+            ) : null}
           </label>
           <Input
             id={`dsh-yawn-profile-field-${field.key}`}
-            inputMode={field.kind === "number" ? "numeric" : undefined}
+            inputMode={
+              field.kind === "number"
+                ? "numeric"
+                : field.kind === "minutes"
+                  ? "decimal"
+                  : undefined
+            }
+            placeholder={field.kind === "minutes" ? "default" : undefined}
             value={draft.fields[field.key] ?? ""}
             disabled={pending}
             onChange={(event) => {

@@ -77,4 +77,8 @@ export class RuntimeSettings {
   get expiresAfterMs(): number {
     return this.current().expiresAfterMs;
   }
+
+  get readyTimeoutMs(): number | undefined {
+    return this.current().readyTimeoutMs;
+  }
 }

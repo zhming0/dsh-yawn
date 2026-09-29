@@ -478,6 +478,7 @@ starting, so the settings can still be corrected.
 | `defaultProfile`    | live | first profile           | Profile used when a session does not pick one                                 |
 | `idleMs`            | live | 10 minutes              | Idle delay after the last turn or wake before hibernating                     |
 | `expiresAfterMs`    | live | 7 days                  | How long a hibernated workspace is retained                                   |
+| `readyTimeoutMs`    | live | per backend             | Ready timeout for `kas` and `buildkite` profiles that do not set their own    |
 | `repository`        | boot | session repository      | Fallback repository for non-anchor sessions                                   |
 | `revision`          | boot | repository default      | Optional branch, tag, or commit to check out                                  |
 | `workspace`         | boot | `/workspace/repository` | Repository checkout and working directory                                     |
@@ -491,22 +492,27 @@ starting, so the settings can still be corrected.
 
 Each profile carries the settings of its own backend. Profiles do not share
 settings with each other, so two Kubernetes profiles in one namespace both
-name that namespace.
+name that namespace. The exceptions are the two timers: a profile's `idleMs`
+and `readyTimeoutMs` fall back to the top-level values of the same name, and
+`readyTimeoutMs` then to the backend default below. A profile's idle delay is
+read when a countdown is armed, from the profile the session's sandbox runs
+on.
 
 | Profile field     | Backend               | Default                | Meaning                                                           |
 | ----------------- | --------------------- | ---------------------- | ----------------------------------------------------------------- |
 | `backend`         | all                   | required               | `docker`, `kas`, or `buildkite`                                   |
+| `idleMs`          | all                   | top-level `idleMs`     | Idle delay before this profile's sandboxes hibernate              |
 | `image`           | `docker`, `buildkite` | matching release tag   | Runner image                                                      |
 | `binary`          | `docker`              | `docker`               | Docker-compatible command                                         |
 | `controlPlaneUrl` | `docker`, `buildkite` | `host.docker.internal` | `DSH_YAWN_CONTROL_PLANE_URL` runners dial, `ws://` or `wss://`    |
 | `namespace`       | `kas`                 | `dsh-yawn`             | Namespace containing claims and warm sandboxes                    |
 | `warmPool`        | `kas`                 | `dsh-yawn-universal`   | Warm pool used for claims                                         |
-| `readyTimeoutMs`  | `kas`                 | 3 minutes              | How long to wait for a claimed sandbox                            |
+| `readyTimeoutMs`  | `kas`                 | top-level, or 3 min    | How long to wait for a claimed sandbox                            |
 | `kubeconfig`      | `kas`                 | normal client lookup   | Optional kubeconfig path                                          |
 | `organization`    | `buildkite`           | required               | Buildkite organization slug                                       |
 | `pipeline`        | `buildkite`           | required               | Pipeline slug whose job runs the runner                           |
 | `controlPlaneUrl` | `buildkite`           | required               | `DSH_YAWN_CONTROL_PLANE_URL` runners dial; agents are never local |
-| `readyTimeoutMs`  | `buildkite`           | 10 minutes             | How long a build may wait for an agent                            |
+| `readyTimeoutMs`  | `buildkite`           | top-level, or 10 min   | How long a build may wait for an agent                            |
 
 A Buildkite profile cannot hibernate, so it checkpoints on idle (see below).
 The API token, with `read_builds` and `write_builds` on the pipeline, resolves
@@ -591,7 +597,8 @@ send the prompt again.
 
 ### Idle and hibernation
 
-After `idleMs` without a turn the session's sandbox is put away and the
+After `idleMs` without a turn (the profile's own, else the top-level one) the
+session's sandbox is put away and the
 `expiresAfterMs` countdown starts. What "put away" means depends on the
 backend:
 

@@ -103,7 +103,8 @@ gets a replacement build under the same profile.
 | `pipeline`       | required              | Pipeline slug                                                            |
 | `controlPlaneUrl`        | required              | Tunnel endpoint the runner dials, `wss://host/tunnel` or `ws://host:port/tunnel` |
 | `image`          | matching release tag  | Runner image the job runs, sent to the build as `DSH_YAWN_RUNNER_IMAGE`       |
-| `readyTimeoutMs` | `600000`              | How long a build may sit `scheduled` before the control plane cancels it      |
+| `readyTimeoutMs` | top-level `readyTimeoutMs`, else `600000` | How long a build may sit `scheduled` before the control plane cancels it      |
+| `idleMs`         | top-level `idleMs`    | Idle delay before this profile's sandboxes checkpoint                    |
 
 The control plane needs an [API access token](https://buildkite.com/docs/apis/managing-api-tokens)
 for the organization with the `read_builds` and `write_builds` scopes: enter it

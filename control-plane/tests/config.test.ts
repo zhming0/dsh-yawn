@@ -124,6 +124,54 @@ describe("sandbox provider settings", () => {
     ).toThrow("profile old: controlPlaneUrl must be a ws:// or wss:// URL");
   });
 
+  it("falls back from a profile's timers to the top-level ones", () => {
+    const resolved = resolveConfig({
+      readyTimeoutMs: 900_000,
+      profiles: {
+        cluster: { backend: "kas", idleMs: 3_600_000 },
+        pinned: { backend: "kas", readyTimeoutMs: 60_000 },
+        hosted: {
+          backend: "buildkite",
+          organization: "acme",
+          pipeline: "dsh-yawn",
+          controlPlaneUrl: "wss://dsh.example.com/tunnel",
+        },
+      },
+    });
+    expect(resolved.profiles.cluster).toMatchObject({
+      readyTimeoutMs: 900_000,
+      idleMs: 3_600_000,
+    });
+    expect(resolved.profiles.pinned).toMatchObject({ readyTimeoutMs: 60_000 });
+    expect(resolved.profiles.pinned).not.toHaveProperty("idleMs");
+    expect(resolved.profiles.hosted).toMatchObject({ readyTimeoutMs: 900_000 });
+
+    // Unset everywhere, each backend keeps its own default.
+    const defaults = resolveConfig({
+      profiles: {
+        hosted: {
+          backend: "buildkite",
+          organization: "acme",
+          pipeline: "dsh-yawn",
+          controlPlaneUrl: "wss://dsh.example.com/tunnel",
+        },
+      },
+    });
+    expect(defaults.profiles.hosted).toMatchObject({ readyTimeoutMs: 600_000 });
+
+    // A broken profile idle delay drops that profile alone at boot.
+    const { config, warnings } = resolveBootConfig({
+      profiles: {
+        broken: { backend: "docker", idleMs: -1 },
+        standard: { backend: "docker" },
+      },
+    });
+    expect(Object.keys(config.profiles)).toEqual(["standard"]);
+    expect(warnings).toEqual([
+      expect.stringContaining("profile broken: idleMs must be positive"),
+    ]);
+  });
+
   it("takes a bare preview domain and refuses anything else", () => {
     const profiles = { standard: { backend: "docker" as const } };
     // No domain: previews are off and the listener does not start.
