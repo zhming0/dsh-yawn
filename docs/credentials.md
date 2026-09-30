@@ -65,10 +65,10 @@ Two credentials belong to the control plane and must never reach a sandbox:
   `DSH_YAWN_BUILDKITE_<PROFILE>_TOKEN`. A stored token is used before the
   environment fallback.
 
-[`installations-control-plane.md`](installations-control-plane.md#credentials)
+[`runners/buildkite.md`](runners/buildkite.md#point-the-control-plane-at-the-pipeline)
 sets the Buildkite token up, and
-[`kubernetes.md`](kubernetes.md#the-in-cluster-control-plane) covers replacing
-the registration token.
+[`control-plane/README.md`](../control-plane/README.md#registration-token)
+covers replacing the registration token.
 
 ## Never write values down
 

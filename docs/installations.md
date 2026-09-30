@@ -2,11 +2,11 @@
 
 Install the control plane once, then one or more runners where sessions run:
 
-| Step | What it is                                                                                                                                                                 | Page                                                                                                     |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| 1    | **Control plane** — the Helm chart that installs the dsh process, its data volume, the runner tunnel, and Kubernetes access                                                | [installations-control-plane.md](installations-control-plane.md)                                         |
-| 2    | **Runner** — the process that runs commands inside each sandbox. Choose [Kubernetes agent-sandbox](installations-kas.md) or [Buildkite agents](installations-buildkite.md) | [installations-kas.md](installations-kas.md) or [installations-buildkite.md](installations-buildkite.md) |
-| 3    | **Sandbox credentials** — the secrets sessions receive, starting with `GITHUB_TOKEN`                                                                                       | [credentials.md](credentials.md)                                                                         |
+| Step | What it is                                                                                                                                                            | Page                                                                                           |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| 1    | **Control plane** — the dsh process, its data volume, and the runner tunnel, on Kubernetes through the Helm chart or on a VM with Docker                              | [control-plane.md](control-plane.md)                                                           |
+| 2    | **Runner** — the process that runs commands inside each sandbox. Choose [Kubernetes agent-sandbox](runners/kubernetes.md) or [Buildkite agents](runners/buildkite.md) | [runners/kubernetes.md](runners/kubernetes.md) or [runners/buildkite.md](runners/buildkite.md) |
+| 3    | **Sandbox credentials** — the secrets sessions receive, starting with `GITHUB_TOKEN`                                                                                  | [credentials.md](credentials.md)                                                               |
 
 The Docker backend needs no runner install: the control plane starts each
 sandbox as a container through the Docker socket, as in the

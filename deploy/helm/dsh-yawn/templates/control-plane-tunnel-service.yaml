@@ -5,7 +5,7 @@ cluster: control-plane authenticity rests on the cluster network being inside th
 domain. Runners outside the cluster reach it through the same Ingress that
 serves the Web UI, with a `/tunnel` path rule that sends that one path straight
 to this Service, so TLS comes from the UI's certificate; see
-docs/kubernetes.md. */}}
+docs/control-plane.md. */}}
 apiVersion: v1
 kind: Service
 metadata:

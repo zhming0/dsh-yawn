@@ -36,7 +36,7 @@ export interface PreviewServerOptions {
  * sandboxes by design, and a preview route there is a cross-sandbox route on
  * a sandbox-reachable port. The listener is plain HTTP, like the tunnel;
  * TLS and authentication come from whatever fronts it, exactly as for the Web
- * UI — see docs/kubernetes.md.
+ * UI — see control-plane/README.md#previews.
  */
 export class PreviewServer {
   private readonly server: Server;

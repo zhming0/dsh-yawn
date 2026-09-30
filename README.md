@@ -93,13 +93,13 @@ To clean up: `docker rm -f dsh-yawn`. What each flag does is in the
 
 ## Documentation
 
-| Page                                                                         | Covers                                                                  |
-| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| [`docs/installations.md`](docs/installations.md)                             | installation index: control plane, runner, credentials                  |
-| [`docs/installations-control-plane.md`](docs/installations-control-plane.md) | the Helm chart: install, verify, credentials, upgrade                   |
-| [`docs/credentials.md`](docs/credentials.md)                                 | the secret store: `GITHUB_TOKEN`, the Web UI, control-plane credentials |
-| [`docs/kubernetes.md`](docs/kubernetes.md)                                   | the Kubernetes backend: control-plane operations, isolation, smoke test |
-| [`docs/buildkite.md`](docs/buildkite.md)                                     | running sandboxes as Buildkite builds: pipeline shape and limits        |
-| [`docs/faq.md`](docs/faq.md)                                                 | launch tokens, sandbox lifecycle, the runner tunnel, plugins            |
-| [`control-plane/README.md`](control-plane/README.md)                         | what the bundle patch changes, every setting, secret handling           |
-| [`docs/development.md`](docs/development.md)                                 | repository layout, build and test, checkout installs, releasing         |
+| Page                                                       | Covers                                                                      |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------- |
+| [`docs/installations.md`](docs/installations.md)           | installation index: control plane, runner, credentials                      |
+| [`docs/control-plane.md`](docs/control-plane.md)           | the control plane on Kubernetes (Helm chart) or on a VM with Docker         |
+| [`docs/credentials.md`](docs/credentials.md)               | the secret store: `GITHUB_TOKEN`, the Web UI, control-plane credentials     |
+| [`docs/runners/kubernetes.md`](docs/runners/kubernetes.md) | sandboxes as Kubernetes pods: install, security model, what survives a wake |
+| [`docs/runners/buildkite.md`](docs/runners/buildkite.md)   | sandboxes as Buildkite builds: pipeline, idle checkpoints, limits           |
+| [`docs/faq.md`](docs/faq.md)                               | launch tokens, sandbox lifecycle, the runner tunnel, plugins                |
+| [`control-plane/README.md`](control-plane/README.md)       | what the bundle patch changes, every setting, secret handling               |
+| [`docs/development.md`](docs/development.md)               | repository layout, build and test, checkout installs, releasing             |

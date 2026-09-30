@@ -56,7 +56,7 @@ spec:
           requests:
             # The checkout, the home directory (mise toolchains and package
             # caches), the artifacts folder, and the apt cache, which holds up
-            # to 2GiB of .deb files; see docs/kubernetes.md.
+            # to 2GiB of .deb files; see docs/runners/kubernetes.md.
             storage: 6Gi
   podTemplate:
     metadata:
