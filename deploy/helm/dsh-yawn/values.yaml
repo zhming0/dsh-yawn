@@ -2,7 +2,7 @@
 # runners dial. The sandbox infrastructure
 # — SandboxTemplate and SandboxWarmPool — is the sandbox pool, a separate
 # kustomize base in `deploy/kubernetes/runner`. See
-# docs/installations-control-plane.md.
+# docs/control-plane.md.
 
 controlPlane:
   image:
@@ -103,7 +103,7 @@ oidc:
 # or a Service of your own selecting on the pod labels. Set type LoadBalancer
 # to expose it directly. Whatever fronts dsh must serve https (the proxy's
 # cookie is secure) and pass WebSockets and large RPC bodies — see
-# docs/kubernetes.md for the nginx-ingress values as a reference.
+# docs/control-plane.md for an nginx-ingress example.
 service:
   type: ClusterIP
   port: 80

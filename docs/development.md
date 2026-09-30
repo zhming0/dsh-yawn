@@ -6,15 +6,15 @@ what the project is and how to deploy it, start with the
 
 ## Repository layout
 
-| Path                 | Purpose                                                                                 |
-| -------------------- | --------------------------------------------------------------------------------------- |
+| Path                 | Purpose                                                                            |
+| -------------------- | ---------------------------------------------------------------------------------- |
 | `control-plane/`     | TypeScript dsh plugin: lifecycle policy, backends, secret store, Web UI extensions |
-| `runner/`            | Go server that runs inside each sandbox                                                 |
-| `proto/`             | ConnectRPC interface shared by the control plane and runner                              |
-| `deploy/helm/`       | Helm chart for the control plane                                                        |
-| `deploy/kubernetes/` | Kustomize base for the Kubernetes sandbox pool                                          |
-| `scripts/kas/`       | Disposable kind cluster and lifecycle smoke test                                        |
-| `examples/`          | Agent preset for the per-session route                                                  |
+| `runner/`            | Go server that runs inside each sandbox                                            |
+| `proto/`             | ConnectRPC interface shared by the control plane and runner                        |
+| `deploy/helm/`       | Helm chart for the control plane                                                   |
+| `deploy/kubernetes/` | Kustomize base for the Kubernetes sandbox pool                                     |
+| `scripts/kas/`       | Disposable kind cluster and lifecycle smoke test                                   |
+| `examples/`          | Agent preset for the per-session route                                             |
 
 ## Build and test
 

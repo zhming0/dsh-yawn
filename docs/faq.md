@@ -27,7 +27,7 @@ to reach the control plane, such as
 `http://localhost:3000/launch-token` or `https://dsh.example.com/launch-token`.
 The route hands the token to anyone who can reach dsh's port; behind the
 distribution's oauth2-proxy, that means authenticated users only.
-Details: [`kubernetes.md`](kubernetes.md#the-in-cluster-control-plane).
+Details: [`control-plane.md`](control-plane.md#expose-the-web-ui).
 
 ### What is a sandbox's lifecycle like?
 
@@ -74,7 +74,7 @@ RPCs then flow control-plane → runner over that runner-initiated connection.
 Nothing ever connects into a sandbox, and sandboxes accept no ingress at all.
 Runners outside the cluster reach the same listener through a `/tunnel` path on
 the Ingress that fronts the Web UI.
-Details: [`kubernetes.md`](kubernetes.md#connectivity-and-isolation),
+Details: [`runners/kubernetes.md`](runners/kubernetes.md#security-model),
 [`control-plane/README.md`](../control-plane/README.md#tunnel).
 
 ### Can I still install plugins?

@@ -50,7 +50,7 @@ changes.
 | Uploaded attachments               | your disk                 | copied into the sandbox workspace         |
 
 On Kubernetes the `docker` tool uses a rootless `dockerd` sidecar; see
-[Docker inside a sandbox](../docs/kubernetes.md#docker-inside-a-sandbox) for
+[Docker inside a sandbox](../docs/runners/kubernetes.md#docker-inside-a-sandbox) for
 the security trade it makes and how to remove it.
 
 ## Plugins
@@ -207,9 +207,27 @@ restart:
 
 A profile whose token resolves nowhere does not stop the host: it is named once
 in the log at boot, and its sessions fail at their first prompt with the
-setting to fix. The pipeline shape, the registration token, and the limits are
-described in
-[`docs/buildkite.md`](https://github.com/zhming0/dsh-yawn/blob/main/docs/buildkite.md).
+setting to fix.
+
+For each session, a Buildkite profile:
+
+1. looks for a live build tagged with the session, in case the host restarted
+   after creating one but before saving the record;
+2. otherwise writes the registration token into the pipeline cluster's secret
+   (see [Registration token](#registration-token)), failing the session with
+   the reason if the write fails;
+3. creates a build on branch `main` — Buildkite requires one, and the step skips
+   checkout, so it is only a label — with `DSH_YAWN_SANDBOX_ID`,
+   `DSH_YAWN_CONTROL_PLANE_URL`, and `DSH_YAWN_RUNNER_IMAGE` in the build
+   environment;
+4. waits for the build to be `running`, then up to 60 seconds for the runner to
+   register, and cancels a build that has not started within
+   `readyTimeoutMs`.
+
+The sandbox ID is `dsh-<16 hex chars>-<6 random hex chars>`. The random suffix
+changes on every build, so a runner from a cancelled job cannot be mistaken for
+a new one. The pipeline shape and the limits are described in
+[`docs/runners/buildkite.md`](https://github.com/zhming0/dsh-yawn/blob/main/docs/runners/buildkite.md).
 
 ### Archived sessions
 
@@ -244,7 +262,7 @@ to the build as `DSH_YAWN_RUNNER_IMAGE`; the pipeline step runs that image.
 
 `profiles` is a map from profile name to a backend and that backend's
 settings. A Kubernetes host with two pod sizes looks like this; each warm pool
-must exist in the cluster (see [`docs/kubernetes.md`](../docs/kubernetes.md)):
+must exist in the cluster (see [Several pools](../docs/runners/kubernetes.md#several-pools)):
 
 ```yaml
 - id: sandbox-manager
@@ -457,6 +475,10 @@ layer must not sit on that path; the registration token is the tunnel's
 authentication. Runners trust the system CA bundle, so a private CA has to be
 made available to the runner process, for example through `SSL_CERT_FILE`.
 
+When the tunnel must not share the UI's listener, a TCP proxy that terminates
+TLS on a port of its own, such as nginx `stream` or HAProxy, works too.
+Runners then dial `wss://<hostname>:<port>/tunnel`.
+
 Every proxy on the path must pass WebSocket upgrades and keep a connection
 open for as long as a session lasts. Idle timeouts are satisfied by the
 host's HTTP/2 pings every 30 seconds, but a maximum connection lifetime is
@@ -553,9 +575,14 @@ token and stores it as described above. The old token stops working at once: a
 running sandbox keeps its connection but cannot reconnect, a hibernated Docker
 container cannot wake, and Kubernetes warm pods that booted with it cannot
 register until they are recycled. A hibernated Kubernetes sandbox is fine,
-because waking starts a new pod that reads the new Secret. See
-[`docs/kubernetes.md`](https://github.com/zhming0/dsh-yawn/blob/main/docs/kubernetes.md)
-for the commands.
+because waking starts a new pod that reads the new Secret. On the Helm chart:
+
+```sh
+kubectl -n dsh-yawn exec deploy/dsh-yawn-control-plane -c control-plane -- rm /data/.dsh-yawn/registration-token
+kubectl -n dsh-yawn rollout restart deploy/dsh-yawn-control-plane
+kubectl -n dsh-yawn rollout status deploy/dsh-yawn-control-plane
+kubectl -n dsh-yawn delete sandbox -l agents.x-k8s.io/warm-pool-sandbox
+```
 
 ## Limits
 

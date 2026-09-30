@@ -7,10 +7,10 @@ sandboxes.
 This chart does not install sandboxes. For the full installation order, see
 [`docs/installations.md`](../../../docs/installations.md). The control-plane
 phase is
-[`docs/installations-control-plane.md`](../../../docs/installations-control-plane.md);
+[`docs/control-plane.md`](../../../docs/control-plane.md);
 then install the
-[Kubernetes sandbox pool](../../../docs/installations-kas.md) or
-[Buildkite runners](../../../docs/installations-buildkite.md).
+[Kubernetes sandbox pool](../../../docs/runners/kubernetes.md) or
+[Buildkite runners](../../../docs/runners/buildkite.md).
 
 Installing the chart alone gives you a working control plane: the Web UI,
 sessions, secrets, instructions, and repository workspaces all work. The first
@@ -107,8 +107,8 @@ profile's `cordis.patch.yml`.
   volume, and writes it into the `dsh-yawn-registration-token` Secret. No chart
   value sets it, so `helm upgrade` and GitOps syncs never change it. To replace
   it, see
-  [`docs/kubernetes.md`](../../../docs/kubernetes.md#the-in-cluster-control-plane).
+  [Registration token](../../../control-plane/README.md#registration-token).
 - The chart deliberately ships no Ingress. Whatever fronts the control plane
   must serve HTTPS, pass WebSockets, and allow large RPC bodies; see
-  [`docs/kubernetes.md`](../../../docs/kubernetes.md) for nginx-ingress
-  reference values.
+  [`docs/control-plane.md`](../../../docs/control-plane.md#expose-the-web-ui)
+  for an nginx-ingress example.

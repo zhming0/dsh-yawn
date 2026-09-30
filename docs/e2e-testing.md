@@ -62,6 +62,36 @@ cluster. `KEEP_KAS_CLUSTER=1 pnpm test:kas` keeps it;
 `DSH_YAWN_KAS_CLUSTER_NAME`, `DSH_YAWN_RUNNER_IMAGE`, and
 `DSH_YAWN_CONTROL_PLANE_IMAGE` override names and image tags.
 
+### Inspectable development cluster
+
+For a cluster that stays up between runs, build both images, start a `kind`
+cluster with the sandbox pool, and run the smoke test:
+
+```sh
+docker buildx bake dev control-plane-dev --load
+
+scripts/kas/dev-cluster.sh \
+  --runner-image dsh-yawn-runner:dev \
+  --control-plane-image dsh-yawn-control-plane:dev \
+  --load-runner-image
+
+scripts/kas/smoke-test.sh --namespace dsh-yawn
+scripts/kas/teardown.sh
+```
+
+Omit `--control-plane-image` to run dsh outside the cluster and pass
+`--control-plane-url ws://<host>:8081/tunnel` instead. Either way the control
+plane writes the `dsh-yawn-registration-token` Secret once it has a `kas`
+profile, and warm pods cannot start until it does, so start an outside control
+plane with that profile before the script waits for warm capacity, or pass
+`--skip-warm-pool`. Use `--name NAME` on both cluster scripts to choose a
+different kind cluster name.
+
+The smoke test verifies warm-pod adoption, suspend/resume persistence,
+workspace and home-directory survival, the rootless Docker sidecar, and expiry.
+A closed tunnel does not return a sandbox to the warm pool: an adopted pod is
+not recycled, and the pool creates a new one after adoption.
+
 ## Browser and model acceptance test
 
 Run this for changes to dsh integration, tool routing, workspace setup,
@@ -119,9 +149,9 @@ removes the sandboxes the run created, which outlive the control plane. A later
 ### Kubernetes variant
 
 Changes to the control-plane image, the chart, or the Kubernetes backend need
-the same test against a cluster. Create the inspectable development cluster
-from [`kubernetes.md`](kubernetes.md) (not `pnpm test:kas`, which removes its
-cluster), supply the model credential through the provider's host
+the same test against a cluster. Create the
+[inspectable development cluster](#inspectable-development-cluster) (not
+`pnpm test:kas`, which removes its cluster), supply the model credential through the provider's host
 configuration, and forward the server:
 
 ```sh
@@ -209,7 +239,7 @@ and swap the scheme of the model's address by hand.
 3. The opened page is a normal top-level tab: absolute-path assets load, and
    `localStorage` works from its console.
 4. From the host, `curl -H "Host: <sandboxId>-p<port>.<preview.domain>"
-   http://127.0.0.1:<preview.port>/` must return the same page;
+http://127.0.0.1:<preview.port>/` must return the same page;
    `curl -H "Host: other.example.com" …` must return 404, and a hibernated
    sandbox must answer 503 with the wake hint.
 5. With `preview.domain` removed, the Sandbox tab must say previews are not

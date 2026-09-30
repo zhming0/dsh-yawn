@@ -182,7 +182,7 @@ grep -q "image: ghcr.io/zhming0/dsh-yawn-runner:v9.9.9-test" /tmp/kustomize-runn
 
 # An operator varies the pool without naming a list index: the workspace claim
 # is replaced as a whole, pod resources are a map, and one egress rule is
-# appended. This renders the recipes docs/installations-kas.md documents, so a
+# appended. This renders the recipes docs/runners/kubernetes.md documents, so a
 # re-vendor that moves or renames a list entry fails here instead of in an
 # operator's overlay.
 cat >"$config_overlay/kustomization.yaml" <<'EOF'

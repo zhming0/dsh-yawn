@@ -8,7 +8,7 @@ tool call needs a runner. Set one up before using it —
 For sandboxes in this cluster, that is the sandbox pool; the
 agent-sandbox v1.0.2 controllers are not installed by this chart:
 
-  https://github.com/zhming0/dsh-yawn/blob/main/docs/installations-kas.md
+  https://github.com/zhming0/dsh-yawn/blob/main/docs/runners/kubernetes.md
 
 The pool reads one fixed name from this release: the `dsh-yawn-runner-config`
 ConfigMap holding DSH_YAWN_CONTROL_PLANE_URL. The `dsh-yawn-registration-token`
@@ -57,8 +57,8 @@ API route, or a LoadBalancer Service of your own at it — the pod labels
 (app.kubernetes.io/name, app.kubernetes.io/instance) are a stable target —
 then open https://{{ .Values.oidc.hostname }}/launch-token. Whatever fronts
 dsh must serve https (the proxy's cookie is secure) and pass WebSockets and
-large RPC bodies; docs/kubernetes.md has the nginx-ingress values as a
-reference.
+large RPC bodies; docs/control-plane.md has an nginx-ingress
+example.
 {{- end }}
 
 {{- else }}

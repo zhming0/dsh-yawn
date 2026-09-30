@@ -12,7 +12,7 @@
  * runner never learns any of this; it dials `127.0.0.1:<port>`.
  */
 
-/** Where the preview listener answers; see docs/kubernetes.md for the Ingress. */
+/** Where the preview listener answers; see control-plane/README.md#previews. */
 export const DEFAULT_PREVIEW_PORT = 8082;
 
 /**

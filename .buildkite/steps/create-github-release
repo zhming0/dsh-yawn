@@ -39,5 +39,5 @@ images:
 \`\`\`
 
 Use this version for the \`ref\` of the base too, so the manifests and the image
-are the same release: https://github.com/zhming0/dsh-yawn/blob/${TAG}/docs/installations-kas.md
+are the same release: https://github.com/zhming0/dsh-yawn/blob/${TAG}/docs/runners/kubernetes.md
 "
