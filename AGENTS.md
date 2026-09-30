@@ -153,8 +153,10 @@ likely to mislead you.
 
 ## Preserve the supported product
 
-- The product is the Kubernetes distribution: the control-plane and runner
-  images are released together. Docker and checkout installs are development paths.
+- The product is the control-plane and runner images, released together. The
+  control plane runs on Kubernetes through the Helm chart or on a VM with
+  Docker. Sandboxes run on Docker, Kubernetes agent-sandbox, or Buildkite; all
+  three are supported. Checkout installs are a development path.
 - Only `dsh web` is supported. Headless mode exits before the idle lifecycle can
   run.
 - The `web` profile on the data volume is user data as well as image data: an
