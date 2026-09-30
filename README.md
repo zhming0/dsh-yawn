@@ -1,48 +1,77 @@
 # DeepSeek Harness Yawn
 
-<br />
-
 <p align="center">
-  <strong>A DSH distribution for advanced users who love to lay back and yawn</strong><br>
-
+  <img src="docs/logo.png" alt="Project logo" style="max-width: 100%; width: 200px;" />
 </p>
 
 <p align="center">
-  <img src="docs/logo.png" alt="Project logo" style="max-width: 100%; width: 320px;" />
+  <strong>Always-on DeepSeek Harness for the web.</strong><br>
+  A self-hosted distribution: deploy it once, open it from any browser, and
+  every session runs in its own sandbox.
 </p>
 
-## Features
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.svg">
+    <img alt="A task sent from a laptop runs in its own sandbox behind an always-on control plane. The laptop closes and the work continues. The idle sandbox sleeps and keeps its files, then wakes when a phone sends the next message." src="docs/hero-light.svg" width="960">
+  </picture>
+</p>
 
-* Deployed as an always-on service on your LAN or the internet.
-* Every session runs in its own sandbox: Kubernetes agent-sandbox, Buildkite, or Docker.
-* Sandboxes hibernate when idle and wake with the same files; backends that cannot pause checkpoint instead.
-* Sandbox profiles and lifecycle timers configured in the Web UI, applied without a restart.
-* OIDC authentication through oauth2-proxy and your identity provider.
-* Repository-centric workspaces: paste a URL, the session clones it.
-* Credentials management in the Web UI: Secrets only reach a sandbox only when its commands run, .
-* AGENTS.md editing in the Web UI.
-* A Sandbox tab in every session showing what the environment is and how much disk it is using.
-
-## Rationale
+## Why
 
 [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh) is a great
 harness, but it assumes it runs on your laptop: every session shares your
 operating system, so you have to watch what the agents do, keep the machine
-running, and live with the scale of one machine. All of that kept me tense.
+awake, and live with the scale of one machine. DSH Yawn splits dsh in two: the
+harness itself runs on a server you keep on, and everything the agent does runs
+in a sandbox of its own. Hence the name: you can lay back and yawn :)
 
-DSH Yawn splits dsh into a control plane you deploy once and runners that host
-each session's sandbox. Runners have multiple backends — Kubernetes, Buildkite,
-or Docker — and can run anywhere that can reach the control plane. dsh's stock
-file and command tools run inside that sandbox, never on the control plane or
-your laptop, so whatever the agents do stays there. Hence the name: you can
-lay back and yawn :)
+|                                               | dsh on your laptop          | DSH Yawn                                                                          |
+| --------------------------------------------- | --------------------------- | --------------------------------------------------------------------------------- |
+| dsh itself (Web UI, sessions, model calls)    | your laptop                 | an always-on server: a VM or a Kubernetes cluster                                 |
+| The agent's work (shell commands, file edits) | your laptop                 | a sandbox per session: a Docker container, a Kubernetes pod, or a Buildkite build |
+| Where you open it                             | that laptop                 | any browser, after signing in                                                     |
+| Many sessions at once                         | share one OS, CPU, and disk | one sandbox each, on your VM, cluster, or Buildkite agents                        |
+| Starting on a repository                      | your local checkout         | paste a URL; the sandbox clones it and runs `.agents/setup`                       |
+| Secrets                                       | your shell environment      | a store on the server, pushed to a sandbox before commands                        |
 
-## Quick start (demo)
+## What's in the distribution
 
-This runs the control plane in one Docker container and starts sandboxes as
-sibling containers through your Docker daemon. It is the fastest way to see a
-session run, not a supported deployment — for that, read
-[`docs/installations.md`](docs/installations.md).
+- Control-plane and runner images, released and tested together, and a Helm
+  chart.
+- dsh's Web UI, with its file, shell, and search tools running in the session's
+  sandbox.
+- Sandbox backends: Docker, Kubernetes
+  [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) with warm
+  pools, and Buildkite.
+- Sign-in through oauth2-proxy and your OIDC identity provider, in the Helm
+  chart.
+- Web UI pages for sandbox profiles and idle timers, secrets, AGENTS.md
+  instructions, notifications, MCP servers, and plugins, applied without a
+  restart.
+- In every session: a Sandbox tab, a file browser, and a terminal.
+- Previews: a dev server in a sandbox gets its own URL.
+
+## Requirements
+
+- An always-on place for the control plane: a VM with Docker, or a Kubernetes
+  cluster through the Helm chart.
+- The ability to expose it under a domain name, on the internet or your LAN.
+- Somewhere to run sandboxes: Docker on the same VM, a Kubernetes cluster with
+  [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox), or a
+  Buildkite organization.
+- Sign-in in front of the Web UI. The Helm chart runs oauth2-proxy against your
+  OIDC provider; on a VM, bring your own.
+- A model API key, added in the Web UI.
+- Optional: a `GITHUB_TOKEN` for private repositories and pushes.
+
+Setup: [`docs/installations.md`](docs/installations.md).
+
+## Quick start
+
+This runs the control plane in Docker and starts each session's sandbox as a
+sibling container: the whole install on one machine. The same shape works on a
+VM.
 
 ```sh
 docker run -d --name dsh-yawn \
@@ -54,124 +83,23 @@ docker run -d --name dsh-yawn \
   ghcr.io/zhming0/dsh-yawn-control-plane
 ```
 
-What the pieces do:
+1. Open <http://localhost:3000/launch-token>.
+2. **Settings → Sandboxes → New profile**: `name: standard`, `backend: docker`.
+3. Add a model credential in the Web UI settings.
+4. **New session → Add workspace…** with a repository URL, then send a message.
 
-- The Docker socket mount lets the control plane start sibling sandbox
-  containers. The image's entrypoint joins the socket's group and drops root
-  before dsh starts, so the command needs no `--group-add` and no host-side
-  group lookup.
-- `DSH_YAWN_BIND_ALL=1` lets the published port reach the Web UI. Kubernetes
-  leaves it unset and keeps dsh on pod loopback behind oauth2-proxy.
-- The sandbox profile needs only `backend: docker`: the runner image defaults
-  to the tag matching the control plane, and runners dial back through
-  `host.docker.internal` on the published tunnel port 8081.
-
-Then add that profile in the Web UI — **Settings → Sandboxes → New profile**
-with `name: standard` and `backend: docker`; it applies without a restart. Open
-<http://localhost:3000/launch-token>, choose **New session**, use
-**Add workspace…** with a repository URL, and send a message. The first message
-needs a model credential; add one in the Web UI settings. The page's edits
-persist into `/data/.dsh/profiles/web/cordis.patch.yml` inside the container if
-you would rather edit them directly.
-
-To clean up: `docker rm -f dsh-yawn`.
-
-## FAQ
-
-### What is `/launch-token`?
-
-DeepSeek Harness signs each browser in with a per-process token and exchanges it for a
-cookie that lasts 30 days. `/launch-token` redirects you to the tokenized URL,
-so you never copy a token out of the logs. Open it through the address you use
-to reach the control plane, such as
-`http://localhost:3000/launch-token` or `https://dsh.example.com/launch-token`.
-The route hands the token to anyone who can reach dsh's port; behind the
-distribution's oauth2-proxy, that means authenticated users only.
-Details: [`docs/kubernetes.md`](docs/kubernetes.md#the-in-cluster-control-plane).
-
-### What is a sandbox's lifecycle like?
-
-```text
-new session -> start sandbox -> clone and set up repository -> run tools
-                                                            |
-                                                            v
-follow-up <- wake with the same /workspace <- hibernate after idle
-                                               |
-                                               v
-                                      delete after expiry
-```
-
-The first prompt claims a sandbox, clones the repository into
-`/workspace/repository`, and runs the repository's `.agents/setup` hook. After
-ten idle minutes the sandbox hibernates: compute stops and `/workspace`
-survives. Docker restarts the container it stopped, so its whole filesystem is
-still there and setup does not run again. Kubernetes rebuilds the pod around
-the surviving volume, so the next prompt gets a new machine with the same
-`/workspace`, and setup runs again there to put back what the repository
-declares. After seven days idle it is deleted.
-Archiving a session in the Web UI skips the clock: its sandbox and storage are
-deleted at once, and the session can never run again.
-Details: [`control-plane/README.md`](control-plane/README.md#idle-and-hibernation).
-
-### What happens if a sandbox cannot hibernate?
-
-A Buildkite build cannot be paused, so that backend checkpoints instead: the
-working tree is committed, the commits `origin` does not have are written to a
-Git bundle in the control plane's state directory, the session's
-`/workspace/artifacts` folder is tarred beside it, and the sandbox is
-destroyed. The next prompt provisions a fresh sandbox, clones, runs
-`.agents/setup`, and unpacks both. Kept: the branch, its commits, every tracked
-or untracked file, and the artifacts folder. Lost: ignored files, installed
-tools, and which changes were staged. Docker and Kubernetes hibernate properly.
-Details:
-[`control-plane/README.md`](control-plane/README.md#idle-and-hibernation).
-
-### How does the runner talk to the control plane?
-
-It dials out. Every runner opens one WebSocket to the control plane's tunnel
-listener and authenticates with the shared registration token; all RPCs then
-flow control-plane → runner over that runner-initiated connection. Nothing
-ever connects into a sandbox, and sandboxes accept no ingress at all. Runners
-outside the cluster reach the same listener through a `/tunnel` path on the
-Ingress that fronts the Web UI.
-Details: [`docs/kubernetes.md`](docs/kubernetes.md#connectivity-and-isolation),
-[`control-plane/README.md`](control-plane/README.md#tunnel).
-
-### Can I still install plugins?
-
-Yes, from the Web sidebar's **Plugins** page, or with
-`dsh plugin --profile web add <package>` (on Kubernetes, `kubectl exec` into
-the control-plane pod). The page installs, enables, disables, and removes
-bundles, and lists the official bundles the installation ships switched off.
-Installed bundles live in the profile on the data volume; an image upgrade
-keeps them, refreshing only the control plane's own package. Caveats:
-
-- a package without `dsh.bundle.patch` installs as a plain dependency and
-  wires up nothing;
-- if the upgrade cannot refresh the profile, the seed keeps the manifest it
-  was working from as `package.json.before-reseed`, reseeds the profile from
-  the image so the pod still starts, and says so in the pod log. The next boot
-  merges that manifest back in and retries, so a transient failure repairs
-  itself; if the refresh keeps failing, copy the kept file over `package.json`
-  and run `pnpm install` in the profile;
-- installed bundles run in the control-plane process, outside every sandbox,
-  with the control plane's access to sessions and credentials. The Plugins
-  page is operator access: admit to the Web UI only people you would give
-  that to. The page can also switch this package's own bundle off; switch it
-  back on there if that happens;
-- Web sessions mount their tools through agent presets. Since dsh 0.1.7 a
-  bundle patch *could* restate a preset, but this package does not: the stock
-  tool rows already run inside the sandbox, and staying off the preset rows
-  keeps that true across dsh upgrades.
+To clean up: `docker rm -f dsh-yawn`. What each flag does is in the
+[FAQ](docs/faq.md#what-does-the-quick-start-command-do).
 
 ## Documentation
 
-| Page                                                                         | Covers                                                           |
-| ---------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| [`docs/installations.md`](docs/installations.md)                             | installation index: control plane, runner, credentials           |
-| [`docs/installations-control-plane.md`](docs/installations-control-plane.md) | the Helm chart: install, verify, credentials, upgrade            |
-| [`docs/credentials.md`](docs/credentials.md)                                 | the secret store: `GITHUB_TOKEN`, the Web UI, control-plane credentials   |
-| [`docs/kubernetes.md`](docs/kubernetes.md)                                   | the Kubernetes backend: control-plane operations, isolation, smoke test   |
-| [`docs/buildkite.md`](docs/buildkite.md)                                     | running sandboxes as Buildkite builds: pipeline shape and limits |
-| [`control-plane/README.md`](control-plane/README.md)                         | what the bundle patch changes, every setting, secret handling    |
-| [`docs/development.md`](docs/development.md)                                 | repository layout, build and test, checkout installs, releasing  |
+| Page                                                                         | Covers                                                                  |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| [`docs/installations.md`](docs/installations.md)                             | installation index: control plane, runner, credentials                  |
+| [`docs/installations-control-plane.md`](docs/installations-control-plane.md) | the Helm chart: install, verify, credentials, upgrade                   |
+| [`docs/credentials.md`](docs/credentials.md)                                 | the secret store: `GITHUB_TOKEN`, the Web UI, control-plane credentials |
+| [`docs/kubernetes.md`](docs/kubernetes.md)                                   | the Kubernetes backend: control-plane operations, isolation, smoke test |
+| [`docs/buildkite.md`](docs/buildkite.md)                                     | running sandboxes as Buildkite builds: pipeline shape and limits        |
+| [`docs/faq.md`](docs/faq.md)                                                 | launch tokens, sandbox lifecycle, the runner tunnel, plugins            |
+| [`control-plane/README.md`](control-plane/README.md)                         | what the bundle patch changes, every setting, secret handling           |
+| [`docs/development.md`](docs/development.md)                                 | repository layout, build and test, checkout installs, releasing         |

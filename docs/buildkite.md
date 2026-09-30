@@ -6,9 +6,8 @@ which runner image to run. The pipeline supplies the registration token. The
 job runs `dsh-yawn-runner` until the session goes idle, when the control plane
 saves the session and cancels the build.
 
-This backend is a development path, like Docker. It is unit tested against a
-fake Buildkite API; the example pipelines have not been tested against every
-agent fleet. Setup is
+This is a supported backend, alongside Kubernetes agent-sandbox and Docker. The example
+pipelines have not been tested against every agent fleet. Setup is
 [`installations-buildkite.md`](installations-buildkite.md).
 
 ## How a sandbox runs

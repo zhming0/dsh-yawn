@@ -1,0 +1,239 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 440" width="960" height="440" role="img" aria-labelledby="title desc">
+  <title id="title">DeepSeek Harness Yawn</title>
+  <desc id="desc">A task sent from a laptop runs in its own sandbox behind an always-on control plane. The laptop closes and the work continues. The idle sandbox sleeps and keeps its files, then wakes when a phone sends the next message.</desc>
+  <style>
+    /* Palette: the only difference between hero-dark.svg and hero-light.svg. */
+    svg { --bg:#ffffff; --panel:#f6f8fa; --well:#ffffff; --border:#d0d7de; --text:#1f2328; --muted:#656d76; --accent:#0969da; --green:#1a7f37; --purple:#8250df; }
+
+    text { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 12px; }
+    .heading { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; fill: var(--muted); }
+    .label { font-size: 13px; font-weight: 600; }
+    .small { font-size: 11px; fill: var(--muted); }
+    .muted { fill: var(--muted); }
+    .caption { font-size: 16px; font-weight: 500; }
+    .card { fill: var(--panel); stroke: var(--border); stroke-width: 1; }
+    .screen { fill: var(--well); }
+    .edge { stroke: var(--border); stroke-width: 1.5; stroke-dasharray: 4 5; fill: none; }
+    .accent { fill: var(--accent); }
+    .green { fill: var(--green); }
+    .purple { fill: var(--purple); }
+    .pill { fill: var(--well); stroke: var(--border); }
+
+    /* One 16-second timeline. Every element below keys off it. */
+    .t { animation-duration: 16s; animation-iteration-count: infinite; animation-timing-function: ease-in-out; }
+    .fade { opacity: 0; }
+
+    .packet1 { animation-name: packet1; }
+    .packet2 { animation-name: packet2; }
+    @keyframes packet1 {
+      0%, 4.5% { transform: translate(180px, 130px); opacity: 0; }
+      5% { transform: translate(180px, 130px); opacity: 1; }
+      10% { transform: translate(330px, 197px); }
+      12% { transform: translate(590px, 205px); }
+      14.5% { opacity: 1; }
+      15% { transform: translate(680px, 120px); }
+      15.5%, 100% { transform: translate(680px, 120px); opacity: 0; }
+    }
+    @keyframes packet2 {
+      0%, 73.25% { transform: translate(145px, 295px); opacity: 0; }
+      73.75% { transform: translate(145px, 295px); opacity: 1; }
+      78.75% { transform: translate(330px, 213px); }
+      80.5% { transform: translate(590px, 205px); }
+      83.25% { opacity: 1; }
+      83.75% { transform: translate(680px, 120px); }
+      84.25%, 100% { transform: translate(680px, 120px); opacity: 0; }
+    }
+
+    .cp-flash { animation-name: cp-flash; }
+    @keyframes cp-flash {
+      0%, 9.5% { opacity: 0; } 10.5%, 12% { opacity: 1; } 13.5%, 78.25% { opacity: 0; }
+      79.25%, 80.5% { opacity: 1; } 82%, 100% { opacity: 0; }
+    }
+
+    .laptop-msg { animation-name: laptop-msg; }
+    @keyframes laptop-msg { 0%, 2% { opacity: 0; } 3.5%, 96% { opacity: 1; } 98%, 100% { opacity: 0; } }
+    .phone-msg { animation-name: phone-msg; }
+    @keyframes phone-msg { 0%, 71.5% { opacity: 0; } 73%, 96% { opacity: 1; } 98%, 100% { opacity: 0; } }
+
+    .lid { transform-box: fill-box; transform-origin: 50% 100%; animation-name: lid; }
+    @keyframes lid {
+      0%, 35% { transform: scaleY(1); } 38.75%, 95% { transform: scaleY(0.05); } 99%, 100% { transform: scaleY(1); }
+    }
+    .laptop-open { animation-name: laptop-open; }
+    @keyframes laptop-open { 0%, 36% { opacity: 1; } 37.5%, 96% { opacity: 0; } 98%, 100% { opacity: 1; } }
+    .laptop-closed { animation-name: laptop-closed; }
+    @keyframes laptop-closed { 0%, 37.5% { opacity: 0; } 39%, 95% { opacity: 1; } 96.5%, 100% { opacity: 0; } }
+
+    .a-active { animation-name: a-active; }
+    @keyframes a-active {
+      0%, 14.5% { opacity: 0; } 15.5%, 54% { opacity: 1; } 56%, 83.25% { opacity: 0; }
+      84.25%, 96% { opacity: 1; } 98%, 100% { opacity: 0; }
+    }
+    .s-idle { animation-name: s-idle; }
+    @keyframes s-idle { 0%, 14.5% { opacity: 1; } 15%, 97.5% { opacity: 0; } 98.5%, 100% { opacity: 1; } }
+    .s-running { animation-name: s-running; }
+    @keyframes s-running {
+      0%, 14.5% { opacity: 0; } 15%, 43.25% { opacity: 1; } 43.75%, 83.25% { opacity: 0; }
+      83.75%, 97% { opacity: 1; } 97.5%, 100% { opacity: 0; }
+    }
+    .s-done { animation-name: s-done; }
+    @keyframes s-done { 0%, 43.25% { opacity: 0; } 43.75%, 54.5% { opacity: 1; } 55%, 100% { opacity: 0; } }
+    .s-asleep { animation-name: s-asleep; }
+    @keyframes s-asleep { 0%, 54.5% { opacity: 0; } 55%, 83.25% { opacity: 1; } 83.75%, 100% { opacity: 0; } }
+
+    .l1 { animation-name: l1; } .l2 { animation-name: l2; } .l2-wait { animation-name: l2-wait; }
+    .l3 { animation-name: l3; } .l4 { animation-name: l4; }
+    @keyframes l1 { 0%, 17.5% { opacity: 0; } 18.5%, 96.5% { opacity: 1; } 98%, 100% { opacity: 0; } }
+    @keyframes l2 { 0%, 22.5% { opacity: 0; } 23.5%, 96.5% { opacity: 1; } 98%, 100% { opacity: 0; } }
+    @keyframes l2-wait { 0%, 24% { opacity: 0; } 25%, 43% { opacity: 1; } 43.75%, 100% { opacity: 0; } }
+    @keyframes l3 { 0%, 43.75% { opacity: 0; } 44.75%, 96.5% { opacity: 1; } 98%, 100% { opacity: 0; } }
+    @keyframes l4 { 0%, 87.5% { opacity: 0; } 88.5%, 96.5% { opacity: 1; } 98%, 100% { opacity: 0; } }
+
+    .a-dim { animation-name: a-dim; }
+    @keyframes a-dim { 0%, 55% { opacity: 0; } 58.75%, 83.75% { opacity: 0.7; } 85.5%, 100% { opacity: 0; } }
+    .a-kept { animation-name: a-kept; }
+    @keyframes a-kept { 0%, 58% { opacity: 0; } 59.5%, 83% { opacity: 1; } 84.5%, 100% { opacity: 0; } }
+    .a-zzz { animation-name: a-zzz; }
+    @keyframes a-zzz { 0%, 56.5% { opacity: 0; } 58.5%, 83% { opacity: 1; } 84%, 100% { opacity: 0; } }
+
+    /* Short independent loops. */
+    .z { animation: z 2.4s ease-out infinite; opacity: 0; }
+    .z2 { animation-delay: 0.8s; } .z3 { animation-delay: 1.6s; }
+    @keyframes z {
+      0% { transform: translate(0, 0); opacity: 0; } 25% { opacity: 1; }
+      100% { transform: translate(10px, -18px); opacity: 0; }
+    }
+    .pulse { transform-box: fill-box; transform-origin: center; animation: pulse 2s ease-out infinite; }
+    @keyframes pulse { 0% { transform: scale(1); opacity: 0.6; } 100% { transform: scale(3); opacity: 0; } }
+    .progress { transform-box: fill-box; transform-origin: 0 50%; animation: progress 3.2s ease-in-out infinite; }
+    @keyframes progress { 0% { transform: scaleX(0.05); } 85%, 100% { transform: scaleX(1); } }
+
+    .c1 { animation-name: c1; } .c2 { animation-name: c2; } .c3 { animation-name: c3; }
+    .c4 { animation-name: c4; } .c5 { animation-name: c5; }
+    @keyframes c1 { 0%, 1% { opacity: 0; } 2.5%, 16% { opacity: 1; } 17%, 100% { opacity: 0; } }
+    @keyframes c2 { 0%, 17% { opacity: 0; } 18%, 33.5% { opacity: 1; } 34.5%, 100% { opacity: 0; } }
+    @keyframes c3 { 0%, 34.5% { opacity: 0; } 35.5%, 52.5% { opacity: 1; } 53.5%, 100% { opacity: 0; } }
+    @keyframes c4 { 0%, 53.5% { opacity: 0; } 54.5%, 71.5% { opacity: 1; } 72.5%, 100% { opacity: 0; } }
+    @keyframes c5 { 0%, 72.5% { opacity: 0; } 73.5%, 96.5% { opacity: 1; } 97.5%, 100% { opacity: 0; } }
+
+    /* Without motion, hold one frame: the task running in its sandbox. */
+    @media (prefers-reduced-motion: reduce) {
+      * { animation: none !important; }
+      .fade { opacity: 0 !important; }
+      .still { opacity: 1 !important; }
+    }
+  </style>
+
+  <rect x="1" y="1" width="958" height="438" rx="14" fill="var(--bg)" stroke="var(--border)" />
+
+  <text class="heading" x="120" y="30" text-anchor="middle">YOUR DEVICES</text>
+  <text class="heading" x="460" y="30" text-anchor="middle">SELF-HOSTED</text>
+  <text class="heading" x="805" y="30" text-anchor="middle">ONE SANDBOX PER SESSION</text>
+
+  <!-- Edges, drawn under the boxes so packets hide while they cross the control plane. -->
+  <path class="edge" d="M180 130 L320 195" />
+  <path class="edge" d="M145 295 L320 215" />
+  <path class="edge" d="M600 205 L680 120" />
+  <path class="edge" d="M600 205 L680 262" />
+  <path class="edge" d="M600 205 L680 353" />
+
+  <g class="t packet1 fade">
+    <circle r="12" class="accent" opacity="0.25" />
+    <rect x="-13" y="-7" width="26" height="14" rx="7" class="accent" />
+  </g>
+  <g class="t packet2 fade">
+    <circle r="12" class="accent" opacity="0.25" />
+    <rect x="-13" y="-7" width="26" height="14" rx="7" class="accent" />
+  </g>
+
+  <!-- Laptop -->
+  <g transform="translate(50 90)">
+    <g class="t lid">
+      <rect x="10" y="0" width="120" height="78" rx="6" class="card" />
+      <rect x="18" y="8" width="104" height="62" rx="2" class="screen" />
+      <rect x="26" y="16" width="58" height="9" rx="4.5" fill="var(--border)" />
+      <rect x="26" y="31" width="40" height="9" rx="4.5" fill="var(--border)" />
+      <rect x="54" y="48" width="60" height="11" rx="5.5" class="accent t laptop-msg fade still" />
+    </g>
+    <path d="M0 80 H140 L132 90 H8 Z" class="card" />
+    <text class="small t laptop-open" x="70" y="110" text-anchor="middle">laptop</text>
+    <text class="small t laptop-closed fade" x="70" y="110" text-anchor="middle">laptop · lid closed</text>
+  </g>
+
+  <!-- Phone -->
+  <g transform="translate(95 250)">
+    <rect x="0" y="0" width="50" height="90" rx="9" class="card" />
+    <rect x="5" y="10" width="40" height="68" rx="2" class="screen" />
+    <rect x="10" y="18" width="24" height="7" rx="3.5" fill="var(--border)" />
+    <rect x="10" y="30" width="18" height="7" rx="3.5" fill="var(--border)" />
+    <rect x="18" y="62" width="22" height="9" rx="4.5" class="accent t phone-msg fade" />
+    <text class="small" x="25" y="108" text-anchor="middle">phone</text>
+  </g>
+
+  <!-- Control plane -->
+  <rect x="320" y="130" width="280" height="150" rx="10" class="card" />
+  <rect x="320" y="130" width="280" height="150" rx="10" fill="none" stroke="var(--accent)" stroke-width="2" class="t cp-flash fade" />
+  <text class="label" x="340" y="162" style="font-size:16px">DeepSeek Harness</text>
+  <circle cx="344" cy="180" r="4" class="green pulse" />
+  <circle cx="344" cy="180" r="4" class="green" />
+  <text class="small" x="356" y="184"><tspan style="fill:var(--green)">always on</tspan> · Web UI · control plane</text>
+  <rect x="340" y="200" width="70" height="22" rx="11" class="pill" />
+  <text class="small" x="375" y="215" text-anchor="middle" style="fill:var(--text)">sessions</text>
+  <rect x="418" y="200" width="64" height="22" rx="11" class="pill" />
+  <text class="small" x="450" y="215" text-anchor="middle" style="fill:var(--text)">secrets</text>
+  <rect x="490" y="200" width="90" height="22" rx="11" class="pill" />
+  <text class="small" x="535" y="215" text-anchor="middle" style="fill:var(--text)">workspaces</text>
+  <text class="small" x="340" y="262">deploy once · Kubernetes or Docker</text>
+
+  <!-- Sandbox A: the one the story follows -->
+  <rect x="680" y="40" width="250" height="160" rx="10" class="card" />
+  <rect x="680" y="40" width="250" height="160" rx="10" fill="none" stroke="var(--accent)" stroke-width="2" class="t a-active fade still" />
+  <text class="label" x="696" y="64">Kubernetes</text>
+  <text class="small t s-idle fade" x="914" y="64" text-anchor="end">idle</text>
+  <text class="small t s-running fade still" x="914" y="64" text-anchor="end" style="fill:var(--accent)">● running</text>
+  <text class="small t s-done fade" x="914" y="64" text-anchor="end" style="fill:var(--green)">✓ done</text>
+  <text class="small t s-asleep fade" x="914" y="64" text-anchor="end" style="fill:var(--purple)">asleep</text>
+  <rect x="692" y="76" width="226" height="112" rx="6" class="screen" />
+  <text class="mono t l1 fade still" x="704" y="98"><tspan class="muted">$</tspan> git clone you/app</text>
+  <text class="mono t l2 fade still" x="704" y="118"><tspan class="muted">$</tspan> pnpm test</text>
+  <text class="mono muted t l2-wait fade still" x="790" y="118">…</text>
+  <text class="mono t l3 fade" x="704" y="138" style="fill:var(--green)">✓ 128 passed</text>
+  <text class="mono t l4 fade" x="704" y="158" style="fill:var(--accent)">↻ woke up · files intact</text>
+  <rect x="692" y="76" width="226" height="112" rx="6" fill="var(--well)" class="t a-dim fade" />
+  <g class="t a-kept fade">
+    <rect x="740" y="158" width="130" height="24" rx="12" fill="var(--panel)" stroke="var(--purple)" />
+    <text class="mono" x="805" y="174" text-anchor="middle" style="fill:var(--purple); font-size:11.5px">/workspace kept</text>
+  </g>
+  <g class="t a-zzz fade">
+    <text class="purple z" x="826" y="66" style="font-size:12px; font-weight:700">z</text>
+    <text class="purple z z2" x="836" y="60" style="font-size:14px; font-weight:700">z</text>
+    <text class="purple z z3" x="848" y="54" style="font-size:16px; font-weight:700">z</text>
+  </g>
+
+  <!-- Sandbox B: busy in parallel -->
+  <rect x="680" y="225" width="250" height="74" rx="10" class="card" />
+  <text class="label" x="696" y="249">Buildkite</text>
+  <text class="small" x="914" y="249" text-anchor="end" style="fill:var(--accent)">● running</text>
+  <rect x="696" y="260" width="218" height="6" rx="3" class="screen" />
+  <rect x="696" y="260" width="218" height="6" rx="3" class="accent progress" />
+  <text class="mono" x="696" y="287"><tspan class="muted">$</tspan> cargo build --release</text>
+
+  <!-- Sandbox C: asleep -->
+  <rect x="680" y="316" width="250" height="74" rx="10" class="card" />
+  <text class="label" x="696" y="340">Docker</text>
+  <text class="small" x="914" y="340" text-anchor="end" style="fill:var(--purple)">asleep</text>
+  <text class="mono muted" x="696" y="376" style="font-size:11.5px">/workspace kept</text>
+  <text class="purple z" x="872" y="372" style="font-size:12px; font-weight:700">z</text>
+  <text class="purple z z2" x="882" y="366" style="font-size:14px; font-weight:700">z</text>
+  <text class="purple z z3" x="894" y="360" style="font-size:16px; font-weight:700">z</text>
+
+  <!-- Captions -->
+  <g text-anchor="middle">
+    <text class="caption t c1 fade" x="480" y="422">Send a task from any browser.</text>
+    <text class="caption t c2 fade still" x="480" y="422">It runs in its own sandbox, not on your machine.</text>
+    <text class="caption t c3 fade" x="480" y="422">Close your laptop. The work keeps going.</text>
+    <text class="caption t c4 fade" x="480" y="422">Idle sandboxes sleep. Their files stay.</text>
+    <text class="caption t c5 fade" x="480" y="422">Pick it up from your phone. Same files.</text>
+  </g>
+</svg>

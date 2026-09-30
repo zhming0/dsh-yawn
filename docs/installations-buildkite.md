@@ -5,9 +5,9 @@ The control plane triggers the build; the agent runs the runner container; the
 runner connects back over the tunnel. Choose it when sessions should run
 outside the cluster.
 
-This backend is a development path, like Docker. It is unit tested against a
-fake Buildkite API, but the pipeline shapes below have not been tested against
-every agent fleet; watch the first build in your organization. The backend's
+This is a supported backend, alongside Kubernetes agent-sandbox and Docker. The pipeline
+shapes below have not been tested against every agent fleet; watch the first
+build in your organization. The backend's
 internals and limits are in [`buildkite.md`](buildkite.md).
 
 Install the [control plane](installations-control-plane.md) first.

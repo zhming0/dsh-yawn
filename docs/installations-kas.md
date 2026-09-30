@@ -7,7 +7,7 @@ waiting for a cold start. The control plane creates a `SandboxClaim` per
 session, the runner in the pod connects back to the control plane's tunnel, and
 nothing connects in.
 
-This is the supported backend. It is pinned to agent-sandbox **v1.0.2**
+This is a supported backend, alongside Buildkite and Docker. It is pinned to agent-sandbox **v1.0.2**
 (`agents.x-k8s.io/v1beta1` and `extensions.agents.x-k8s.io/v1beta1`). Do not
 assume these manifests work with another release.
 
