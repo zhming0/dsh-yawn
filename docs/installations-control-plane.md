@@ -1,8 +1,8 @@
 # Control plane
 
 The `dsh-yawn` Helm chart installs the control plane: the dsh process, its data
-volume, the runner tunnel, the shared registration token, and the Kubernetes
-permissions needed to manage sandboxes. Sandboxes run elsewhere; see the
+volume, the runner tunnel, and the Kubernetes permissions needed to manage
+sandboxes. Sandboxes run elsewhere; see the
 [installation index](installations.md).
 
 ## Prerequisites
@@ -49,13 +49,13 @@ helm install dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
   --values dsh-yawn.values.yaml
 ```
 
-The chart creates the `dsh-yawn-registration-token` Secret. Runners present
-that token to register with the control plane; the chart keeps its generated
-value across `helm upgrade`. Use `registrationToken.value` or
-`registrationToken.existingSecret` to supply your own.
-
-The chart also creates the `dsh-yawn-control-plane` ServiceAccount and a
-namespace-scoped Role and RoleBinding for `sandboxclaims` and `sandboxes`.
+The chart creates the `dsh-yawn-control-plane` ServiceAccount and a
+namespace-scoped Role and RoleBinding for `sandboxclaims`, `sandboxes`, and the
+`dsh-yawn-registration-token` Secret. The control plane generates the
+registration token that runners present, keeps it on its data volume, and
+writes it into that Secret itself. Kubernetes cannot limit `create` to one
+Secret name, so the Role can create any Secret in the namespace; `patch` is
+limited to that one Secret.
 That is all a Kubernetes runner needs from you.
 
 The Service is a ClusterIP anchor by default. Either set
@@ -82,7 +82,8 @@ runner is installed, which is expected.
 Three credentials touch this install:
 
 - **OIDC client secret** for oauth2-proxy, in the `dsh-yawn-oidc` Secret above.
-- **Registration token** created by the chart. To rotate it, see
+- **Registration token**, generated and kept by the control plane. Nothing
+  configures it. To replace it, see
   [`kubernetes.md`](kubernetes.md#the-in-cluster-control-plane).
 - **Credentials the control plane uses itself**, such as a Buildkite API token.
   Put these in a Secret you own and pass them through `controlPlane.extraEnv`:

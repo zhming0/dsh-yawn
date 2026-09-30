@@ -129,27 +129,25 @@ kustomization. Then list a profile for each pool:
         warmPool: dsh-large
 ```
 
-**Registration token rotation.** The control plane reads accepted tokens from
-`DSH_YAWN_REGISTRATION_TOKEN`, and every runner pod reads the same
-`dsh-yawn-registration-token` Secret. To rotate without dropping tunnels, first
-add the new token alongside the old one, update the Secret, recycle the warm
-pods, then remove the old token from the control plane:
+**The registration token** authenticates every runner tunnel. The control
+plane generates it on first boot, keeps it on its data volume, and writes it
+into the `dsh-yawn-registration-token` Secret each warm pod mounts. Restarts and
+`helm upgrade` keep the same value.
+
+There is no rotate button. To replace a leaked token, delete it from the data
+volume, restart the control plane, and recycle the unclaimed warm pods, which
+booted with the old value:
 
 ```sh
-# 1. Set DSH_YAWN_REGISTRATION_TOKEN on the control-plane Deployment to
-#    "new,old" (new first). The control plane accepts every listed token.
-# 2. Replace the Secret value with the new token.
-kubectl -n dsh-yawn create secret generic dsh-yawn-registration-token \
-  --from-literal=token="$(openssl rand -hex 32)" \
-  --dry-run=client -o yaml | kubectl apply -f -
-# 3. Recycle the warm pods and restart the control plane.
-kubectl -n dsh-yawn delete sandbox --all
-kubectl -n dsh-yawn rollout restart deployment/dsh-yawn-control-plane
-# 4. Set the control plane's DSH_YAWN_REGISTRATION_TOKEN to the new token alone.
+kubectl -n dsh-yawn exec deploy/dsh-yawn-control-plane -c control-plane -- rm /data/.dsh-yawn/registration-token
+kubectl -n dsh-yawn rollout restart deploy/dsh-yawn-control-plane
+kubectl -n dsh-yawn rollout status deploy/dsh-yawn-control-plane
+kubectl -n dsh-yawn delete sandbox -l agents.x-k8s.io/warm-pool-sandbox
 ```
 
-For a gap-free rotation, do step 4 only after warm runners have recycled and
-reconnected.
+The old token stops working as soon as the control plane restarts. A running
+sandbox keeps its connection but cannot reconnect with it. A hibernated sandbox
+is fine, because waking starts a new pod that reads the new Secret.
 
 ## Reaching the Web UI
 
@@ -311,9 +309,11 @@ scripts/kas/teardown.sh
 ```
 
 Omit `--control-plane-image` to run dsh outside the cluster and pass
-`--control-plane-url ws://<host>:8081/tunnel` instead. The script generates a
-registration token, or reads one from `--registration-token-file`, and stores
-it in the `dsh-yawn-registration-token` Secret. Use `--name NAME` on both
+`--control-plane-url ws://<host>:8081/tunnel` instead. Either way the control
+plane writes the `dsh-yawn-registration-token` Secret once it has a `kas`
+profile, and warm pods cannot start until it does, so start an outside control
+plane with that profile before the script waits for warm capacity, or pass
+`--skip-warm-pool`. Use `--name NAME` on both
 cluster scripts to choose a different kind cluster name. For the full transport
 and lifecycle test, see
 [`e2e-testing.md`](e2e-testing.md#kubernetes-transport-and-lifecycle-test).

@@ -1,9 +1,9 @@
 apiVersion: v2
 name: dsh-yawn
 description: >-
-  The dsh-yawn control plane: one dsh host, its data volume, the tunnel
-  Service runners dial, and the shared registration token. The sandbox
-  infrastructure is a separate kustomize base (deploy/kubernetes/runner).
+  The dsh-yawn control plane: one dsh host, its data volume, and the tunnel
+  Service runners dial. The sandbox infrastructure is a separate kustomize
+  base (deploy/kubernetes/runner).
 type: application
 # Both fields are stamped with the release version by
 # .buildkite/steps/package-and-push-chart, which publishes the chart. The stamp

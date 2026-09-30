@@ -74,9 +74,16 @@ HOST_SERVICE_IP="$(kubectl -n "$NAMESPACE" get service dsh-yawn-control-plane-tu
   --name "$CLUSTER_NAME" \
   --runner-image "$RUNNER_IMAGE" \
   --control-plane-url "ws://${HOST_SERVICE_IP}:8081/tunnel" \
-  --registration-token-file "$TOKEN_FILE" \
   --load-runner-image \
   --skip-warm-pool
+
+# This test's control plane is the smoke Job below, not dsh, so nothing
+# generates the runner token for it: the script seeds the Secret the Job and
+# the warm runners both read.
+kubectl -n "$NAMESPACE" create secret generic dsh-yawn-registration-token \
+  --from-literal="token=$(tr -d '[:space:]' <"$TOKEN_FILE")" \
+  --dry-run=client -o yaml \
+  | kubectl apply -f -
 
 kind load docker-image --name "$CLUSTER_NAME" "$CONTROL_PLANE_IMAGE"
 
@@ -132,10 +139,11 @@ EOF
 # connections.
 kubectl -n "$NAMESPACE" wait --for=condition=Ready pod \
   -l job-name="$JOB" --timeout=120s
-# The runner template reads DSH_YAWN_CONTROL_PLANE_URL and the token from the names the control
-# plane writes. This test runs its own control-plane Job, so it supplies the ConfigMap
-# itself and applies the sandbox pool through an overlay that pins the locally
-# built image instead of the released tag in the base.
+# The runner template reads DSH_YAWN_CONTROL_PLANE_URL and the token from the
+# fixed names. This test runs its own control-plane Job, so it supplies the
+# ConfigMap and the Secret itself and applies the sandbox pool through an
+# overlay that pins the locally built image instead of the released tag in the
+# base.
 kubectl apply -f - <<EOF
 apiVersion: v1
 kind: ConfigMap

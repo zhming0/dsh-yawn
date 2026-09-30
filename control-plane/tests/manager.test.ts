@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -1260,5 +1260,32 @@ describe("repository workspaces and instructions", () => {
       manager.createRepositoryWorkspace("https://github.com/example/public"),
     ).rejects.toThrow("Web profile");
     await expect(stat(join(directory, "workspace-anchors"))).rejects.toThrow();
+  });
+
+  it("prepares backends at boot and keeps the runner token across restarts", async () => {
+    const boot = async (backend: FakeBackend) => {
+      const ctx = new Context();
+      const manager = new SandboxManager(
+        ctx,
+        {
+          profiles: { standard: { backend: "docker" } },
+          stateDir: directory,
+          repository: "https://github.com/example/public.git",
+        },
+        { backends: { standard: backend }, gateway: gatewayFor(backend) },
+      );
+      // Any host call waits for boot.
+      await manager.getSecrets();
+      await ctx.fiber.dispose();
+      return readFile(join(directory, "registration-token"), "utf8");
+    };
+
+    const first = new FakeBackend();
+    const token = await boot(first);
+    expect(first.preparations).toBe(1);
+    expect(token.trim()).toMatch(/^[0-9a-f]{64}$/);
+
+    // Sandboxes started before the restart still hold the stored token.
+    expect(await boot(new FakeBackend())).toBe(token);
   });
 });

@@ -149,23 +149,22 @@ the intended state while installing the control plane before its sandbox
 backend exists, and it keeps a mistyped profile map from stopping the host from
 starting, so the settings can still be corrected.
 
-| Setting             | When | Default                 | Meaning                                                                        |
-| ------------------- | ---- | ----------------------- | ------------------------------------------------------------------------------ |
-| `profiles.<name>`   | live | none                    | One sandbox profile; its fields are listed in the next table                   |
-| `defaultProfile`    | live | first profile           | Profile used when a session does not pick one                                  |
-| `idleMs`            | live | 10 minutes              | Idle delay after the last turn or wake before hibernating                      |
-| `expiresAfterMs`    | live | 7 days                  | How long a hibernated workspace is retained                                    |
-| `readyTimeoutMs`    | live | per backend             | Ready timeout for `kas` and `buildkite` profiles that do not set their own     |
-| `repository`        | boot | session repository      | Fallback repository for non-anchor sessions                                    |
-| `revision`          | boot | repository default      | Optional branch, tag, or commit to check out                                   |
-| `workspace`         | boot | `/workspace/repository` | Repository checkout and working directory                                      |
-| `stateDir`          | boot | `~/.dsh-yawn`           | Records, secret store, token, instructions, MCP servers, and Workspace anchors |
-| `registrationToken` | boot | see below               | Token(s) runners must present, comma-separated                                 |
-| `tunnel.port`       | boot | `8081`                  | Port the host listens on for runner tunnels (see Tunnel)                       |
-| `tunnel.bind`       | boot | `0.0.0.0`               | Address the tunnel listener binds to                                           |
-| `preview.domain`    | boot | none                    | Domain serving previews (see Previews); unset disables them                    |
-| `preview.port`      | boot | `8082`                  | Port the preview listener binds to                                             |
-| `preview.bind`      | boot | `0.0.0.0`               | Address the preview listener binds to                                          |
+| Setting           | When | Default                 | Meaning                                                                                     |
+| ----------------- | ---- | ----------------------- | ------------------------------------------------------------------------------------------- |
+| `profiles.<name>` | live | none                    | One sandbox profile; its fields are listed in the next table                                |
+| `defaultProfile`  | live | first profile           | Profile used when a session does not pick one                                               |
+| `idleMs`          | live | 10 minutes              | Idle delay after the last turn or wake before hibernating                                   |
+| `expiresAfterMs`  | live | 7 days                  | How long a hibernated workspace is retained                                                 |
+| `readyTimeoutMs`  | live | per backend             | Ready timeout for `kas` and `buildkite` profiles that do not set their own                  |
+| `repository`      | boot | session repository      | Fallback repository for non-anchor sessions                                                 |
+| `revision`        | boot | repository default      | Optional branch, tag, or commit to check out                                                |
+| `workspace`       | boot | `/workspace/repository` | Repository checkout and working directory                                                   |
+| `stateDir`        | boot | `~/.dsh-yawn`           | Records, secret store, registration token, instructions, MCP servers, and Workspace anchors |
+| `tunnel.port`     | boot | `8081`                  | Port the host listens on for runner tunnels (see Tunnel)                                    |
+| `tunnel.bind`     | boot | `0.0.0.0`               | Address the tunnel listener binds to                                                        |
+| `preview.domain`  | boot | none                    | Domain serving previews (see Previews); unset disables them                                 |
+| `preview.port`    | boot | `8082`                  | Port the preview listener binds to                                                          |
+| `preview.bind`    | boot | `0.0.0.0`               | Address the preview listener binds to                                                       |
 
 Each profile carries the settings of its own backend. Profiles do not share
 settings with each other, so two Kubernetes profiles in one namespace both
@@ -175,24 +174,26 @@ and `readyTimeoutMs` fall back to the top-level values of the same name, and
 read when a countdown is armed, from the profile the session's sandbox runs
 on.
 
-| Profile field     | Backend               | Default                | Meaning                                                           |
-| ----------------- | --------------------- | ---------------------- | ----------------------------------------------------------------- |
-| `backend`         | all                   | required               | `docker`, `kas`, or `buildkite`                                   |
-| `idleMs`          | all                   | top-level `idleMs`     | Idle delay before this profile's sandboxes hibernate              |
-| `image`           | `docker`, `buildkite` | matching release tag   | Runner image                                                      |
-| `binary`          | `docker`              | `docker`               | Docker-compatible command                                         |
-| `controlPlaneUrl` | `docker`, `buildkite` | `host.docker.internal` | `DSH_YAWN_CONTROL_PLANE_URL` runners dial, `ws://` or `wss://`    |
-| `namespace`       | `kas`                 | `dsh-yawn`             | Namespace containing claims and warm sandboxes                    |
-| `warmPool`        | `kas`                 | `dsh-yawn-universal`   | Warm pool used for claims                                         |
-| `readyTimeoutMs`  | `kas`                 | top-level, or 3 min    | How long to wait for a claimed sandbox                            |
-| `kubeconfig`      | `kas`                 | normal client lookup   | Optional kubeconfig path                                          |
-| `organization`    | `buildkite`           | required               | Buildkite organization slug                                       |
-| `pipeline`        | `buildkite`           | required               | Pipeline slug whose job runs the runner                           |
-| `controlPlaneUrl` | `buildkite`           | required               | `DSH_YAWN_CONTROL_PLANE_URL` runners dial; agents are never local |
-| `readyTimeoutMs`  | `buildkite`           | top-level, or 10 min   | How long a build may wait for an agent                            |
+| Profile field     | Backend               | Default                       | Meaning                                                                                      |
+| ----------------- | --------------------- | ----------------------------- | -------------------------------------------------------------------------------------------- |
+| `backend`         | all                   | required                      | `docker`, `kas`, or `buildkite`                                                              |
+| `idleMs`          | all                   | top-level `idleMs`            | Idle delay before this profile's sandboxes hibernate                                         |
+| `image`           | `docker`, `buildkite` | matching release tag          | Runner image                                                                                 |
+| `binary`          | `docker`              | `docker`                      | Docker-compatible command                                                                    |
+| `controlPlaneUrl` | `docker`, `buildkite` | `host.docker.internal`        | `DSH_YAWN_CONTROL_PLANE_URL` runners dial, `ws://` or `wss://`                               |
+| `namespace`       | `kas`                 | `dsh-yawn`                    | Namespace containing claims and warm sandboxes                                               |
+| `warmPool`        | `kas`                 | `dsh-yawn-universal`          | Warm pool used for claims                                                                    |
+| `readyTimeoutMs`  | `kas`                 | top-level, or 3 min           | How long to wait for a claimed sandbox                                                       |
+| `kubeconfig`      | `kas`                 | normal client lookup          | Optional kubeconfig path                                                                     |
+| `organization`    | `buildkite`           | required                      | Buildkite organization slug                                                                  |
+| `pipeline`        | `buildkite`           | required                      | Pipeline slug whose job runs the runner                                                      |
+| `controlPlaneUrl` | `buildkite`           | required                      | `DSH_YAWN_CONTROL_PLANE_URL` runners dial; agents are never local                            |
+| `readyTimeoutMs`  | `buildkite`           | top-level, or 10 min          | How long a build may wait for an agent                                                       |
+| `secretKey`       | `buildkite`           | `DSH_YAWN_REGISTRATION_TOKEN` | Cluster secret holding the registration token; see [Registration token](#registration-token) |
 
 A Buildkite profile cannot hibernate, so it checkpoints on idle (see below).
-The API token, with `read_builds` and `write_builds` on the pipeline, resolves
+The API token, with `read_builds`, `write_builds`, `read_pipelines`,
+`read_secrets_details`, and `write_secrets`, resolves
 per Buildkite request, so a changed token reaches the next call without a
 restart:
 
@@ -511,25 +512,50 @@ not configured.
 
 ## Registration token
 
-A runner authenticates its tunnel with a shared registration token, presented
-in the connection handshake. The control plane resolves the accepted tokens in this
-order:
+A runner authenticates its tunnel with a registration token, presented in the
+connection handshake. Nothing outside supplies it: the control plane generates
+it on first boot and keeps it at `stateDir/registration-token` with owner-only
+permissions. Later boots reuse it, so sandboxes started before a restart still
+register after it.
 
-1. `registrationToken` in settings — comma-separated to accept several during
-   rotation. The first token is the one injected into new sandboxes.
-2. The `DSH_YAWN_REGISTRATION_TOKEN` environment variable, same format.
-3. Docker backend only: a token generated on first run and persisted at
-   `stateDir/registration-token` with owner-only permissions. The Kubernetes
-   and Buildkite backends refuse to start without an explicit token, because
-   the sandbox side holds the token before any session exists: warm pods from
-   a Secret, Buildkite jobs from the pipeline's own secret store.
+Each backend delivers it:
 
-For Kubernetes, put the token in the `dsh-yawn-registration-token` Secret in the
-sandbox namespace and in the host's environment. See
-[`docs/kubernetes.md`](https://github.com/zhming0/dsh-yawn/blob/main/docs/kubernetes.md).
-For Buildkite, the pipeline step passes it to the job as `DSH_YAWN_REGISTRATION_TOKEN`;
-see
-[`docs/buildkite.md`](https://github.com/zhming0/dsh-yawn/blob/main/docs/buildkite.md).
+- **Docker** passes it to every container it starts as
+  `DSH_YAWN_REGISTRATION_TOKEN`.
+- **Kubernetes** stores it in the `dsh-yawn-registration-token` Secret the
+  warm pool's pods mount. The control plane owns that Secret: it creates it
+  when missing and patches it otherwise, so `helm upgrade` and GitOps syncs
+  cannot reset it.
+- **Buildkite** stores it in the pipeline cluster's
+  `DSH_YAWN_REGISTRATION_TOKEN` secret (`secretKey` changes the name), created
+  with an access policy for that pipeline. The pipeline maps the key into the
+  job, so the value never appears in the build environment. Keys are unique
+  per cluster and an existing secret keeps its access policy, so give each
+  pipeline in a cluster, and each control plane sharing a cluster, its own
+  `secretKey`.
+
+Each backend writes its secret before it starts a sandbox: Kubernetes before
+every claim and wake, Buildkite before every new build. Writing every time
+puts back a secret someone deleted. If the write fails, that session fails
+with the reason instead of waiting out the ready timeout, and the next session
+tries again.
+
+A Kubernetes pod reads the Secret only when its container starts, so a write
+reaches pods that start after it. Until the Secret exists, the warm pool's
+pods wait with `CreateContainerConfigError` and the kubelet retries them. So
+the Kubernetes backend also writes as soon as it is created, at boot or when
+its profile is added or changed, and the pool can fill before the first
+session; a failure there is only logged.
+
+There is no rotate button. To replace a leaked token, delete
+`stateDir/registration-token` and restart the control plane. It generates a new
+token and stores it as described above. The old token stops working at once: a
+running sandbox keeps its connection but cannot reconnect, a hibernated Docker
+container cannot wake, and Kubernetes warm pods that booted with it cannot
+register until they are recycled. A hibernated Kubernetes sandbox is fine,
+because waking starts a new pod that reads the new Secret. See
+[`docs/kubernetes.md`](https://github.com/zhming0/dsh-yawn/blob/main/docs/kubernetes.md)
+for the commands.
 
 ## Limits
 

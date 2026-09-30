@@ -16,7 +16,11 @@ Install the [control plane](installations-control-plane.md) first.
 
 - A Buildkite organization and permission to create a pipeline.
 - An [API access token](https://buildkite.com/docs/apis/managing-api-tokens)
-  with `read_builds` and `write_builds`.
+  with `read_builds`, `write_builds`, `read_pipelines`, `read_secrets_details`,
+  and `write_secrets`, owned by someone who can manage the pipeline cluster's
+  secrets (a cluster maintainer or an organization admin).
+- A pipeline in a Buildkite cluster. Only clustered agents can read Buildkite
+  secrets.
 - Hosted Linux agents, or self-hosted agents that can run Docker.
 - A tunnel address the agents can reach. Agents are not on the control-plane
   host, so an in-cluster address will not work.
@@ -38,7 +42,7 @@ steps:
     checkout:
       skip: true
     secrets:
-      DSH_YAWN_REGISTRATION_TOKEN: dsh_yawn_registration_token
+      DSH_YAWN_REGISTRATION_TOKEN: DSH_YAWN_REGISTRATION_TOKEN
     timeout_in_minutes: 240
     agents:
       queue: hosted-amd64-small
@@ -62,7 +66,7 @@ steps:
     checkout:
       skip: true
     secrets:
-      DSH_YAWN_REGISTRATION_TOKEN: dsh_yawn_registration_token
+      DSH_YAWN_REGISTRATION_TOKEN: DSH_YAWN_REGISTRATION_TOKEN
     timeout_in_minutes: 240
     agents:
       queue: self-hosted
@@ -77,9 +81,10 @@ Things the pipeline must get right:
   [Buildkite secret](https://buildkite.com/docs/pipelines/security/secrets/buildkite-secrets)
   into the job: the key on the left is the variable the runner reads, and the
   value on the right is the secret's key, which may contain only letters,
-  numbers, and underscores. Create `dsh_yawn_registration_token` with the same
-  value as the control plane's `dsh-yawn-registration-token` Secret. This
-  needs agent 3.106.0 or later.
+  numbers, and underscores. You do not create the secret: the control plane
+  creates `DSH_YAWN_REGISTRATION_TOKEN` in the pipeline's cluster, with an
+  access policy for this pipeline, and keeps its value. This needs agent
+  3.106.0 or later.
 - Turn off **Skip intermediate builds** and **Cancel intermediate builds** in
   the pipeline's **Settings → Builds**. Every sandbox build uses branch
   `main`, so either setting would skip or cancel another live sandbox.
@@ -121,8 +126,8 @@ helm upgrade dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
   --values dsh-yawn.values.yaml
 ```
 
-The control plane resolves the token for each Buildkite request and never sends
-it to a build or a runner. Every build uses branch `main`; if the pipeline
+The control plane resolves the API token for each Buildkite request and never
+sends it to a build or a runner. Every build uses branch `main`; if the pipeline
 limits its build branches, include `main`. Then run a session: the control
 plane creates a build, an agent picks it up, and the runner registers.
 
@@ -139,7 +144,10 @@ has the details.
 ## Several fleets
 
 `agents.queue` is per pipeline, so a second fleet means a second pipeline and a
-second profile. The composer shows a profile picker when more than one exists:
+second profile. When both pipelines are in the same cluster, give the second
+profile its own `secretKey` and map that key in its pipeline's `secrets`: the
+secret the first profile creates is only readable by the first pipeline. The
+composer shows a profile picker when more than one profile exists:
 
 ```yaml
 - id: sandbox-manager
@@ -156,6 +164,7 @@ second profile. The composer shows a profile picker when more than one exists:
         organization: acme
         pipeline: dsh-yawn-self-hosted
         controlPlaneUrl: wss://dsh.example.com/tunnel
+        secretKey: DSH_YAWN_SELF_HOSTED_TOKEN
 ```
 
 ## Next

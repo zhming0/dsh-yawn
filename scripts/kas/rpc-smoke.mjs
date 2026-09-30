@@ -32,6 +32,7 @@ const backend = new KasBackend({
   namespace,
   warmPool,
   readyTimeoutMs: 180_000,
+  registrationToken,
 });
 const kubeConfig = new KubeConfig();
 kubeConfig.loadFromDefault();

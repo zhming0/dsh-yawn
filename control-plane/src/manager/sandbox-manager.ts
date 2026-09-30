@@ -22,7 +22,6 @@ import {
   configSchema,
   readSetting,
   resolveBootConfig,
-  resolveRegistrationTokens,
   type Config,
   type ProfileConfig,
   type ResolvedConfig,
@@ -51,6 +50,7 @@ import {
   previewLabel,
 } from "../preview.js";
 import { PreviewServer } from "../preview-server.js";
+import { loadRegistrationToken } from "../registration-token.js";
 import type { RunnerClient } from "../runner-client.js";
 import type { SandboxSettingsView } from "../sandbox-settings-remote.js";
 import type { SecretSettingsView } from "../secrets-remote.js";
@@ -134,6 +134,8 @@ export class SandboxManager extends TypertRemoteService {
   /** The settings slice that can change while the host runs. */
   private readonly runtime: RuntimeSettings;
   private readonly broker: CredentialBroker;
+  /** The tunnel credential the control plane generates and hands to runners. */
+  private readonly registrationToken: string;
   private readonly ownedTunnel: TunnelServer | undefined;
   /** Started only when a preview domain is configured; see ResolvedConfig. */
   private readonly ownedPreview: PreviewServer | undefined;
@@ -219,19 +221,12 @@ export class SandboxManager extends TypertRemoteService {
     const fileIndexes = new FileIndexStore(
       join(this.config.stateDir, "file-index"),
     );
-    const profiles = Object.values(this.config.profiles);
-    const missingBackends = profiles.filter(
-      (profile) => dependencies.backends?.[profile.name] === undefined,
-    );
-    let tokens: string[] = [];
-    if (dependencies.gateway === undefined || missingBackends.length > 0) {
-      tokens = resolveRegistrationTokens(this.config, profiles);
-    }
+    this.registrationToken = loadRegistrationToken(this.config.stateDir);
     if (dependencies.gateway === undefined) {
       this.ownedTunnel = new TunnelServer({
         port: this.config.tunnel.port,
         bind: this.config.tunnel.bind,
-        tokens,
+        tokens: [this.registrationToken],
         log: (message) => this.ctx.logger("sandbox").info(message),
       });
       this.gateway = this.ownedTunnel;
@@ -302,7 +297,7 @@ export class SandboxManager extends TypertRemoteService {
     this.registry = new ProfileRegistry(
       this.config.profiles,
       dependencies.backends,
-      tokens[0],
+      this.registrationToken,
       (profile) => this.buildkiteToken(profile),
     );
     this.engine = new SandboxLifecycle({
@@ -445,6 +440,7 @@ export class SandboxManager extends TypertRemoteService {
       this.instructions.initialize(),
       this.mcpStore.initialize(),
     ]);
+    void this.prepareBackends();
     await this.engine.initialize();
     // Mounting is asynchronous past ctx.plugin, so configured MCP servers are
     // reconnected at boot without holding up the manager.
@@ -521,6 +517,7 @@ export class SandboxManager extends TypertRemoteService {
     this.ctx
       .logger("sandbox")
       .info(`sandbox profiles are now: ${names === "" ? "(none)" : names}`);
+    void this.prepareBackends();
   }
 
   /** Resolve the current foreground agent and return its live runner. */
@@ -837,6 +834,28 @@ export class SandboxManager extends TypertRemoteService {
   async getSandboxStatus(sessionId: string): Promise<SandboxStatusView> {
     await this.ready;
     return this.status.view(sessionId);
+  }
+
+  /**
+   * Start each backend's early work, such as the Kubernetes backend storing
+   * the runner token so the warm pool's pods can start. Nothing waits
+   * on it: a backend repeats what a session needs before serving it, so a
+   * failure here is only logged. Backends kept from before cost nothing.
+   * Backends run concurrently, so one unreachable cluster does not hold up
+   * the others.
+   */
+  private async prepareBackends(): Promise<void> {
+    await Promise.all(
+      this.registry.allBackends().map(async (backend) => {
+        try {
+          await backend.prepare?.();
+        } catch (error) {
+          this.ctx
+            .logger("sandbox")
+            .warn(`${backend.name} backend: ${errorMessage(error)}`);
+        }
+      }),
+    );
   }
 
   /**

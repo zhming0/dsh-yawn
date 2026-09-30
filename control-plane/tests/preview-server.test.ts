@@ -11,7 +11,6 @@ import { previewHost } from "../src/preview.js";
 import type { RunnerClient } from "../src/runner-client.js";
 
 const REPOSITORY = "https://github.com/example/public.git";
-const SECRET = "preview-secret";
 const DOMAIN = "sandbox.example.com";
 
 describe("preview listener on the manager", () => {
@@ -54,7 +53,6 @@ describe("preview listener on the manager", () => {
       {
         stateDir: directory,
         repository: REPOSITORY,
-        registrationToken: SECRET,
         profiles: { standard: { backend: "docker", image: "runner:test" } },
         preview: { domain: DOMAIN, port: 0, bind: "127.0.0.1" },
       },
@@ -92,7 +90,6 @@ describe("preview listener on the manager", () => {
       {
         stateDir: directory,
         repository: REPOSITORY,
-        registrationToken: SECRET,
         profiles: { standard: { backend: "docker", image: "runner:test" } },
       },
       { backends: {}, gateway: fakeGateway() },

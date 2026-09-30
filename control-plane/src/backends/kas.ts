@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 
-import { CustomObjectsApi, KubeConfig } from "@kubernetes/client-node";
+import {
+  CoreV1Api,
+  CustomObjectsApi,
+  KubeConfig,
+  PatchStrategy,
+  setHeaderOptions,
+} from "@kubernetes/client-node";
 
 import { SandboxNotFoundError } from "../types.js";
 import type {
@@ -13,6 +19,13 @@ import type {
 const EXTENSION_GROUP = "extensions.agents.x-k8s.io";
 const CORE_GROUP = "agents.x-k8s.io";
 const API_VERSION = "v1beta1";
+
+/**
+ * The Secret a sandbox template mounts as DSH_YAWN_REGISTRATION_TOKEN. The
+ * control plane creates it when missing and patches it in place, so the value
+ * it generates is the only one the pool ever reads.
+ */
+export const REGISTRATION_TOKEN_SECRET = "dsh-yawn-registration-token";
 
 interface KasReference extends BackendReference {
   claimName: string;
@@ -38,6 +51,8 @@ export interface KasBackendOptions {
   warmPool: string;
   readyTimeoutMs?: number;
   kubeconfig?: string;
+  /** The tunnel token, stored in the Secret the warm pool's pods mount. */
+  registrationToken: string;
 }
 
 export class KasBackend implements SandboxBackend {
@@ -48,13 +63,16 @@ export class KasBackend implements SandboxBackend {
     wakeKeepsFilesystem: false,
   };
   private readonly api: CustomObjectsApi;
+  private readonly core: CoreV1Api;
   private readonly readyTimeoutMs: number;
 
+  /** Tests inject both clients; otherwise they come from the kubeconfig. */
   constructor(
     private readonly options: KasBackendOptions,
-    api?: CustomObjectsApi,
+    ...clients: [] | [api: CustomObjectsApi, core: CoreV1Api]
   ) {
-    if (api === undefined) {
+    const [api, core] = clients;
+    if (api === undefined || core === undefined) {
       const config = new KubeConfig();
       if (options.kubeconfig === undefined) {
         config.loadFromDefault();
@@ -62,13 +80,82 @@ export class KasBackend implements SandboxBackend {
         config.loadFromFile(options.kubeconfig);
       }
       this.api = config.makeApiClient(CustomObjectsApi);
+      this.core = config.makeApiClient(CoreV1Api);
     } else {
       this.api = api;
+      this.core = core;
     }
     this.readyTimeoutMs = options.readyTimeoutMs ?? 180_000;
   }
 
+  /**
+   * Store the token in the Secret the warm pool's pods read when they boot:
+   * patch it when it exists, create it when it does not. The control plane
+   * owns this one object, so no Helm or GitOps apply can reset it.
+   *
+   * A pod reads the Secret only when its container starts, so a write
+   * reaches pods that start after it; until the Secret exists, the pool's
+   * pods wait and the kubelet retries them. {@link prepare} writes when the
+   * backend is created, so the pool can fill before the first session.
+   * Every claim and wake writes again: one patch, which recreates a Secret
+   * deleted by hand and fails the session with the real reason instead of a
+   * ready timeout.
+   */
+  async storeRegistrationToken(): Promise<void> {
+    const name = REGISTRATION_TOKEN_SECRET;
+    const namespace = this.options.namespace;
+    try {
+      await this.writeRegistrationToken(name, namespace);
+    } catch (error) {
+      throw new Error(
+        `could not store the runner token in Secret ${namespace}/${name}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
+
+  private async writeRegistrationToken(
+    name: string,
+    namespace: string,
+  ): Promise<void> {
+    const core = this.core;
+    const stringData = { token: this.options.registrationToken };
+    // The client sends a JSON Patch (a list of operations) unless told
+    // otherwise; a merge patch takes the partial object.
+    const patch = () =>
+      core.patchNamespacedSecret(
+        { name, namespace, body: { stringData } },
+        setHeaderOptions("Content-Type", PatchStrategy.MergePatch),
+      );
+    try {
+      await patch();
+      return;
+    } catch (error) {
+      if (!isKubernetesStatus(error, 404)) {
+        throw error;
+      }
+    }
+    try {
+      await core.createNamespacedSecret({
+        namespace,
+        body: { metadata: { name, namespace }, stringData, type: "Opaque" },
+      });
+    } catch (error) {
+      // Another writer created it between the patch and the create; patching
+      // it now leaves our value in place.
+      if (!isKubernetesStatus(error, 409)) {
+        throw error;
+      }
+      await patch();
+    }
+  }
+
+  prepare(): Promise<void> {
+    return this.storeRegistrationToken();
+  }
+
   async provision(spec: SandboxSpec): Promise<SandboxHandle> {
+    await this.storeRegistrationToken();
     const claimName = claimNameFor(spec.sessionId);
     try {
       await this.api.createNamespacedCustomObject({
@@ -122,6 +209,8 @@ export class KasBackend implements SandboxBackend {
 
   async wake(reference: BackendReference): Promise<SandboxHandle> {
     const ref = kasReference(reference);
+    // Waking starts a new pod, which reads the Secret.
+    await this.storeRegistrationToken();
     try {
       await this.clearExpiry(ref.claimName);
       await this.patchSandbox(ref.sandboxId, "Running");

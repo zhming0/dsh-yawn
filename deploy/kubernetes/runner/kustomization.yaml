@@ -1,8 +1,9 @@
 # The sandbox pool for one control plane: the SandboxTemplate and SandboxWarmPool
 # that the Kubernetes backend claims sessions from. Apply it after the control
-# plane (the Helm chart), which owns the namespace, the control plane's identity and
-# permissions, and the `dsh-yawn-runner-config` ConfigMap and
-# `dsh-yawn-registration-token` Secret the template reads.
+# plane (the Helm chart), which owns the namespace, the control plane's identity
+# and permissions, and the `dsh-yawn-runner-config` ConfigMap. The control plane
+# also creates the `dsh-yawn-registration-token` Secret the template mounts, so
+# sandboxes can only start once it is running.
 #
 # The pool has to land in the control plane's namespace, and this base refuses
 # to guess it. The name below is a placeholder no cluster has, so applying the
