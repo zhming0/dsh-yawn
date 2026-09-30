@@ -85,11 +85,6 @@ spec:
             {{- end }}
           {{- end }}
           env:
-            - name: DSH_YAWN_REGISTRATION_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "dsh-yawn.registrationTokenSecret" . }}
-                  key: token
             # Node >= 20 enables Happy Eyeballs and abandons each address
             # attempt after 250ms. Model API endpoints that need longer to
             # connect fail as instant ETIMEDOUT, and pod networks without an

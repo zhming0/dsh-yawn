@@ -24,7 +24,7 @@ export interface RunnerGateway {
 export interface TunnelServerOptions {
   port: number;
   bind?: string;
-  /** Accepted registration tokens. Two entries allow a rolling rotation. */
+  /** Accepted registration tokens. */
   tokens: string[];
   log?: (message: string) => void;
 }

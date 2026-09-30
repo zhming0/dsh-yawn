@@ -76,8 +76,9 @@ kubectl -n dsh-yawn wait --for=jsonpath='{.status.readyReplicas}'=1 \
 
 The base contains a `SandboxTemplate` describing the sandbox pod, a
 `SandboxWarmPool` keeping pods warm, and nothing else. It reads the control
-plane's URL and registration token from what the chart wrote, so the namespace
-is the only cluster-specific value.
+plane's URL from the ConfigMap the chart wrote and the registration token from
+the Secret the control plane wrote, so the namespace is the only
+cluster-specific value.
 
 ## Configure the pool
 

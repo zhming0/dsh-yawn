@@ -50,10 +50,13 @@ the session's effective set to its runner. No control-plane restart is needed.
 
 Two credentials belong to the control plane and must never reach a sandbox:
 
-- **The shared registration token**, in the `dsh-yawn-registration-token`
-  Secret the chart creates. Warm runner pods must hold it before any session
-  exists. It only lets a runner register a tunnel.
-- **A Buildkite API token**, which can create and cancel builds. Store it in a
+- **The registration token**. The control plane generates it, keeps it on its
+  data volume, and writes it where runners read it: the
+  `dsh-yawn-registration-token` Secret, because warm pods must hold it before
+  any session exists, or a Buildkite cluster secret. It only lets a runner
+  register a tunnel. Nobody needs to read or copy it.
+- **A Buildkite API token**, which can create and cancel builds and write the
+  pipeline cluster's secrets. Store it in a
   Secret you own and pass it to the control plane with
   `controlPlane.extraEnv`, or enter it on **Settings → Sandboxes** when you
   create a Buildkite profile. The page writes it, write-only, to
@@ -63,9 +66,9 @@ Two credentials belong to the control plane and must never reach a sandbox:
   environment fallback.
 
 [`installations-control-plane.md`](installations-control-plane.md#credentials)
-sets both up, and
-[`kubernetes.md`](kubernetes.md#the-in-cluster-control-plane) covers
-registration-token rotation.
+sets the Buildkite token up, and
+[`kubernetes.md`](kubernetes.md#the-in-cluster-control-plane) covers replacing
+the registration token.
 
 ## Never write values down
 

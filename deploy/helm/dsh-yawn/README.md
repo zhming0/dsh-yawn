@@ -1,8 +1,8 @@
 # dsh-yawn Helm chart
 
 Installs the dsh-yawn **control plane**: the dsh process, its data volume, the
-runner tunnel, the shared registration token, and the Kubernetes permissions
-the control plane uses to manage sandboxes.
+runner tunnel, and the Kubernetes permissions the control plane uses to manage
+sandboxes.
 
 This chart does not install sandboxes. For the full installation order, see
 [`docs/installations.md`](../../../docs/installations.md). The control-plane
@@ -37,7 +37,8 @@ helm install dsh-yawn-control-plane oci://ghcr.io/zhming0/charts/dsh-yawn \
 The release must be named `dsh-yawn-control-plane` and live in one namespace
 per control plane. Kubernetes runner manifests read the fixed names
 `dsh-yawn-control-plane-tunnel`, `dsh-yawn-runner-config`, and
-`dsh-yawn-registration-token`, which this release owns.
+`dsh-yawn-registration-token`. This release owns the first two; the control
+plane creates and owns the Secret.
 
 Create the proxy's OIDC Secret first — the release notes print the command.
 Until it exists the pod runs but never becomes Ready. Without `oidc.enabled`,
@@ -53,12 +54,10 @@ reach the control plane over `kubectl port-forward` and open `/launch-token`.
 | `controlPlane.extraArgs`                                 | `[]`                                        | Extra `dsh web` arguments                                                                                                                      |
 | `controlPlane.extraEnv`                                  | `[]`                                        | Extra environment variables for credentials the control plane needs itself, such as `BUILDKITE_API_TOKEN` from a Secret; never sandbox secrets |
 | `controlPlane.podAnnotations` / `controlPlane.podLabels` | `{}`                                        | Extra pod metadata                                                                                                                             |
-| `controlPlane.persistence.enabled`                       | `true`                                      | `false` replaces the data PVC with an emptyDir; every restart then loses sessions and the credential store                                     |
+| `controlPlane.persistence.enabled`                       | `true`                                      | `false` replaces the data PVC with an emptyDir; every restart then loses sessions, the credential store, and the registration token            |
 | `controlPlane.persistence.size`                          | `5Gi`                                       | Data volume size                                                                                                                               |
 | `controlPlane.persistence.storageClass`                  | `""`                                        | Data volume StorageClass; required when the cluster has no default                                                                             |
 | `runner.controlPlaneUrl`                                 | Tunnel Service URL                          | Tunnel address written into `dsh-yawn-runner-config`; only change it for an unusual layout                                                     |
-| `registrationToken.existingSecret`                       | `""`                                        | Existing Secret with the shared token under key `token`; no Secret is created                                                                  |
-| `registrationToken.value`                                | `""`                                        | Fixed token; a stable random one is generated when empty                                                                                       |
 | `oidc.enabled`                                           | `false`                                     | Add the oauth2-proxy sidecar and Service                                                                                                       |
 | `oidc.hostname`                                          | `""`                                        | Required when enabled: bare host, no scheme                                                                                                    |
 | `oidc.image`                                             | `quay.io/oauth2-proxy/oauth2-proxy:v7.15.4` | Proxy image                                                                                                                                    |
@@ -104,13 +103,11 @@ profile's `cordis.patch.yml`.
 
 - The data PVC has `helm.sh/resource-policy: keep`, so `helm uninstall` leaves
   sessions, credentials, and the seeded profile on the volume.
-- The registration token Secret is generated once per release and reused on
-  upgrades. To rotate it, see
+- The control plane generates the registration token, keeps it on the data
+  volume, and writes it into the `dsh-yawn-registration-token` Secret. No chart
+  value sets it, so `helm upgrade` and GitOps syncs never change it. To replace
+  it, see
   [`docs/kubernetes.md`](../../../docs/kubernetes.md#the-in-cluster-control-plane).
-- **GitOps (Argo CD, Flux):** those renderers have no live cluster, so the
-  lookup that keeps the generated token stable cannot find the existing Secret
-  and every sync invents a new one. Set `registrationToken.value` from your
-  secret store, or use `registrationToken.existingSecret`.
 - The chart deliberately ships no Ingress. Whatever fronts the control plane
   must serve HTTPS, pass WebSockets, and allow large RPC bodies; see
   [`docs/kubernetes.md`](../../../docs/kubernetes.md) for nginx-ingress

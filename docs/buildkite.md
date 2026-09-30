@@ -2,8 +2,8 @@
 
 Each sandbox is one build on a Buildkite pipeline you own. The control plane
 triggers the build and tells the job which sandbox it is, where to connect, and
-which runner image to run. The pipeline supplies the registration token. The
-job runs `dsh-yawn-runner` until the session goes idle, when the control plane
+which runner image to run, and stores the registration token in a Buildkite
+secret the job reads. The job runs `dsh-yawn-runner` until the session goes idle, when the control plane
 saves the session and cancels the build.
 
 This is a supported backend, alongside Kubernetes agent-sandbox and Docker. The example
@@ -16,10 +16,13 @@ For each session, the control plane:
 
 1. Looks for a live build tagged with the session, in case it restarted after
    creating one but before saving the record.
-2. Otherwise creates a build on branch `main` with `DSH_YAWN_SANDBOX_ID`,
+2. Otherwise makes sure the pipeline cluster's `DSH_YAWN_REGISTRATION_TOKEN`
+   secret holds the registration token, creating it if it is missing. A
+   failed write fails this session with the reason.
+3. Creates a build on branch `main` with `DSH_YAWN_SANDBOX_ID`,
    `DSH_YAWN_CONTROL_PLANE_URL`, and `DSH_YAWN_RUNNER_IMAGE` in the build
    environment.
-3. Waits for the build to be `running`, then waits up to 60 seconds for the
+4. Waits for the build to be `running`, then waits up to 60 seconds for the
    runner to register on the tunnel. If the build does not start within
    `readyTimeoutMs` (default 10 minutes), the control plane cancels it.
 
@@ -67,7 +70,6 @@ next prompt gets a replacement.
 ```yaml
 - id: sandbox-manager
   config:
-    registrationToken: <shared with the pipeline>
     tunnel:
       port: 8081
     profiles:
@@ -78,16 +80,20 @@ next prompt gets a replacement.
         controlPlaneUrl: wss://dsh.example.com/tunnel
 ```
 
-| Field             | Default                                   | Meaning                                                                          |
-| ----------------- | ----------------------------------------- | -------------------------------------------------------------------------------- |
-| `organization`    | required                                  | Organization slug, as in `buildkite.com/<organization>`                          |
-| `pipeline`        | required                                  | Pipeline slug                                                                    |
-| `controlPlaneUrl` | required                                  | Tunnel endpoint the runner dials: `wss://host/tunnel` or `ws://host:port/tunnel` |
-| `image`           | matching release tag                      | Runner image sent to the build as `DSH_YAWN_RUNNER_IMAGE`                        |
-| `readyTimeoutMs`  | top-level `readyTimeoutMs`, else `600000` | How long a build may wait for an agent before the control plane cancels it       |
-| `idleMs`          | top-level `idleMs`                        | Idle delay before this profile's sandboxes checkpoint                            |
+| Field             | Default                                   | Meaning                                                                                                                      |
+| ----------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `organization`    | required                                  | Organization slug, as in `buildkite.com/<organization>`                                                                      |
+| `pipeline`        | required                                  | Pipeline slug                                                                                                                |
+| `controlPlaneUrl` | required                                  | Tunnel endpoint the runner dials: `wss://host/tunnel` or `ws://host:port/tunnel`                                             |
+| `image`           | matching release tag                      | Runner image sent to the build as `DSH_YAWN_RUNNER_IMAGE`                                                                    |
+| `readyTimeoutMs`  | top-level `readyTimeoutMs`, else `600000` | How long a build may wait for an agent before the control plane cancels it                                                   |
+| `idleMs`          | top-level `idleMs`                        | Idle delay before this profile's sandboxes checkpoint                                                                        |
+| `secretKey`       | `DSH_YAWN_REGISTRATION_TOKEN`             | Cluster secret holding the registration token; each pipeline in a cluster, and each control plane sharing one, needs its own |
 
-The API token needs `read_builds` and `write_builds`. Enter it in **Settings →
+The API token needs `read_builds` and `write_builds` for builds,
+`read_pipelines` to find the pipeline's cluster, and `read_secrets_details` and
+`write_secrets` for the registration token's secret. Its owner must be able to
+manage that cluster's secrets. Enter it in **Settings →
 Sandboxes** when creating the profile, which stores it write-only, or set
 `BUILDKITE_API_TOKEN` on the control plane. It is resolved per request, so a
 changed token reaches the next call without a restart. The token stays in the
@@ -95,9 +101,13 @@ control plane and is never sent to a build or runner. A profile whose token
 cannot be resolved does not stop the control plane; its sessions fail at the
 first prompt with the setting to fix.
 
-The control plane also needs the registration token: `registrationToken` in
-settings or `DSH_YAWN_REGISTRATION_TOKEN` in the environment. It does not
-generate one, because the pipeline must hold the same value.
+The control plane generates the registration token and stores it in the
+pipeline cluster's secret, created with an access policy for that pipeline. The
+pipeline maps the key into the job (see
+[`installations-buildkite.md`](installations-buildkite.md)), and Buildkite
+injects it when the job starts, so it never appears in the build environment
+the Builds API returns. A pipeline that is not in a cluster cannot read
+Buildkite secrets, so its profile fails to provision with that message.
 
 `controlPlaneUrl` must be reachable from the Buildkite agents. Agents are never
 on the control-plane host, and hosted agents always reach it over a network you
@@ -111,8 +121,9 @@ that serves the Web UI. See
 A Buildkite profile widens who can reach the control plane's secrets and build
 agents:
 
-- The API token can create and cancel builds on the pipeline. Anyone who can
-  read the control plane's environment can trigger jobs on your agents.
+- The API token can create and cancel builds on the pipeline and write the
+  cluster's secrets. Anyone who can read the control plane's environment can
+  trigger jobs on your agents.
 - Every agent that can take the job, and everyone who can edit the pipeline's
   steps, can read `DSH_YAWN_REGISTRATION_TOKEN` and the secrets pushed to the
   runner after it registers. Give the pipeline its own cluster and queue rather

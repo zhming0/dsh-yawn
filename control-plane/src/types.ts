@@ -48,6 +48,11 @@ export interface BuildkiteProfile {
   readyTimeoutMs: number;
   /** Idle delay before hibernating; unset uses the top-level idleMs. */
   idleMs?: number;
+  /**
+   * Cluster secret key holding the runner token. Defaults to
+   * DSH_YAWN_REGISTRATION_TOKEN; profiles sharing a cluster must differ.
+   */
+  secretKey?: string;
 }
 
 /**
@@ -105,6 +110,13 @@ export interface SandboxBackend {
   destroy(reference: BackendReference): Promise<void>;
   expireAt(reference: BackendReference, deadline: Date): Promise<void>;
   health(reference: BackendReference): Promise<boolean>;
+  /**
+   * Work to start as soon as the backend is created, before any session. The
+   * Kubernetes backend stores the runner token here so the warm pool's pods
+   * can start. A failure is only logged: the backend retries before a
+   * session needs it.
+   */
+  prepare?(): Promise<void>;
 }
 
 interface SessionRecordBase {
