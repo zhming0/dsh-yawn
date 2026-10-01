@@ -37,8 +37,9 @@ tokens.
 ## Set a secret
 
 Secrets go in through the Web UI: **Settings → Secrets**. It is the only way
-in, and values are write-only: the page lists names, never values. The scope
-selector picks **Global · All workspaces** or one repository Workspace. A name
+in, and values are write-only: the page lists names, never values, grouped
+by scope. **Add secret** stores a name under **Global · All workspaces** or one
+repository Workspace; **Replace** sets a new value for an existing one. A name
 stored in both scopes resolves to the workspace's value inside that workspace
 and to the global value everywhere else.
 

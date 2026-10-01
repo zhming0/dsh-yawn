@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react";
+
 import { controlStyle } from "./settings-shared.js";
 
 /**
@@ -14,6 +16,8 @@ interface ScopeSelectorProps {
   scope: string;
   disabled: boolean;
   onScopeChange: (scope: string) => void;
+  /** Overrides on the shared control style, for a page with its own look. */
+  style?: CSSProperties;
 }
 
 /**
@@ -27,6 +31,7 @@ export function ScopeSelector({
   scope,
   disabled,
   onScopeChange,
+  style,
 }: ScopeSelectorProps) {
   return (
     <select
@@ -34,7 +39,7 @@ export function ScopeSelector({
       value={scope}
       disabled={disabled}
       onChange={(event) => onScopeChange(event.currentTarget.value)}
-      style={controlStyle}
+      style={{ ...controlStyle, ...style }}
     >
       <option value={GLOBAL_SCOPE}>Global · All workspaces</option>
       {workspaces.map((workspace) => (

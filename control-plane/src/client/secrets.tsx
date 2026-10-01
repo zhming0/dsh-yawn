@@ -1,6 +1,11 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
 
-import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
+import {
+  Button,
+  Input,
+  Modal,
+  Tag,
+} from "@deepseek-ai/dsh-client-ui-primitives";
 import type { SettingsSectionOwnerProps } from "@deepseek-ai/dsh-client-ui-settings/client";
 
 import type { SecretSettingsView } from "../secrets-remote.js";
@@ -25,9 +30,20 @@ interface SecretsSettingsProps
   extends SettingsSectionOwnerProps,
     SecretsActions {}
 
+/** One secret, addressed by its scope: GLOBAL_SCOPE or a repository URL. */
+interface SecretRef {
+  scope: string;
+  name: string;
+}
+
+/** The open dialog: a new secret, or a new value for an existing one. */
+type Dialog = { kind: "add" } | ({ kind: "replace" } & SecretRef);
+
 /**
- * Settings page for the host credential broker, one scope at a time. Values
- * are write-only: saving one stores it, and nothing reads it back.
+ * Settings page for the host credential broker: every scope's secret names at
+ * once, grouped like the stock Agent presets page, with adding and replacing
+ * in a dialog. Values are write-only: saving one stores it, and nothing reads
+ * it back.
  */
 export function SecretsSettings({
   getSecrets,
@@ -37,9 +53,8 @@ export function SecretsSettings({
   deleteWorkspaceSecret,
 }: SecretsSettingsProps) {
   const [settings, setSettings] = useState<SecretSettingsView>();
-  const [scope, setScope] = useState(GLOBAL_SCOPE);
-  const [name, setName] = useState("");
-  const [value, setValue] = useState("");
+  const [dialog, setDialog] = useState<Dialog>();
+  const [confirming, setConfirming] = useState<SecretRef>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -47,210 +62,524 @@ export function SecretsSettings({
     getSecrets().then(setSettings, (reason) => setError(describe(reason)));
   }, [getSecrets]);
 
-  const names =
-    scope === GLOBAL_SCOPE
-      ? (settings?.global ?? [])
-      : (settings?.workspaces.find(
-          (workspace) => workspace.repositoryUrl === scope,
-        )?.names ?? []);
-  const globalNames = new Set(settings?.global ?? []);
-
-  const run = async (
-    action: () => Promise<SecretSettingsView>,
-  ): Promise<boolean> => {
+  /** Run one write; the caller decides where a failure shows. */
+  const run = async (action: () => Promise<SecretSettingsView>) => {
     setPending(true);
-    setError(undefined);
     try {
       setSettings(await action());
-      return true;
-    } catch (reason) {
-      setError(describe(reason));
-      return false;
     } finally {
       setPending(false);
     }
   };
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const trimmed = name.trim();
-    if (pending || trimmed === "" || value === "") {
-      return;
-    }
-    const saved =
+  const save = (scope: string, name: string, value: string) =>
+    run(() =>
       scope === GLOBAL_SCOPE
-        ? await run(() => setGlobalSecret(trimmed, value))
-        : await run(() => setWorkspaceSecret(scope, trimmed, value));
-    if (saved) {
-      setName("");
-      setValue("");
+        ? setGlobalSecret(name, value)
+        : setWorkspaceSecret(scope, name, value),
+    );
+
+  const remove = async ({ scope, name }: SecretRef) => {
+    setError(undefined);
+    try {
+      await run(() =>
+        scope === GLOBAL_SCOPE
+          ? deleteGlobalSecret(name)
+          : deleteWorkspaceSecret(scope, name),
+      );
+      setConfirming(undefined);
+    } catch (reason) {
+      setError(describe(reason));
     }
   };
 
-  const remove = (secretName: string) =>
-    scope === GLOBAL_SCOPE
-      ? run(() => deleteGlobalSecret(secretName))
-      : run(() => deleteWorkspaceSecret(scope, secretName));
+  const globalNames = settings?.global ?? [];
+  const workspaces = (settings?.workspaces ?? []).filter(
+    (workspace) => workspace.names.length > 0,
+  );
+
+  // A row draws its own top divider; the global card has no header above
+  // its first row, so that one goes without.
+  const rows = (scope: string, names: string[], divideFirst: boolean) =>
+    names.map((name, index) => (
+      <SecretRow
+        key={name}
+        name={name}
+        divider={divideFirst || index > 0}
+        overridesGlobal={scope !== GLOBAL_SCOPE && globalNames.includes(name)}
+        confirming={confirming?.scope === scope && confirming.name === name}
+        disabled={pending}
+        onReplace={() => {
+          setConfirming(undefined);
+          setDialog({ kind: "replace", scope, name });
+        }}
+        onDelete={() => setConfirming({ scope, name })}
+        onCancelDelete={() => setConfirming(undefined)}
+        onConfirmDelete={() => void remove({ scope, name })}
+      />
+    ));
 
   return (
-    <section style={{ maxWidth: 760, color: "var(--dsh-alias-label-primary)" }}>
-      <h2 style={{ margin: "0 0 8px", fontSize: 22 }}>Secrets</h2>
-      <p
-        style={{
-          margin: "0 0 24px",
-          color: "var(--dsw-alias-label-secondary)",
-          lineHeight: 1.5,
-        }}
-      >
-        Environment variables injected into sandbox commands. Global secrets
-        reach every sandbox; workspace secrets reach that workspace's sandboxes
-        and override a global secret of the same name. Values are write-only:
-        saving one stores it, and nothing reads it back.
+    <section style={sectionStyle}>
+      <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>Secrets</h2>
+      <p style={introStyle}>
+        Environment variables for sandbox commands. Values are write-only.
       </p>
 
       {settings === undefined && error === undefined ? (
-        <p style={{ margin: 0, color: "var(--dsw-alias-label-secondary)" }}>
-          Loading…
-        </p>
+        <p style={introStyle}>Loading…</p>
       ) : null}
 
       {settings !== undefined ? (
         <>
-          <label
-            htmlFor="dsh-yawn-secrets-scope"
-            style={{ display: "block", marginBottom: 8, fontWeight: 500 }}
-          >
-            Scope
-          </label>
-          <ScopeSelector
-            id="dsh-yawn-secrets-scope"
-            workspaces={settings.workspaces}
-            scope={scope}
-            disabled={pending}
-            onScopeChange={(nextScope) => {
-              setScope(nextScope);
-              setError(undefined);
-            }}
-          />
-
-          {names.length === 0 ? (
-            <p
-              style={{
-                margin: "16px 0 0",
-                color: "var(--dsw-alias-label-secondary)",
-              }}
-            >
-              No secrets in this scope.
-            </p>
-          ) : (
-            <ul style={{ listStyle: "none", margin: "16px 0 0", padding: 0 }}>
-              {names.map((secretName) => (
-                <li
-                  key={secretName}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 8,
-                    padding: "4px 0",
-                  }}
-                >
-                  <span style={{ minWidth: 0 }}>
-                    <code>{secretName}</code>
-                    {scope !== GLOBAL_SCOPE && globalNames.has(secretName) ? (
-                      <span
-                        style={{
-                          marginLeft: 8,
-                          color: "var(--dsw-alias-label-tertiary)",
-                          fontSize: 13,
-                        }}
-                      >
-                        overrides global
-                      </span>
-                    ) : null}
-                  </span>
-                  <Button
-                    type="button"
-                    disabled={pending}
-                    onClick={() => remove(secretName)}
-                  >
-                    Delete
-                  </Button>
+          <div style={groupStyle}>
+            <h3 style={groupHeadStyle}>Global</h3>
+            <ul style={{ ...cardStyle, ...listStyle }}>
+              {globalNames.length === 0 ? (
+                <li style={{ ...rowStyle, ...mutedStyle, borderTop: "none" }}>
+                  No global secrets yet.
                 </li>
-              ))}
+              ) : (
+                rows(GLOBAL_SCOPE, globalNames, false)
+              )}
             </ul>
-          )}
+          </div>
 
-          <form
-            onSubmit={submit}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 8,
-              marginTop: 16,
+          {workspaces.length > 0 ? (
+            <div style={{ ...groupStyle, marginTop: 20 }}>
+              <h3 style={groupHeadStyle}>Workspaces</h3>
+              {workspaces.map((workspace) => (
+                <div key={workspace.repositoryUrl} style={cardStyle}>
+                  <div style={cardHeadStyle}>
+                    <h4 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>
+                      {workspace.title}
+                    </h4>
+                    <span style={cardIdStyle}>{workspace.repositoryUrl}</span>
+                  </div>
+                  <ul style={listStyle}>
+                    {rows(workspace.repositoryUrl, workspace.names, true)}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              setConfirming(undefined);
+              setDialog({ kind: "add" });
             }}
+            style={{ ...addButtonStyle, opacity: pending ? 0.4 : 1 }}
           >
+            <span aria-hidden="true">+</span> Add secret
+          </button>
+
+          <SecretDialog
+            dialog={dialog}
+            settings={settings}
+            pending={pending}
+            onSave={save}
+            onClose={() => setDialog(undefined)}
+          />
+        </>
+      ) : null}
+
+      {error !== undefined ? (
+        <p role="alert" style={errorStyle}>
+          {error}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+interface SecretRowProps {
+  name: string;
+  divider: boolean;
+  overridesGlobal: boolean;
+  confirming: boolean;
+  disabled: boolean;
+  onReplace: () => void;
+  onDelete: () => void;
+  onCancelDelete: () => void;
+  onConfirmDelete: () => void;
+}
+
+/** One secret name with its actions; Delete asks once before it removes. */
+function SecretRow({
+  name,
+  divider,
+  overridesGlobal,
+  confirming,
+  disabled,
+  onReplace,
+  onDelete,
+  onCancelDelete,
+  onConfirmDelete,
+}: SecretRowProps) {
+  return (
+    <li style={divider ? rowStyle : { ...rowStyle, borderTop: "none" }}>
+      <span
+        style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}
+      >
+        <code style={nameStyle}>{name}</code>
+        {overridesGlobal ? <Tag tone="outline">overrides global</Tag> : null}
+      </span>
+      <span
+        style={{ display: "flex", alignItems: "center", gap: 4, flex: "none" }}
+      >
+        {confirming ? (
+          <>
+            <span style={{ ...mutedStyle, marginRight: 4 }}>Delete?</span>
+            <Button
+              type="button"
+              size="sm"
+              disabled={disabled}
+              onClick={onCancelDelete}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="primary"
+              disabled={disabled}
+              onClick={onConfirmDelete}
+              aria-label={`Confirm delete ${name}`}
+            >
+              Delete
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button
+              type="button"
+              size="sm"
+              disabled={disabled}
+              onClick={onReplace}
+              aria-label={`Replace ${name}`}
+            >
+              Replace
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={disabled}
+              onClick={onDelete}
+              aria-label={`Delete ${name}`}
+            >
+              Delete
+            </Button>
+          </>
+        )}
+      </span>
+    </li>
+  );
+}
+
+interface SecretDialogProps {
+  dialog: Dialog | undefined;
+  settings: SecretSettingsView;
+  pending: boolean;
+  onSave: (scope: string, name: string, value: string) => Promise<void>;
+  onClose: () => void;
+}
+
+/**
+ * Add a secret, or replace the value of one. Replacing fixes the name and
+ * scope, because a value cannot be read back to move it.
+ */
+function SecretDialog({
+  dialog,
+  settings,
+  pending,
+  onSave,
+  onClose,
+}: SecretDialogProps) {
+  const [scope, setScope] = useState(GLOBAL_SCOPE);
+  const [name, setName] = useState("");
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    setScope(dialog?.kind === "replace" ? dialog.scope : GLOBAL_SCOPE);
+    setName(dialog?.kind === "replace" ? dialog.name : "");
+    setValue("");
+    setError(undefined);
+  }, [dialog]);
+
+  const replacing = dialog?.kind === "replace";
+  const trimmed = name.trim();
+  const namesIn = (target: string) =>
+    target === GLOBAL_SCOPE
+      ? settings.global
+      : (settings.workspaces.find(
+          (workspace) => workspace.repositoryUrl === target,
+        )?.names ?? []);
+  const scopeTitle =
+    settings.workspaces.find((workspace) => workspace.repositoryUrl === scope)
+      ?.title ?? scope;
+
+  const replaceNote = `${
+    scope === GLOBAL_SCOPE ? "Global secret" : `Secret for ${scopeTitle}`
+  }. The new value replaces the saved one.`;
+
+  // Hints help pick a name and scope, so only adding shows them.
+  const hints: string[] = [];
+  if (!replacing) {
+    if (namesIn(scope).includes(trimmed)) {
+      hints.push("Already set here; saving replaces its value.");
+    } else if (scope !== GLOBAL_SCOPE && settings.global.includes(trimmed)) {
+      hints.push("Overrides the global value in this workspace.");
+    }
+    if (trimmed === "GITHUB_TOKEN") {
+      hints.push("Also used as the Git credential for github.com.");
+    }
+  }
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (pending || trimmed === "" || value === "") {
+      return;
+    }
+    setError(undefined);
+    try {
+      await onSave(scope, trimmed, value);
+      onClose();
+    } catch (reason) {
+      setError(describe(reason));
+    }
+  };
+
+  return (
+    <Modal
+      open={dialog !== undefined}
+      onClose={() => {
+        if (!pending) {
+          onClose();
+        }
+      }}
+      title={replacing ? `Replace ${dialog.name}` : "Add secret"}
+      {...(replacing ? { description: replaceNote } : {})}
+      closeLabel="Close"
+      footer={
+        <>
+          <Button type="button" disabled={pending} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            form="dsh-yawn-secret-form"
+            variant="primary"
+            disabled={pending || trimmed === "" || value === ""}
+          >
+            {pending ? "Saving…" : "Save"}
+          </Button>
+        </>
+      }
+    >
+      <form
+        id="dsh-yawn-secret-form"
+        onSubmit={submit}
+        style={{ display: "flex", flexDirection: "column" }}
+      >
+        {replacing ? null : (
+          <>
+            <label
+              htmlFor="dsh-yawn-secret-name"
+              style={{ ...fieldLabelStyle, marginTop: 0 }}
+            >
+              Name
+            </label>
             <Input
-              aria-label="Secret name"
-              placeholder="NAME"
+              id="dsh-yawn-secret-name"
+              data-modal-autofocus
+              placeholder="GITHUB_TOKEN"
+              autoComplete="off"
+              spellCheck={false}
               value={name}
               disabled={pending}
               onChange={(event) => setName(event.currentTarget.value)}
               style={{ width: "100%" }}
             />
-            <Input
-              aria-label="Secret value"
-              type="password"
-              placeholder="value"
-              autoComplete="off"
-              value={value}
-              disabled={pending}
-              onChange={(event) => setValue(event.currentTarget.value)}
-              style={{ width: "100%" }}
-            />
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={pending || name.trim() === "" || value === ""}
-              style={{ alignSelf: "flex-end" }}
-            >
-              Save to this scope
-            </Button>
-          </form>
-        </>
-      ) : null}
-
-      {error !== undefined ? (
-        <p
-          role="alert"
-          style={{
-            margin: "12px 0 0",
-            color: "var(--dsw-alias-state-error-primary)",
-          }}
+          </>
+        )}
+        <label
+          htmlFor="dsh-yawn-secret-value"
+          style={
+            replacing ? { ...fieldLabelStyle, marginTop: 0 } : fieldLabelStyle
+          }
         >
-          {error}
-        </p>
-      ) : null}
-
-      <p
-        style={{
-          margin: "24px 0 0",
-          color: "var(--dsw-alias-label-secondary)",
-          fontSize: 13,
-          lineHeight: 1.5,
-        }}
-      >
-        A secret named <code>GITHUB_TOKEN</code> also serves as the Git
-        credential for github.com repositories; a workspace-scoped one serves
-        that workspace's clones. A change applies before the session's next
-        command, running sessions included. Sandbox code can read injected
-        secrets, which is their purpose — scoping limits which sandbox receives
-        a value, nothing more.
-      </p>
-    </section>
+          Value
+        </label>
+        <Input
+          id="dsh-yawn-secret-value"
+          {...(replacing ? { "data-modal-autofocus": true } : {})}
+          type="password"
+          autoComplete="off"
+          value={value}
+          disabled={pending}
+          onChange={(event) => setValue(event.currentTarget.value)}
+          style={{ width: "100%" }}
+        />
+        {replacing ? null : (
+          <>
+            <label htmlFor="dsh-yawn-secret-scope" style={fieldLabelStyle}>
+              Scope
+            </label>
+            <ScopeSelector
+              id="dsh-yawn-secret-scope"
+              workspaces={settings.workspaces}
+              scope={scope}
+              disabled={pending}
+              onScopeChange={setScope}
+              style={selectStyle}
+            />
+          </>
+        )}
+        {hints.length > 0 ? (
+          <p style={{ ...mutedStyle, margin: "8px 0 0", lineHeight: 1.5 }}>
+            {hints.join(" ")}
+          </p>
+        ) : null}
+        {error !== undefined ? (
+          <p role="alert" style={{ ...errorStyle, margin: "8px 0 0" }}>
+            {error}
+          </p>
+        ) : null}
+      </form>
+    </Modal>
   );
 }
 
 function describe(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
+
+// Sizes and tokens follow the stock Agent presets page, so the two read as
+// one settings surface.
+const sectionStyle: CSSProperties = {
+  maxWidth: 720,
+  display: "flex",
+  flexDirection: "column",
+  gap: 12,
+  color: "var(--dsw-alias-label-primary)",
+};
+
+const introStyle: CSSProperties = {
+  margin: 0,
+  fontSize: 13,
+  color: "var(--dsw-alias-label-tertiary)",
+};
+
+const groupStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 10,
+};
+
+const groupHeadStyle: CSSProperties = {
+  margin: 0,
+  fontSize: 12,
+  fontWeight: 600,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  color: "var(--dsw-alias-label-tertiary)",
+};
+
+const listStyle: CSSProperties = {
+  listStyle: "none",
+  margin: 0,
+  padding: 0,
+};
+
+const cardStyle: CSSProperties = {
+  border: "0.5px solid var(--dsw-alias-settings-card-stroke)",
+  borderRadius: "var(--dsw-radius-xl)",
+  background: "var(--dsw-alias-settings-card-fill)",
+  overflow: "hidden",
+};
+
+const cardHeadStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "baseline",
+  justifyContent: "space-between",
+  gap: 12,
+  padding: "12px 16px",
+};
+
+const cardIdStyle: CSSProperties = {
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontFamily: "var(--dsw-font-mono, ui-monospace, monospace)",
+  fontSize: 11,
+  color: "var(--dsw-alias-label-tertiary)",
+};
+
+const rowStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+  minHeight: 44,
+  boxSizing: "border-box",
+  padding: "6px 10px 6px 16px",
+  borderTop: "0.5px solid var(--dsw-alias-border-l2)",
+};
+
+const nameStyle: CSSProperties = {
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontFamily: "var(--dsw-font-mono, ui-monospace, monospace)",
+  fontSize: 13,
+};
+
+const mutedStyle: CSSProperties = {
+  fontSize: 13,
+  color: "var(--dsw-alias-label-tertiary)",
+};
+
+const addButtonStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+  height: 44,
+  marginTop: 8,
+  boxSizing: "border-box",
+  border: "1px dashed var(--dsw-alias-border-l3)",
+  borderRadius: "var(--dsw-radius-lg)",
+  background: "none",
+  font: "inherit",
+  fontSize: 14,
+  color: "var(--dsw-alias-label-primary)",
+  cursor: "pointer",
+};
+
+const fieldLabelStyle: CSSProperties = {
+  margin: "14px 0 6px",
+  fontSize: 13,
+  fontWeight: 500,
+};
+
+/** The native select drawn like the Input primitive beside it. */
+const selectStyle: CSSProperties = {
+  height: 32,
+  minHeight: 0,
+  padding: "0 8px",
+  border: "0.5px solid var(--dsw-alias-border-l4)",
+  borderRadius: "var(--dsw-radius-md)",
+  fontSize: 14,
+};
+
+const errorStyle: CSSProperties = {
+  margin: 0,
+  fontSize: 13,
+  color: "var(--dsw-alias-state-error-primary)",
+};
