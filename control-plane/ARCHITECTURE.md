@@ -133,7 +133,9 @@ Streamable HTTP. An enabled server's tools join the model's tool list as
 `mcp-resources` service, which dsh-base mounts. A token is sent as a static
 `Authorization: Bearer` header and is write-only: the browser receives only
 whether a token is saved, never its value, and saving with **Remove the saved
-token** clears one. Adding, editing, disabling, or removing a server mounts or
+token** clears one. Each server shows as a card with its live status and an
+Enabled switch; **Add server** and **Edit** open a dialog, and Delete asks
+for confirmation. Adding, editing, disabling, or removing a server mounts or
 unmounts its tools for new tool calls without restarting the host, and **Test
 connection** probes an unsaved entry without saving it — its probe tools live
 in the shared registry until the probe is disposed, so a session can see them
