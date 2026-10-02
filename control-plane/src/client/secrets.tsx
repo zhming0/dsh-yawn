@@ -10,6 +10,23 @@ import type { SettingsSectionOwnerProps } from "@deepseek-ai/dsh-client-ui-setti
 
 import type { SecretSettingsView } from "../secrets-remote.js";
 import { GLOBAL_SCOPE, ScopeSelector } from "./scope-selector.js";
+import {
+  addButtonStyle,
+  cardStyle,
+  dialogFormStyle,
+  errorStyle,
+  fieldLabelStyle,
+  firstFieldLabelStyle,
+  groupHeadStyle,
+  groupStyle,
+  hintStyle,
+  introStyle,
+  listStyle,
+  monoStyle,
+  mutedStyle,
+  sectionStyle,
+  titleStyle,
+} from "./settings-page-style.js";
 
 interface SecretsActions {
   getSecrets: () => Promise<SecretSettingsView>;
@@ -121,7 +138,7 @@ export function SecretsSettings({
 
   return (
     <section style={sectionStyle}>
-      <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>Secrets</h2>
+      <h2 style={titleStyle}>Secrets</h2>
       <p style={introStyle}>
         Environment variables for sandbox commands. Values are write-only.
       </p>
@@ -154,7 +171,9 @@ export function SecretsSettings({
                     <h4 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>
                       {workspace.title}
                     </h4>
-                    <span style={cardIdStyle}>{workspace.repositoryUrl}</span>
+                    <span style={{ ...monoStyle, ...mutedStyle, fontSize: 11 }}>
+                      {workspace.repositoryUrl}
+                    </span>
                   </div>
                   <ul style={listStyle}>
                     {rows(workspace.repositoryUrl, workspace.names, true)}
@@ -380,17 +399,10 @@ function SecretDialog({
         </>
       }
     >
-      <form
-        id="dsh-yawn-secret-form"
-        onSubmit={submit}
-        style={{ display: "flex", flexDirection: "column" }}
-      >
+      <form id="dsh-yawn-secret-form" onSubmit={submit} style={dialogFormStyle}>
         {replacing ? null : (
           <>
-            <label
-              htmlFor="dsh-yawn-secret-name"
-              style={{ ...fieldLabelStyle, marginTop: 0 }}
-            >
+            <label htmlFor="dsh-yawn-secret-name" style={firstFieldLabelStyle}>
               Name
             </label>
             <Input
@@ -408,9 +420,7 @@ function SecretDialog({
         )}
         <label
           htmlFor="dsh-yawn-secret-value"
-          style={
-            replacing ? { ...fieldLabelStyle, marginTop: 0 } : fieldLabelStyle
-          }
+          style={replacing ? firstFieldLabelStyle : fieldLabelStyle}
         >
           Value
         </label>
@@ -439,11 +449,7 @@ function SecretDialog({
             />
           </>
         )}
-        {hints.length > 0 ? (
-          <p style={{ ...mutedStyle, margin: "8px 0 0", lineHeight: 1.5 }}>
-            {hints.join(" ")}
-          </p>
-        ) : null}
+        {hints.length > 0 ? <p style={hintStyle}>{hints.join(" ")}</p> : null}
         {error !== undefined ? (
           <p role="alert" style={{ ...errorStyle, margin: "8px 0 0" }}>
             {error}
@@ -458,66 +464,12 @@ function describe(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
 
-// Sizes and tokens follow the stock Agent presets page, so the two read as
-// one settings surface.
-const sectionStyle: CSSProperties = {
-  maxWidth: 720,
-  display: "flex",
-  flexDirection: "column",
-  gap: 12,
-  color: "var(--dsw-alias-label-primary)",
-};
-
-const introStyle: CSSProperties = {
-  margin: 0,
-  fontSize: 13,
-  color: "var(--dsw-alias-label-tertiary)",
-};
-
-const groupStyle: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: 10,
-};
-
-const groupHeadStyle: CSSProperties = {
-  margin: 0,
-  fontSize: 12,
-  fontWeight: 600,
-  letterSpacing: "0.06em",
-  textTransform: "uppercase",
-  color: "var(--dsw-alias-label-tertiary)",
-};
-
-const listStyle: CSSProperties = {
-  listStyle: "none",
-  margin: 0,
-  padding: 0,
-};
-
-const cardStyle: CSSProperties = {
-  border: "0.5px solid var(--dsw-alias-settings-card-stroke)",
-  borderRadius: "var(--dsw-radius-xl)",
-  background: "var(--dsw-alias-settings-card-fill)",
-  overflow: "hidden",
-};
-
 const cardHeadStyle: CSSProperties = {
   display: "flex",
   alignItems: "baseline",
   justifyContent: "space-between",
   gap: 12,
   padding: "12px 16px",
-};
-
-const cardIdStyle: CSSProperties = {
-  minWidth: 0,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-  fontFamily: "var(--dsw-font-mono, ui-monospace, monospace)",
-  fontSize: 11,
-  color: "var(--dsw-alias-label-tertiary)",
 };
 
 const rowStyle: CSSProperties = {
@@ -531,42 +483,7 @@ const rowStyle: CSSProperties = {
   borderTop: "0.5px solid var(--dsw-alias-border-l2)",
 };
 
-const nameStyle: CSSProperties = {
-  minWidth: 0,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-  fontFamily: "var(--dsw-font-mono, ui-monospace, monospace)",
-  fontSize: 13,
-};
-
-const mutedStyle: CSSProperties = {
-  fontSize: 13,
-  color: "var(--dsw-alias-label-tertiary)",
-};
-
-const addButtonStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: 6,
-  height: 44,
-  marginTop: 8,
-  boxSizing: "border-box",
-  border: "1px dashed var(--dsw-alias-border-l3)",
-  borderRadius: "var(--dsw-radius-lg)",
-  background: "none",
-  font: "inherit",
-  fontSize: 14,
-  color: "var(--dsw-alias-label-primary)",
-  cursor: "pointer",
-};
-
-const fieldLabelStyle: CSSProperties = {
-  margin: "14px 0 6px",
-  fontSize: 13,
-  fontWeight: 500,
-};
+const nameStyle: CSSProperties = { ...monoStyle, fontSize: 13 };
 
 /** The native select drawn like the Input primitive beside it. */
 const selectStyle: CSSProperties = {
@@ -576,10 +493,4 @@ const selectStyle: CSSProperties = {
   border: "0.5px solid var(--dsw-alias-border-l4)",
   borderRadius: "var(--dsw-radius-md)",
   fontSize: 14,
-};
-
-const errorStyle: CSSProperties = {
-  margin: 0,
-  fontSize: 13,
-  color: "var(--dsw-alias-state-error-primary)",
 };
