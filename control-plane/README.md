@@ -414,9 +414,10 @@ and a chat transcript is durable. They go through the Web UI's
 **Settings → Secrets** page, which stores them in the secret store file under
 `stateDir`.
 
-The page edits two kinds of scope, picked in the same Global/Workspace
-selector the Instructions page uses (the stock settings shell has no
-per-workspace pages). Global secrets reach every sandbox. A workspace secret
+The page lists every secret name, grouped by scope: Global, then each
+Workspace that has secrets. **Add secret** picks the scope (the stock settings
+shell has no per-workspace pages), and **Replace** sets a new value for an
+existing name. Global secrets reach every sandbox. A workspace secret
 reaches that workspace's sandboxes and overrides a global secret of the same
 name; a sandbox receives exactly the global set with its workspace's
 overrides applied. Scoping limits which sandbox receives a value — one control
