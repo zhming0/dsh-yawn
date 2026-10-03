@@ -1,30 +1,67 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
+import type {
+  StoredOAuthClientInformation,
+  StoredOAuthTokens,
+} from "@modelcontextprotocol/client";
+
+/** How the control plane authenticates to one server. */
+export type McpAuth = "none" | "bearer" | "oauth";
+
+export const mcpAuthModes: readonly McpAuth[] = ["none", "bearer", "oauth"];
+
 /**
- * One remote Streamable HTTP MCP server. The token never leaves the host.
- * `token: null` clears a saved token on upsert; omitting it, or sending an
- * empty string, keeps whatever is saved.
+ * One remote Streamable HTTP MCP server, as the browser edits it. The token
+ * never leaves the host. `token` applies to `bearer` only: `null` clears a
+ * saved token on upsert; omitting it, or sending an empty string, keeps
+ * whatever is saved.
  */
 export interface McpServerEntry {
   serverName: string;
   url: string;
+  auth: McpAuth;
   token?: string | null;
+  enabled: boolean;
+}
+
+/**
+ * What an OAuth sign-in leaves behind. The client registration is kept so a
+ * later sign-in reuses it; it is bound to the redirect URI it was registered
+ * with. Nothing here is ever sent to the browser.
+ */
+export interface McpOAuthCredential {
+  redirectUri: string;
+  client: StoredOAuthClientInformation;
+  tokens: StoredOAuthTokens;
+  /** When the access token expires, in epoch milliseconds, if the server said. */
+  expiresAt?: number;
+}
+
+/** The persisted record: the entry plus the secrets its auth mode uses. */
+interface StoredServer {
+  serverName: string;
+  url: string;
+  auth: McpAuth;
+  token?: string;
+  oauth?: McpOAuthCredential;
   enabled: boolean;
 }
 
 interface McpFile {
   version: 1;
-  servers: McpServerEntry[];
+  servers: StoredServer[];
 }
 
 export interface McpStoreOptions {
   path: string;
+  /** Clock for access-token expiry; tests replace it. */
+  now?: () => number;
 }
 
 const serverNamePattern = /^[A-Za-z0-9_-]{1,32}$/;
 
-/** Reject the two fields the mcp-client and the HTTP transport both depend on. */
+/** Reject the fields the mcp-client and the HTTP transport depend on. */
 export function validateMcpServerEntry(entry: McpServerEntry): void {
   if (!serverNamePattern.test(entry.serverName)) {
     throw new Error(
@@ -50,6 +87,9 @@ export function validateMcpServerEntry(entry: McpServerEntry): void {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`MCP server URL must use http or https: ${entry.url}`);
   }
+  if (!mcpAuthModes.includes(entry.auth)) {
+    throw new Error(`invalid MCP authentication method: ${String(entry.auth)}`);
+  }
 }
 
 function parseUrl(value: string): URL {
@@ -64,8 +104,11 @@ function parseUrl(value: string): URL {
 export class McpServerStore {
   private state: McpFile = { version: 1, servers: [] };
   private writeChain: Promise<void> = Promise.resolve();
+  private readonly now: () => number;
 
-  constructor(private readonly options: McpStoreOptions) {}
+  constructor(private readonly options: McpStoreOptions) {
+    this.now = options.now ?? Date.now;
+  }
 
   async initialize(): Promise<void> {
     await mkdir(dirname(this.options.path), { recursive: true, mode: 0o700 });
@@ -88,70 +131,124 @@ export class McpServerStore {
     }
   }
 
-  /** Every entry without its token, sorted by name for stable output. */
+  /** Every entry without its secrets, sorted by name for stable output. */
   list(): McpServerEntry[] {
-    return sorted(this.state.servers).map(({ serverName, url, enabled }) => ({
-      serverName,
-      url,
-      enabled,
-    }));
+    return sorted(this.state.servers).map(publicEntry);
   }
 
-  /** One entry without its token; undefined when nothing is stored. */
+  /** One entry without its secrets; undefined when nothing is stored. */
   get(serverName: string): McpServerEntry | undefined {
-    const entry = find(this.state.servers, serverName);
-    if (entry === undefined) {
-      return undefined;
-    }
-    return {
-      serverName: entry.serverName,
-      url: entry.url,
-      enabled: entry.enabled,
-    };
+    const stored = find(this.state.servers, serverName);
+    return stored === undefined ? undefined : publicEntry(stored);
   }
 
-  /** The one accessor that returns a token, for building a request header. */
+  /**
+   * The one accessor that returns a secret, for building a request header:
+   * the saved bearer token, or an OAuth access token that has not expired.
+   */
   tokenFor(serverName: string): string | undefined {
-    const token = find(this.state.servers, serverName)?.token;
-    return token ?? undefined;
+    const stored = find(this.state.servers, serverName);
+    switch (stored?.auth) {
+      case "bearer":
+        return stored.token;
+      case "oauth":
+        return stored.oauth !== undefined && !this.expired(stored.oauth)
+          ? stored.oauth.tokens.access_token
+          : undefined;
+      default:
+        return undefined;
+    }
+  }
+
+  /** Whether a bearer token is saved; the browser sees only this. */
+  hasBearerToken(serverName: string): boolean {
+    const stored = find(this.state.servers, serverName);
+    return stored?.auth === "bearer" && stored.token !== undefined;
+  }
+
+  /** The saved OAuth sign-in, expired or not. */
+  oauthFor(serverName: string): McpOAuthCredential | undefined {
+    const stored = find(this.state.servers, serverName);
+    return stored?.auth === "oauth" ? stored.oauth : undefined;
+  }
+
+  /**
+   * The OAuth sign-in state the browser may see: none, expired, or valid,
+   * with the expiry time when the server gave a lifetime.
+   */
+  oauthStatus(
+    serverName: string,
+  ):
+    | { kind: "none" }
+    | { kind: "expired" }
+    | { kind: "valid"; until?: number } {
+    const oauth = this.oauthFor(serverName);
+    if (oauth === undefined) {
+      return { kind: "none" };
+    }
+    if (this.expired(oauth)) {
+      return { kind: "expired" };
+    }
+    return oauth.expiresAt === undefined
+      ? { kind: "valid" }
+      : { kind: "valid", until: oauth.expiresAt };
   }
 
   /**
    * Store one entry. An omitted or empty token keeps the saved token, so the
    * browser can edit a server without ever receiving the value back; `null`
    * clears it, which is the only way to remove one without deleting the server.
+   * Secrets that belong to another auth mode are dropped, and so is an OAuth
+   * sign-in once the URL changes, because it authorizes the old server.
    */
   async upsert(entry: McpServerEntry): Promise<void> {
     validateMcpServerEntry(entry);
-    const kept = entry.token === undefined || entry.token === "";
-    const token =
-      entry.token === null
-        ? undefined
-        : kept
-          ? this.tokenFor(entry.serverName)
-          : entry.token;
-    const stored: McpServerEntry =
-      token === undefined
-        ? {
-            serverName: entry.serverName,
-            url: entry.url,
-            enabled: entry.enabled,
-          }
-        : {
-            serverName: entry.serverName,
-            url: entry.url,
-            token,
-            enabled: entry.enabled,
-          };
-    this.state = {
-      version: 1,
-      servers: [
-        ...this.state.servers.filter(
-          (candidate) => candidate.serverName !== entry.serverName,
-        ),
-        stored,
-      ],
+    const previous = find(this.state.servers, entry.serverName);
+    const stored: StoredServer = {
+      serverName: entry.serverName,
+      url: entry.url,
+      auth: entry.auth,
+      enabled: entry.enabled,
     };
+    if (entry.auth === "bearer") {
+      const token =
+        entry.token === null
+          ? undefined
+          : entry.token === undefined || entry.token === ""
+            ? previous?.auth === "bearer"
+              ? previous.token
+              : undefined
+            : entry.token;
+      if (token !== undefined) {
+        stored.token = token;
+      }
+    }
+    if (
+      entry.auth === "oauth" &&
+      previous?.auth === "oauth" &&
+      previous.url === entry.url &&
+      previous.oauth !== undefined
+    ) {
+      stored.oauth = previous.oauth;
+    }
+    this.replace(stored);
+    await this.persist();
+  }
+
+  /** Save a completed OAuth sign-in for a server that still expects one. */
+  async saveOAuth(
+    serverName: string,
+    url: string,
+    oauth: McpOAuthCredential,
+  ): Promise<void> {
+    await this.refresh();
+    const stored = find(this.state.servers, serverName);
+    if (stored === undefined || stored.auth !== "oauth" || stored.url !== url) {
+      throw new Error(
+        `MCP server ${serverName} changed while it was being authorized; connect it again`,
+      );
+    }
+    this.replace({ ...stored, oauth });
     await this.persist();
   }
 
@@ -164,6 +261,22 @@ export class McpServerStore {
     }
     this.state = { version: 1, servers };
     await this.persist();
+  }
+
+  private expired(oauth: McpOAuthCredential): boolean {
+    return oauth.expiresAt !== undefined && oauth.expiresAt <= this.now();
+  }
+
+  private replace(stored: StoredServer): void {
+    this.state = {
+      version: 1,
+      servers: [
+        ...this.state.servers.filter(
+          (candidate) => candidate.serverName !== stored.serverName,
+        ),
+        stored,
+      ],
+    };
   }
 
   private persist(): Promise<void> {
@@ -182,14 +295,23 @@ export class McpServerStore {
   }
 }
 
+function publicEntry(stored: StoredServer): McpServerEntry {
+  return {
+    serverName: stored.serverName,
+    url: stored.url,
+    auth: stored.auth,
+    enabled: stored.enabled,
+  };
+}
+
 function find(
-  servers: McpServerEntry[],
+  servers: StoredServer[],
   serverName: string,
-): McpServerEntry | undefined {
+): StoredServer | undefined {
   return servers.find((entry) => entry.serverName === serverName);
 }
 
-function sorted(servers: McpServerEntry[]): McpServerEntry[] {
+function sorted(servers: StoredServer[]): StoredServer[] {
   // Plain code-unit order keeps the file and the API stable across locales.
   return [...servers].sort((left, right) =>
     left.serverName < right.serverName
@@ -215,23 +337,72 @@ function parseMcpFile(value: unknown): McpFile {
 }
 
 /** Keep only the known fields so retired ones drop out on the next write. */
-function parseEntry(value: unknown): McpServerEntry {
+function parseEntry(value: unknown): StoredServer {
   if (typeof value !== "object" || value === null) {
-    throw new Error("MCP server file has an unsupported format");
+    throw unsupported();
   }
   const record = value as Record<string, unknown>;
-  const { serverName, url, token, enabled } = record;
+  const { serverName, url, token, enabled, auth, oauth } = record;
   if (
     typeof serverName !== "string" ||
     typeof url !== "string" ||
     (token !== undefined && token !== null && typeof token !== "string") ||
-    (enabled !== undefined && typeof enabled !== "boolean")
+    (enabled !== undefined && typeof enabled !== "boolean") ||
+    (auth !== undefined && !mcpAuthModes.includes(auth as McpAuth))
   ) {
-    throw new Error("MCP server file has an unsupported format");
+    throw unsupported();
   }
-  const entry: McpServerEntry = { serverName, url, enabled: enabled ?? true };
   // A hand-edited `null` reads as no token, the same as omitting it.
-  return token === undefined || token === null ? entry : { ...entry, token };
+  const savedToken = typeof token === "string" ? token : undefined;
+  // Files written before auth modes existed: a saved token meant bearer.
+  const mode: McpAuth =
+    (auth as McpAuth | undefined) ??
+    (savedToken === undefined ? "none" : "bearer");
+  const entry: StoredServer = {
+    serverName,
+    url,
+    auth: mode,
+    enabled: enabled ?? true,
+  };
+  if (mode === "bearer" && savedToken !== undefined) {
+    entry.token = savedToken;
+  }
+  if (mode === "oauth" && oauth !== undefined && oauth !== null) {
+    entry.oauth = parseOAuth(oauth);
+  }
+  return entry;
+}
+
+function parseOAuth(value: unknown): McpOAuthCredential {
+  if (typeof value !== "object" || value === null) {
+    throw unsupported();
+  }
+  const { redirectUri, client, tokens, expiresAt } = value as Record<
+    string,
+    unknown
+  >;
+  if (
+    typeof redirectUri !== "string" ||
+    typeof client !== "object" ||
+    client === null ||
+    typeof (client as Record<string, unknown>).client_id !== "string" ||
+    typeof tokens !== "object" ||
+    tokens === null ||
+    typeof (tokens as Record<string, unknown>).access_token !== "string" ||
+    (expiresAt !== undefined && typeof expiresAt !== "number")
+  ) {
+    throw unsupported();
+  }
+  const credential: McpOAuthCredential = {
+    redirectUri,
+    client: client as StoredOAuthClientInformation,
+    tokens: tokens as StoredOAuthTokens,
+  };
+  return expiresAt === undefined ? credential : { ...credential, expiresAt };
+}
+
+function unsupported(): Error {
+  return new Error("MCP server file has an unsupported format");
 }
 
 function isNotFound(error: unknown): error is NodeJS.ErrnoException {

@@ -42,6 +42,7 @@ declare module "@deepseek-ai/dsh-typert-protocol" {
     "sandboxManager/deleteMcpServer": SandboxManagerRemote["deleteMcpServer"];
     "sandboxManager/retryMcpServer": SandboxManagerRemote["retryMcpServer"];
     "sandboxManager/testMcpServer": SandboxManagerRemote["testMcpServer"];
+    "sandboxManager/startMcpAuthorization": SandboxManagerRemote["startMcpAuthorization"];
     "sandboxManager/getInstructions": SandboxManagerRemote["getInstructions"];
     "sandboxManager/setGlobalInstructions": SandboxManagerRemote["setGlobalInstructions"];
     "sandboxManager/setWorkspaceInstructions": SandboxManagerRemote["setWorkspaceInstructions"];

@@ -7,6 +7,7 @@ import type { Agent } from "@deepseek-ai/dsh-agent";
 import type {} from "@deepseek-ai/dsh-storage-domain";
 import { SessionId, type Session } from "@deepseek-ai/dsh-session";
 // Type-only: puts the optional `settings` service on the Context below.
+import type {} from "@deepseek-ai/dsh-host-webserver";
 import type {} from "@deepseek-ai/dsh-settings";
 import type {} from "@deepseek-ai/dsh-typert-registry";
 import { TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
@@ -40,6 +41,7 @@ import {
 import { InstructionStore } from "../instruction-store.js";
 import type { InstructionSettingsView } from "../instructions-remote.js";
 import { ManagedInstructions } from "../managed-instructions.js";
+import { MCP_OAUTH_CALLBACK_PATH, McpOAuth } from "../mcp-oauth.js";
 import { McpPool } from "../mcp-pool.js";
 import type { McpServerView, McpTestResult } from "../mcp-remote.js";
 import { McpServerStore, type McpServerEntry } from "../mcp-store.js";
@@ -142,6 +144,7 @@ export class SandboxManager extends TypertRemoteService {
   private readonly instructions: ManagedInstructions;
   private readonly mcpStore: McpServerStore;
   private readonly mcpPool: McpPool;
+  private readonly mcpOAuth: McpOAuth;
   private readonly workspaceRegistry: WorkspaceRegistryLike | undefined;
   private readonly engine: SandboxLifecycle;
   private readonly registry: ProfileRegistry;
@@ -218,6 +221,10 @@ export class SandboxManager extends TypertRemoteService {
         store: this.mcpStore,
         warn: (message) => this.ctx.logger("sandbox").warn(message),
       });
+    this.mcpOAuth = new McpOAuth({
+      store: this.mcpStore,
+      authorized: () => this.mcpPool.sync(),
+    });
     const fileIndexes = new FileIndexStore(
       join(this.config.stateDir, "file-index"),
     );
@@ -388,6 +395,20 @@ export class SandboxManager extends TypertRemoteService {
 
     ctx.inject(["typert"], (typertCtx) => {
       typertCtx.typert.register(yawnHost);
+    });
+    // The OAuth callback is a browser navigation back from the authorization
+    // server, so it needs the Web surface's server; headless has none.
+    ctx.inject(["webServer"], (webCtx) => {
+      webCtx.effect(
+        () =>
+          webCtx.webServer.register({
+            kind: "exact",
+            path: MCP_OAUTH_CALLBACK_PATH,
+            handler: (request, response) =>
+              this.mcpOAuth.handleCallback(request, response),
+          }),
+        `sandbox-manager: ${MCP_OAUTH_CALLBACK_PATH} route`,
+      );
     });
 
     // Provisioning waits for the first prompt: `agent/created` fires as soon
@@ -698,6 +719,15 @@ export class SandboxManager extends TypertRemoteService {
   async testMcpServer(entry: McpServerEntry): Promise<McpTestResult> {
     await this.ready;
     return this.mcpPool.testConnection(entry);
+  }
+
+  /** Begin an OAuth sign-in for one saved server; answers the URL to open. */
+  async startMcpAuthorization(
+    serverName: string,
+    origin: string,
+  ): Promise<string> {
+    await this.ready;
+    return this.mcpOAuth.start(serverName, origin);
   }
 
   async getInstructions(): Promise<InstructionSettingsView> {
