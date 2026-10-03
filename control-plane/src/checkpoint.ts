@@ -12,10 +12,18 @@ import type { RunnerClient } from "./runner-client.js";
  * the host, and unpacks it into the next sandbox. It also carries the
  * artifacts folder, which lives outside the checkout and so cannot ride the
  * bundle.
+ *
+ * A session without a repository (the Scratch Workspace) has no Git half: its
+ * working directory has no remote to diff against, so carrying it would mean
+ * carrying all of it. Only the artifacts folder comes back, and the prompt
+ * says so up front.
  */
 export interface Checkpoint {
-  /** HEAD when the sandbox was released, after the checkpoint commit if any. */
-  commit: string;
+  /**
+   * HEAD when the sandbox was released, after the checkpoint commit if any.
+   * Absent for a session without a repository.
+   */
+  commit?: string;
   /** Branch the session had checked out, absent when HEAD was detached. */
   branch?: string;
   /**
@@ -132,12 +140,15 @@ fi
 
 /** The Git half of a checkpoint: what the first save script prints. */
 export interface GitCheckpoint {
-  checkpoint: Checkpoint;
+  checkpoint: Checkpoint & { commit: string };
   /** Git bundle bytes; empty when the remote already has the commit. */
   bundle: Uint8Array;
 }
 
-export interface SavedCheckpoint extends GitCheckpoint {
+export interface SavedCheckpoint {
+  checkpoint: Checkpoint;
+  /** Git bundle bytes; empty when the remote has the commit or there is no repository. */
+  bundle: Uint8Array;
   /** Tar of the artifacts folder; empty when there was nothing or it was dropped. */
   artifacts: Uint8Array;
   /**
@@ -238,7 +249,7 @@ function isCompleteTar(tar: Buffer): boolean {
 }
 
 export function restoreEnvironment(
-  checkpoint: Checkpoint,
+  checkpoint: Checkpoint & { commit: string },
   bundle: Uint8Array,
 ): Record<string, string> {
   return {
@@ -252,18 +263,23 @@ export function restoreEnvironment(
  * Commit the session's working tree in the still-running sandbox and pull the
  * bundle and the artifacts folder out. A failed or oversized artifacts save
  * does not fail the checkpoint: the Git work is what must not be lost, so the
- * folder is left behind and recorded as dropped instead.
+ * folder is left behind and recorded as dropped instead. Without a repository
+ * there is no Git work, and the checkpoint is the artifacts folder alone.
  */
 export async function saveCheckpoint(
   client: RunnerClient,
   workspace: string,
+  withRepository: boolean,
 ): Promise<SavedCheckpoint> {
-  const output = await runScript(client, workspace, SAVE_SCRIPT, {
-    env: {},
-    stdin: new Uint8Array(),
-    stdoutMaxBytes: MAX_BUNDLE_BYTES,
-  });
-  const git = parseSaveOutput(output);
+  const git = withRepository
+    ? parseSaveOutput(
+        await runScript(client, workspace, SAVE_SCRIPT, {
+          env: {},
+          stdin: new Uint8Array(),
+          stdoutMaxBytes: MAX_BUNDLE_BYTES,
+        }),
+      )
+    : { checkpoint: {}, bundle: new Uint8Array() };
   const artifacts = await saveArtifacts(client, workspace);
   if ("error" in artifacts) {
     return {
@@ -306,11 +322,14 @@ export async function restoreCheckpoint(
   bundle: Uint8Array,
   artifacts: Uint8Array,
 ): Promise<void> {
-  await runScript(client, workspace, RESTORE_SCRIPT, {
-    env: restoreEnvironment(checkpoint, bundle),
-    stdin: bundle,
-    stdoutMaxBytes: 4096,
-  });
+  const { commit } = checkpoint;
+  if (commit !== undefined) {
+    await runScript(client, workspace, RESTORE_SCRIPT, {
+      env: restoreEnvironment({ ...checkpoint, commit }, bundle),
+      stdin: bundle,
+      stdoutMaxBytes: 4096,
+    });
+  }
   if (artifacts.length > 0) {
     await runScript(client, workspace, RESTORE_ARTIFACTS_SCRIPT, {
       env: { DSH_YAWN_ARTIFACTS_DIR: artifactsDirectory(workspace) },

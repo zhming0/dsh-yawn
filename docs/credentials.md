@@ -41,7 +41,8 @@ in, and values are write-only: the page lists names, never values, grouped
 by scope. **Add secret** stores a name under **Global · All workspaces** or one
 repository Workspace; **Replace** sets a new value for an existing one. A name
 stored in both scopes resolves to the workspace's value inside that workspace
-and to the global value everywhere else.
+and to the global value everywhere else. The Scratch Workspace has no
+repository and no scope of its own, so its sessions get the global secrets.
 
 A change applies before the session's next command, including to running
 sessions: before every command the control plane re-reads the store and pushes

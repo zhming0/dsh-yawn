@@ -3,16 +3,16 @@ import type { Context } from "@deepseek-ai/cordis";
 import type {} from "@deepseek-ai/dsh-api-workspace-controller";
 
 /**
- * Keeps fresh installations of this distribution on the repository flow.
+ * Keeps fresh installations off dsh's automatic default Workspace.
  *
  * dsh 0.1.7's Web client auto-creates a default Workspace on an empty
  * installation (`workspaces.initializeDefault`), placed under the host's
- * Documents directory. This product picks workspaces by repository URL, the
- * control-plane image has no Documents directory to resolve, and a blank
- * session in a default Workspace would carry sandbox bookkeeping nobody
- * asked for. Answering `undefined` is the controller's own "ineligible"
- * outcome: the client shows no error and leaves workspace selection — this
- * package's repository flow — to the user.
+ * Documents directory, which the control-plane image does not have. This
+ * product's Scratch Workspace takes its place: the sandbox manager registers
+ * it at boot (scratch-workspace.ts), so an installation is never empty and the
+ * client opens a blank session there instead. Answering `undefined` is the
+ * controller's own "ineligible" outcome for the moment before that
+ * registration lands: the client shows no error.
  *
  * The wait-not-inject shape matches the other optional-surface rows: a
  * headless profile without the Web bundle still boots with this row present.

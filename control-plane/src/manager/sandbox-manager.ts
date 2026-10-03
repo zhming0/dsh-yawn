@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import type { Context } from "@deepseek-ai/cordis";
@@ -56,6 +56,10 @@ import type { SandboxSettingsView } from "../sandbox-settings-remote.js";
 import type { SecretSettingsView } from "../secrets-remote.js";
 import type { SandboxStatusView } from "../sandbox-status-remote.js";
 import type { SessionProfileView } from "../session-profile-remote.js";
+import {
+  installScratchWorkspace,
+  scratchWorkspacePath,
+} from "../scratch-workspace.js";
 import { SessionStore } from "../state-store.js";
 import { TunnelServer, type RunnerGateway } from "../tunnel.js";
 import type {
@@ -130,6 +134,8 @@ export class SandboxManager extends TypertRemoteService {
   static Config = configSchema;
 
   readonly workspace: string;
+  /** Host directory of the Scratch Workspace, whose sessions have no repository. */
+  readonly scratchWorkspace: string;
   private readonly config: ResolvedConfig;
   /** The settings slice that can change while the host runs. */
   private readonly runtime: RuntimeSettings;
@@ -222,6 +228,8 @@ export class SandboxManager extends TypertRemoteService {
       join(this.config.stateDir, "file-index"),
     );
     this.registrationToken = loadRegistrationToken(this.config.stateDir);
+    // After the token load, which creates the state directory on first boot.
+    this.scratchWorkspace = scratchWorkspacePath(this.config.stateDir);
     if (dependencies.gateway === undefined) {
       this.ownedTunnel = new TunnelServer({
         port: this.config.tunnel.port,
@@ -338,8 +346,10 @@ export class SandboxManager extends TypertRemoteService {
         new InstructionStore(join(this.config.stateDir, "instructions.json")),
       stateDir: this.config.stateDir,
       ensureRunning: (agent) => this.ensureRunning(agent),
+      // The Scratch Workspace's empty URL is no scope: global instructions only.
       repositoryForAgent: (agent) =>
-        this.engine.record(this.rootSessionId(agent))?.repositoryUrl,
+        this.engine.record(this.rootSessionId(agent))?.repositoryUrl ||
+        undefined,
       workspaceRegistry: () =>
         this.workspaceRegistry ??
         (this.ctx.get("workspaceRegistry") as
@@ -423,6 +433,9 @@ export class SandboxManager extends TypertRemoteService {
     ctx.inject(["workspaceRegistry"], () => {
       this.archiveRelease.reconcile();
     });
+    installScratchWorkspace(ctx, this.scratchWorkspace, (message) =>
+      this.ctx.logger("sandbox").warn(message),
+    );
     ctx.effect(() => () => {
       this.idle.dispose();
       void this.ownedTunnel?.close();
@@ -603,6 +616,16 @@ export class SandboxManager extends TypertRemoteService {
       repositoryUrl,
     );
     return (await registry.create(anchor.path, anchor.title)).path;
+  }
+
+  /**
+   * Whether the agent runs in the Scratch Workspace, and so in a sandbox with
+   * no repository. Synchronous, for the system prompt: the cwd is fixed when
+   * the session is created, and a subagent inherits its parent's.
+   */
+  inScratchWorkspace(agent: Agent): boolean {
+    const cwd = agent.session.header.cwd;
+    return cwd !== undefined && resolve(cwd) === this.scratchWorkspace;
   }
 
   /**
@@ -1052,7 +1075,11 @@ export class SandboxManager extends TypertRemoteService {
     return agent === undefined ? sessionId : this.rootSessionId(agent);
   }
 
+  /** The session's repository URL; empty in the Scratch Workspace. */
   private async repositoryFor(agent: Agent): Promise<string> {
+    if (this.inScratchWorkspace(agent)) {
+      return "";
+    }
     const cwd = agent.session.header.cwd;
     if (cwd !== undefined) {
       const repository = await repositoryForAnchor(this.config.stateDir, cwd);

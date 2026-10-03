@@ -55,6 +55,35 @@ export const SANDBOX_ENVIRONMENT_PROMPT =
   'You are working inside an isolated sandbox: file and shell tools resolve paths inside this sandbox, and the repository checkout is mounted at {{cwd}}. There is no DeepSeek Harness source checkout inside the sandbox; the DeepSeek Harness web UI runs on the host machine and is unreachable from here. When the user says "this page", "this GUI", or "this app", they mean that web UI. {{preview}} When a sleep rebuilds the machine, the new machine starts with what is under /workspace and the repository\'s setup hook, `.agents/setup`, runs again on it, so what the repository installs is back. The sandbox user has passwordless sudo, so system package managers can install software, but what you install yourself outside $HOME lasts only as long as this machine. Prefer the preinstalled managers for project tools: `mise use -g` for toolchains, `uv tool install` for Python tools, and `npm install -g` for Node tools. Those write under $HOME. {{tool_retention}} Anything the user should keep but that does not belong in the repository — screenshots, recordings, reports — goes in {{artifacts}}, which always comes back.';
 
 /**
+ * The environment section for a session in the Scratch Workspace, which has
+ * no repository: the working directory starts empty and nothing is said about
+ * a checkout or a setup hook. `{{workdir_retention}}` states what a sleep
+ * keeps of the working directory; on a backend that checkpoints, that is
+ * nothing, because without a remote to diff against the checkpoint would have
+ * to carry the whole directory. The artifacts rule is the same as above.
+ */
+export const NO_REPOSITORY_ENVIRONMENT_PROMPT =
+  'You are working inside an isolated sandbox: file and shell tools resolve paths inside this sandbox, and your working directory, {{cwd}}, started empty. There is no DeepSeek Harness source checkout inside the sandbox; the DeepSeek Harness web UI runs on the host machine and is unreachable from here. When the user says "this page", "this GUI", or "this app", they mean that web UI. {{preview}} {{workdir_retention}} The sandbox user has passwordless sudo, so system package managers can install software, but what you install yourself outside $HOME lasts only as long as this machine. Prefer the preinstalled managers for project tools: `mise use -g` for toolchains, `uv tool install` for Python tools, and `npm install -g` for Node tools. Those write under $HOME. {{tool_retention}} Anything the user should keep — screenshots, recordings, reports — goes in {{artifacts}}, which always comes back.';
+
+/**
+ * What a session without a repository is told a sleep keeps of its working
+ * directory, decided by the backend capabilities like `toolRetention`.
+ */
+function workdirRetention(
+  capabilities: BackendCapabilities | undefined,
+): string {
+  if (capabilities === undefined) {
+    return "A sleep may not keep your working directory.";
+  }
+  if (!capabilities.supportsHibernate) {
+    return "A sleep replaces this machine and does not keep your working directory.";
+  }
+  return capabilities.wakeKeepsFilesystem === true
+    ? "A sleep keeps your working directory: this sandbox stops and comes back with its files."
+    : "When a sleep rebuilds the machine, the new machine starts with what is under /workspace, your working directory included.";
+}
+
+/**
  * What the model is told about tools it installs under $HOME. The backend
  * capabilities decide it, so a session is not told its tools may vanish on a
  * backend that keeps them, or that they stay on one that rebuilds the
@@ -121,22 +150,31 @@ interface SystemPromptLike {
  * prompt scope: the sandbox `cwd` (shadowing the loop-supplied host cwd), the
  * artifacts folder beside it, and what this backend keeps across a sleep. The
  * providers resolve on each assembly, so a profile chosen after the agent
- * exists is reflected.
+ * exists is reflected. The section text is fixed here: whether the session
+ * has a repository follows from its cwd, which never changes.
  */
 export function installSandboxContext(
   systemPrompt: SystemPromptLike,
   workspace: () => string,
   capabilities: () => BackendCapabilities | undefined,
   previewOrigin: () => string | undefined,
+  withRepository = true,
 ): void {
   systemPrompt.section({
     name: SANDBOX_ENVIRONMENT_SECTION,
     order: systemPrompt.getSectionOrder("DEPLOYMENT_PERSONA_PREFIX"),
-    text: SANDBOX_ENVIRONMENT_PROMPT,
+    text: withRepository
+      ? SANDBOX_ENVIRONMENT_PROMPT
+      : NO_REPOSITORY_ENVIRONMENT_PROMPT,
   });
   systemPrompt.variable("cwd", () => workspace());
   systemPrompt.variable("artifacts", () => artifactsDirectory(workspace()));
   systemPrompt.variable("tool_retention", () => toolRetention(capabilities()));
+  if (!withRepository) {
+    systemPrompt.variable("workdir_retention", () =>
+      workdirRetention(capabilities()),
+    );
+  }
   systemPrompt.variable("preview", () => previewSentence(previewOrigin()));
 }
 
@@ -182,6 +220,7 @@ export function apply(ctx: Context): void {
         () => ctx.sandboxManager.workspace,
         () => ctx.sandboxManager.sandboxCapabilitiesFor(agent),
         () => ctx.sandboxManager.previewOriginFor(agent),
+        !ctx.sandboxManager.inScratchWorkspace(agent),
       );
     });
     promptFibers.set(agent, fiber);

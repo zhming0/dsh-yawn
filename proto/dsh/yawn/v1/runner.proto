@@ -239,6 +239,8 @@ message SetGitCredentialsRequest {
 message SetGitCredentialsResponse {}
 
 message SetupRequest {
+  // Empty for a workspace without a repository: nothing is cloned, and the
+  // workspace starts empty.
   string repository_url = 1;
   string revision = 2;
   string workspace = 3;
