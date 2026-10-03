@@ -875,6 +875,9 @@ export const SetGitCredentialsResponseSchema: GenMessage<SetGitCredentialsRespon
  */
 export type SetupRequest = Message<"dsh.yawn.v1.SetupRequest"> & {
   /**
+   * Empty for a workspace without a repository: nothing is cloned, and the
+   * workspace starts empty.
+   *
    * @generated from field: string repository_url = 1;
    */
   repositoryUrl: string;

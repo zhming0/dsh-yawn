@@ -1,4 +1,4 @@
-import type { CredentialBroker } from "../broker.js";
+import { GLOBAL_SECRET_SCOPE, type CredentialBroker } from "../broker.js";
 import {
   restoreCheckpoint,
   saveCheckpoint,
@@ -105,11 +105,16 @@ export class RunnerAttachment {
 
   /**
    * Commit the session's working tree through the still-running runner and
-   * bring the commits the remote lacks back as a bundle.
+   * bring the commits the remote lacks back as a bundle. A session without a
+   * repository carries only its artifacts folder.
    */
   async checkpoint(record: RunningRecord): Promise<SavedCheckpoint> {
     const client = await this.connect(record);
-    return saveCheckpoint(client, this.deps.workspace);
+    return saveCheckpoint(
+      client,
+      this.deps.workspace,
+      record.repositoryUrl !== "",
+    );
   }
 
   private async pushCredentials(
@@ -118,9 +123,13 @@ export class RunnerAttachment {
   ): Promise<void> {
     await this.deps.broker.refresh();
     // The workspace's effective set: global secrets with this workspace's
-    // own names overriding them.
+    // own names overriding them. The Scratch Workspace is no scope.
     await client.setSecrets(
-      this.deps.broker.secrets({ kind: "workspace", repositoryUrl }),
+      this.deps.broker.secrets(
+        repositoryUrl === ""
+          ? GLOBAL_SECRET_SCOPE
+          : { kind: "workspace", repositoryUrl },
+      ),
     );
     await client.setGitCredentials(
       await this.deps.broker.gitCredentials(repositoryUrl),

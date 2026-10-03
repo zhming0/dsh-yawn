@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -1287,5 +1287,182 @@ describe("repository workspaces and instructions", () => {
 
     // Sandboxes started before the restart still hold the stored token.
     expect(await boot(new FakeBackend())).toBe(token);
+  });
+});
+
+describe("Scratch workspace", () => {
+  let directory: string;
+
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), "dsh-yawn-control-plane-"));
+  });
+
+  afterEach(async () => {
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  function boot(backend: FakeBackend, ctx = new Context()) {
+    const workspaceRegistry = new FakeWorkspaceRegistry();
+    const manager = new SandboxManager(
+      ctx,
+      {
+        profiles: { standard: { backend: "docker" } },
+        stateDir: directory,
+        // The fallback a session outside any anchor would use; the Scratch
+        // Workspace must not.
+        repository: "https://github.com/example/fallback.git",
+        idleMs: 60_000,
+        expiresAfterMs: 60_000,
+      },
+      {
+        backends: { standard: backend },
+        gateway: gatewayFor(backend),
+        workspaceRegistry,
+      },
+    );
+    return { manager, workspaceRegistry };
+  }
+
+  function sessionIn(cwd: string): Agent {
+    return {
+      id: "session-one",
+      session: { header: { cwd }, events: [], surface: { nodes: [] } },
+    } as unknown as Agent;
+  }
+
+  function preStep(ctx: Context, agent: Agent) {
+    const prompt = createUserMessage({
+      content: [{ type: "text", text: "Continue the work." }],
+      source: { kind: "user" },
+    });
+    return agentEvents(ctx, agent).waterfall(
+      "agent/pre-step",
+      {
+        messages: [prompt],
+        turn: 1,
+        step: 1,
+        signal: new AbortController().signal,
+      },
+      () => Promise.resolve({ kind: "enter" as const, messages: [prompt] }),
+    );
+  }
+
+  it("lives in the state directory and is no settings scope", async () => {
+    const { manager, workspaceRegistry } = boot(new FakeBackend());
+
+    expect(manager.scratchWorkspace).toBe(
+      join(await realpath(directory), "scratch"),
+    );
+    // Registered like any Workspace, but without a repository anchor.
+    await workspaceRegistry.create(manager.scratchWorkspace, "Scratch");
+    expect(await manager.getSecrets()).toEqual({ global: [], workspaces: [] });
+    expect(await manager.getInstructions()).toEqual({
+      global: "",
+      workspaces: [],
+    });
+  });
+
+  it("starts sessions without a repository, with global secrets and instructions only", async () => {
+    const backend = new FakeBackend();
+    const ctx = new Context();
+    const { manager } = boot(backend, ctx);
+    const anchor = await manager.createRepositoryWorkspace(
+      "https://github.com/example/public.git",
+    );
+    const path = manager.scratchWorkspace;
+    await manager.setGlobalSecret("API_KEY", "global");
+    await manager.setWorkspaceSecret(
+      "https://github.com/example/public",
+      "API_KEY",
+      "workspace",
+    );
+    await manager.setGlobalInstructions("Use concise answers.");
+    await manager.setWorkspaceInstructions(
+      "https://github.com/example/public",
+      "Run the repository tests.",
+    );
+    const agent = sessionIn(path);
+    expect(manager.inScratchWorkspace(agent)).toBe(true);
+    expect(manager.inScratchWorkspace(sessionIn(anchor))).toBe(false);
+
+    const decision = await preStep(ctx, agent);
+
+    expect(backend.repositoryUrls).toEqual([""]);
+    expect(backend.client.secrets).toEqual({ API_KEY: "global" });
+    const prompt = JSON.stringify(decision);
+    expect(prompt).toContain("Use concise answers.");
+    expect(prompt).not.toContain("Run the repository tests.");
+  });
+
+  it("checkpoints only the artifacts folder and says the rest is gone", async () => {
+    const backend = new FakeBackend();
+    backend.capabilities.supportsHibernate = false;
+    const ctx = new Context();
+    const { manager } = boot(backend, ctx);
+    const agent = sessionIn(manager.scratchWorkspace);
+
+    await manager.ensureRunning(agent);
+    // The only script the save runs is the artifacts one: there is no Git
+    // work to commit or bundle.
+    const tar = new Uint8Array(2048);
+    tar.set(new TextEncoder().encode("ustar"), 257);
+    backend.client.execReplies.push({
+      stdout: new Uint8Array([...new TextEncoder().encode("1\n"), ...tar]),
+    });
+    await manager.hibernate("session-one");
+    expect(backend.destroys).toBe(1);
+    expect(backend.client.execs).toHaveLength(1);
+    expect(backend.client.execs[0]?.env).toHaveProperty(
+      "DSH_YAWN_ARTIFACTS_DIR",
+    );
+
+    const restored = await preStep(ctx, agent);
+    // The restore unpacks the artifacts and runs no Git restore.
+    expect(backend.client.execs).toHaveLength(2);
+    expect(new Uint8Array(backend.client.execs[1]?.stdin ?? [])).toEqual(tar);
+    expect(backend.repositoryUrls).toEqual(["", ""]);
+    expect(restored).toMatchObject({
+      kind: "enter",
+      messages: [
+        {
+          content: [
+            {
+              type: "text",
+              text: "This sandbox was recreated on a new machine. The files in /workspace/artifacts are back. The rest of your working directory, anything you installed yourself, and everything else outside the artifacts folder are gone.",
+            },
+          ],
+          source: { kind: "dsh-yawn", form: "notice" },
+        },
+        {},
+      ],
+    });
+  });
+
+  it("says nothing about repository setup when a session wakes on a new machine", async () => {
+    const backend = new FakeBackend();
+    backend.capabilities.wakeKeepsFilesystem = false;
+    const ctx = new Context();
+    const { manager } = boot(backend, ctx);
+    const agent = sessionIn(manager.scratchWorkspace);
+
+    await manager.ensureRunning(agent);
+    await manager.hibernate("session-one");
+    const woken = await preStep(ctx, agent);
+
+    expect(woken).toMatchObject({
+      kind: "enter",
+      messages: [
+        {
+          content: [
+            {
+              type: "text",
+              text: "This sandbox was suspended and woke on a newly created machine. Files under /workspace survived, including your home directory, but running processes, /tmp, and anything you installed yourself outside /workspace are gone. Re-create anything else you need before continuing.",
+            },
+          ],
+          source: { kind: "dsh-yawn", form: "notice" },
+        },
+        {},
+      ],
+    });
   });
 });

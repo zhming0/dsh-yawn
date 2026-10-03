@@ -27,7 +27,8 @@ For dsh plugin internals and implementation notes, see
   backend and its settings; a session picks a profile on its first prompt.
 - The Web UI gains pages for secrets, sandbox profiles, instructions,
   notifications, MCP servers, plugins, a Sandbox tab, a right sidebar for
-  files and terminal access, and repository URL Workspaces.
+  files and terminal access, repository URL Workspaces, and a Scratch
+  Workspace without a repository.
 - Uploaded attachments and `@` file references are copied from or resolved in
   the sandbox workspace.
 - Sessions can install plugins from the Web Plugins page, but those run in the
@@ -253,6 +254,26 @@ Workspace anchors live beneath `stateDir/workspace-anchors`. Each contains only
 inside the sandbox. Anchors remain after sandbox expiry so historical dsh
 Workspace registrations do not become missing directories.
 
+### The Scratch Workspace
+
+The Scratch Workspace is for work that needs no repository. Its host directory
+is `stateDir/scratch`. Each of its sessions gets its own sandbox, like any other
+session, but nothing is cloned: `workspace` starts empty, and the model is told
+it works in an empty directory rather than a checkout. Neither `repository` nor
+`git remote get-url origin` is consulted.
+
+It is always available to start a session in. The control plane registers it
+every time it boots, so an installation that predates it gets it on its next
+start, and a fresh installation opens with a blank session in it. It cannot be
+deleted: the sidebar still shows **Delete workspace**, because dsh shows that
+action on every Workspace, but the delete dialog answers with an error. It can
+be renamed, and a rename survives restarts.
+
+It has no settings scope of its own: its sessions get the global secrets and
+the global AGENTS.md layer only, and it does not appear on the Secrets or
+Instructions pages. On a backend that checkpoints, a sleep keeps only its
+artifacts folder; see [Idle and hibernation](#idle-and-hibernation).
+
 Each release publishes a runner image tagged with the same version as this
 package, and the control plane defaults to that exact tag, so a profile's `image`
 only matters when testing a locally built image. A Buildkite profile passes it
@@ -373,6 +394,14 @@ crash inside either window therefore keeps the work: the next prompt restores
 from the checkpoint files. The cost is a sandbox the host no longer knows
 about, the one it was about to destroy or the one it was restoring into. Only
 the backend's own limits, such as a job timeout, reclaim it.
+
+A session in the [Scratch Workspace](#the-scratch-workspace) has no repository,
+so its checkpoint has no Git half: its working directory has no remote copy to
+diff against, and carrying it would mean carrying all of it, ignored files and
+all. Its checkpoint is the artifacts folder alone, under the same 64 MiB cap.
+The environment section tells the model this in advance on such a backend, and
+the restore notice says that only the artifacts folder came back. Hibernation
+keeps the whole workspace, as for any session.
 
 The Buildkite backend checkpoints; Docker and Kubernetes hibernate.
 

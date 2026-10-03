@@ -498,3 +498,40 @@ func TestSetupClonesBelowFilesystemRoot(t *testing.T) {
 		t.Fatalf("lost+found entered the repository: %v", err)
 	}
 }
+
+// A workspace without a repository is never cloned into: a fresh machine
+// starts it empty, and a rebuilt one keeps what the session left there.
+func TestSetupWithoutRepositoryKeepsTheWorkspace(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workspace := filepath.Join(t.TempDir(), "repository")
+
+	service := newSetupService(t)
+	response, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !response.Msg.Ran {
+		t.Fatal("setup did not run")
+	}
+	entries, err := os.ReadDir(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("fresh workspace has %d entries, want none", len(entries))
+	}
+
+	if err := os.WriteFile(filepath.Join(workspace, "notes.md"), []byte("kept\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt := newSetupService(t)
+	if _, err := rebuilt.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "notes.md")); err != nil {
+		t.Fatalf("rebuilt machine lost the session's file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".git")); !os.IsNotExist(err) {
+		t.Fatalf("workspace without a repository got a .git: %v", err)
+	}
+}
