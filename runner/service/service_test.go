@@ -293,6 +293,16 @@ func newSetupWorkspace(t *testing.T) (string, string) {
 	return workspace, filepath.Join(workspace, ".setup-count")
 }
 
+// repositorySetup is the request a repository session sends. The checkout is
+// already there, so the URL is never cloned; it only says the workspace holds
+// a repository, whose `.agents/setup` hook then runs.
+func repositorySetup(workspace string) *connect.Request[v1.SetupRequest] {
+	return connect.NewRequest(&v1.SetupRequest{
+		RepositoryUrl: "https://example.invalid/repository.git",
+		Workspace:     workspace,
+	})
+}
+
 // setupRuns counts the runs the test hook recorded.
 func setupRuns(t *testing.T, countFile string) int {
 	t.Helper()
@@ -311,7 +321,7 @@ func TestSetupRunsOnANewMachine(t *testing.T) {
 	workspace, countFile := newSetupWorkspace(t)
 	service := newSetupService(t)
 
-	response, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace}))
+	response, err := service.Setup(context.Background(), repositorySetup(workspace))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,10 +344,10 @@ func TestSetupSkipsSetupOnTheSameMachine(t *testing.T) {
 	workspace, countFile := newSetupWorkspace(t)
 	service := newSetupService(t)
 
-	if _, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace})); err != nil {
+	if _, err := service.Setup(context.Background(), repositorySetup(workspace)); err != nil {
 		t.Fatal(err)
 	}
-	second, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace}))
+	second, err := service.Setup(context.Background(), repositorySetup(workspace))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +368,7 @@ func TestSetupIgnoresTheOldGitMarker(t *testing.T) {
 	}
 	service := newSetupService(t)
 
-	response, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace}))
+	response, err := service.Setup(context.Background(), repositorySetup(workspace))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +396,7 @@ func TestSetupNeverRunsAResumeHook(t *testing.T) {
 	service := newSetupService(t)
 
 	for range 2 {
-		if _, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace})); err != nil {
+		if _, err := service.Setup(context.Background(), repositorySetup(workspace)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -413,14 +423,14 @@ func TestFailedSetupIsNotRemembered(t *testing.T) {
 	}
 	service := newSetupService(t)
 
-	if _, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace})); err == nil {
+	if _, err := service.Setup(context.Background(), repositorySetup(workspace)); err == nil {
 		t.Fatal("a failing setup returned no error")
 	}
 	if _, err := os.Stat(service.markerPath()); !os.IsNotExist(err) {
 		t.Fatalf("a failed setup wrote the marker: %v", err)
 	}
 	// The next start on the same machine tries again.
-	if _, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace})); err == nil {
+	if _, err := service.Setup(context.Background(), repositorySetup(workspace)); err == nil {
 		t.Fatal("a second setup returned no error")
 	}
 	if runs := setupRuns(t, filepath.Join(workspace, ".setup-count")); runs != 2 {
@@ -496,5 +506,54 @@ func TestSetupClonesBelowFilesystemRoot(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(workspace, "lost+found")); !os.IsNotExist(err) {
 		t.Fatalf("lost+found entered the repository: %v", err)
+	}
+}
+
+// A workspace without a repository is never cloned into and runs no setup
+// hook: a fresh machine starts it empty, and a rebuilt one keeps what the
+// session left there.
+func TestSetupWithoutRepositoryKeepsTheWorkspace(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workspace := filepath.Join(t.TempDir(), "repository")
+
+	service := newSetupService(t)
+	response, err := service.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !response.Msg.Ran {
+		t.Fatal("setup did not run")
+	}
+	entries, err := os.ReadDir(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("fresh workspace has %d entries, want none", len(entries))
+	}
+
+	if err := os.WriteFile(filepath.Join(workspace, "notes.md"), []byte("kept\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// A hook the session happened to write is not a repository's setup.
+	hook := filepath.Join(workspace, ".agents", "setup")
+	if err := os.MkdirAll(filepath.Dir(hook), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nprintf ran > .hook-ran\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt := newSetupService(t)
+	if _, err := rebuilt.Setup(context.Background(), connect.NewRequest(&v1.SetupRequest{Workspace: workspace})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "notes.md")); err != nil {
+		t.Fatalf("rebuilt machine lost the session's file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".git")); !os.IsNotExist(err) {
+		t.Fatalf("workspace without a repository got a .git: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".hook-ran")); !os.IsNotExist(err) {
+		t.Fatalf("setup ran a hook in a workspace without a repository: %v", err)
 	}
 }

@@ -4,6 +4,7 @@ import type { Agent } from "@deepseek-ai/dsh-agent";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 
 import type { Checkpoint } from "../checkpoint.js";
+import { hasRepository, type RunningRecord } from "../types.js";
 import type { LifecycleHooks } from "./sandbox-lifecycle.js";
 
 /** One sandbox notice: the model-facing text and its one-line transcript account. */
@@ -39,6 +40,26 @@ const WAKE_NOTICE: SandboxNotice = {
 const WAKE_NOTICE_KEPT_FILESYSTEM: SandboxNotice = {
   ...WAKE_NOTICE,
   text: "This sandbox was suspended and woke on the same machine. Its files are intact, but the processes that were running before the suspension are gone. Restart what you need before continuing.",
+};
+
+/**
+ * The Scratch Workspace's variants: no repository, so no setup hook and no Git
+ * work. A restore brings back only the artifacts folder, as the environment
+ * section already told the model.
+ */
+const NO_REPOSITORY_RESTORE_NOTICE = (artifacts: string): SandboxNotice => ({
+  text: `This sandbox was recreated on a new machine. The files in ${artifacts} are back. The rest of your working directory, anything you installed yourself, and everything else outside the artifacts folder are gone.`,
+  summary: "Sandbox restored from a checkpoint",
+});
+const NO_REPOSITORY_RESTORE_NOTICE_ARTIFACTS_DROPPED = (
+  artifacts: string,
+): SandboxNotice => ({
+  text: `This sandbox was recreated on a new machine, and the artifacts folder could not be brought back, so the files in ${artifacts} are gone. Your working directory, anything you installed yourself, and everything else are gone too.`,
+  summary: "Sandbox restored from a checkpoint without artifacts",
+});
+const NO_REPOSITORY_WAKE_NOTICE: SandboxNotice = {
+  ...WAKE_NOTICE,
+  text: "This sandbox was suspended and woke on a newly created machine. Files under /workspace survived, including your home directory, but running processes, /tmp, and anything you installed yourself outside /workspace are gone. Re-create anything else you need before continuing.",
 };
 
 export interface SandboxNoticesDependencies {
@@ -91,31 +112,43 @@ export class SandboxNotices implements LifecycleHooks {
    */
   async afterRestore({
     sessionId,
+    record,
     checkpoint,
   }: {
     sessionId: string;
+    record: RunningRecord;
     checkpoint: Checkpoint;
   }): Promise<void> {
-    this.pending.set(
-      sessionId,
-      checkpoint.artifactsDropped === true
-        ? RESTORE_NOTICE_ARTIFACTS_DROPPED(this.deps.artifactsDirectory())
-        : RESTORE_NOTICE,
-    );
+    const artifacts = this.deps.artifactsDirectory();
+    const dropped = checkpoint.artifactsDropped === true;
+    let notice: SandboxNotice;
+    if (hasRepository(record)) {
+      notice = dropped
+        ? RESTORE_NOTICE_ARTIFACTS_DROPPED(artifacts)
+        : RESTORE_NOTICE;
+    } else {
+      notice = dropped
+        ? NO_REPOSITORY_RESTORE_NOTICE_ARTIFACTS_DROPPED(artifacts)
+        : NO_REPOSITORY_RESTORE_NOTICE(artifacts);
+    }
+    this.pending.set(sessionId, notice);
   }
 
   /** A hibernated sandbox woke; its backend says what the machine kept. */
   async afterWake({
     sessionId,
+    record,
     keepsFilesystem,
   }: {
     sessionId: string;
+    record: RunningRecord;
     keepsFilesystem: boolean;
   }): Promise<void> {
-    this.pending.set(
-      sessionId,
-      keepsFilesystem ? WAKE_NOTICE_KEPT_FILESYSTEM : WAKE_NOTICE,
-    );
+    let notice = WAKE_NOTICE_KEPT_FILESYSTEM;
+    if (!keepsFilesystem) {
+      notice = hasRepository(record) ? WAKE_NOTICE : NO_REPOSITORY_WAKE_NOTICE;
+    }
+    this.pending.set(sessionId, notice);
   }
 
   /**

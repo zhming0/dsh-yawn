@@ -185,6 +185,8 @@ Kept: the branch, its commits, every tracked or untracked file, and the
 artifacts folder up to 64 MiB. Lost: ignored files, installed tools and
 packages, other local branches, stashes, and which changes were staged. Put
 what the session needs into `.agents/setup` so the next build recreates it.
+A session in the Scratch Workspace has no repository, so only its artifacts
+folder is kept; the rest of its working directory is lost.
 The full rules are in
 [Idle and hibernation](../../control-plane/README.md#idle-and-hibernation).
 
