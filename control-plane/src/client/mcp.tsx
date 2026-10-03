@@ -2,9 +2,9 @@ import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
 
 import {
   Button,
-  Checkbox,
   Input,
   Modal,
+  SegmentedControl,
   Switch,
   Tag,
   type TagTone,
@@ -12,7 +12,7 @@ import {
 import type { SettingsSectionOwnerProps } from "@deepseek-ai/dsh-client-ui-settings/client";
 
 import type { McpServerView, McpTestResult } from "../mcp-remote.js";
-import type { McpServerEntry } from "../mcp-store.js";
+import type { McpAuth, McpServerEntry } from "../mcp-store.js";
 import {
   addButtonStyle,
   cardStyle,
@@ -35,12 +35,33 @@ interface McpActions {
   deleteMcpServer: (serverName: string) => Promise<McpServerView[]>;
   retryMcpServer: (serverName: string) => Promise<McpServerView[]>;
   testMcpServer: (entry: McpServerEntry) => Promise<McpTestResult>;
+  startMcpAuthorization: (
+    serverName: string,
+    origin: string,
+  ) => Promise<string>;
 }
 
 interface McpSettingsProps extends SettingsSectionOwnerProps, McpActions {}
 
 /** The open dialog: a new server, or an existing one to edit. */
 type Dialog = { kind: "add" } | { kind: "edit"; server: McpServerView };
+
+/** A sign-in tab the page opened and is waiting on. */
+interface SignIn {
+  serverName: string;
+  /** The server's sign-in state when the tab opened; any change ends the wait. */
+  before: string;
+  startedAt: number;
+}
+
+/** The control plane forgets an unfinished sign-in after ten minutes. */
+const signInWaitMs = 10 * 60_000;
+
+const authOptions: ReadonlyArray<{ value: McpAuth; label: string }> = [
+  { value: "none", label: "None" },
+  { value: "bearer", label: "Bearer token" },
+  { value: "oauth", label: "OAuth" },
+];
 
 /**
  * Settings page for remote Streamable HTTP MCP servers: one card per server
@@ -53,8 +74,10 @@ export function McpSettings({
   deleteMcpServer,
   retryMcpServer,
   testMcpServer,
+  startMcpAuthorization,
 }: McpSettingsProps) {
   const [servers, setServers] = useState<McpServerView[]>();
+  const [signIn, setSignIn] = useState<SignIn>();
   const [dialog, setDialog] = useState<Dialog>();
   const [confirming, setConfirming] = useState<string>();
   const [pending, setPending] = useState(false);
@@ -77,6 +100,33 @@ export function McpSettings({
     }, 1_500);
     return () => clearInterval(timer);
   }, [starting, listMcpServers]);
+
+  // The sign-in finishes in another tab, so the page re-reads until the
+  // server's sign-in state moves or the control plane would have forgotten it.
+  useEffect(() => {
+    if (signIn === undefined) {
+      return;
+    }
+    const timer = setInterval(() => {
+      if (Date.now() - signIn.startedAt > signInWaitMs) {
+        setSignIn(undefined);
+        return;
+      }
+      listMcpServers().then(
+        (next) => {
+          setServers(next);
+          const server = next.find(
+            (candidate) => candidate.serverName === signIn.serverName,
+          );
+          if (server === undefined || signInState(server) !== signIn.before) {
+            setSignIn(undefined);
+          }
+        },
+        (reason) => setError(describe(reason)),
+      );
+    }, 1_500);
+    return () => clearInterval(timer);
+  }, [signIn, listMcpServers]);
 
   /** Run one write; the caller decides where a failure shows. */
   const run = async (action: () => Promise<McpServerView[]>) => {
@@ -109,8 +159,76 @@ export function McpSettings({
   // Omitting the token keeps the saved one, so a toggle never touches it.
   const toggle = (server: McpServerView, enabled: boolean) =>
     void act(() =>
-      setMcpServer({ serverName: server.serverName, url: server.url, enabled }),
+      setMcpServer({
+        serverName: server.serverName,
+        url: server.url,
+        auth: server.auth,
+        enabled,
+      }),
     );
+
+  /**
+   * Open the authorization server's sign-in in a new tab. The tab must open
+   * inside the click, before any await, or the browser blocks it; it is
+   * pointed at the sign-in once the control plane answers the URL.
+   */
+  const connect = async (server: McpServerView, tab = openSignInTab()) => {
+    setError(undefined);
+    if (tab === null) {
+      setError(
+        "The browser blocked the sign-in tab. Allow pop-ups for this page and try again.",
+      );
+      return;
+    }
+    try {
+      const url = await startMcpAuthorization(
+        server.serverName,
+        window.location.origin,
+      );
+      tab.location.href = url;
+      setSignIn({
+        serverName: server.serverName,
+        before: signInState(server),
+        startedAt: Date.now(),
+      });
+    } catch (reason) {
+      tab.close();
+      setError(describe(reason));
+    }
+  };
+
+  /** Save from the dialog; a server that still needs a sign-in starts one. */
+  const save = async (entry: McpServerEntry) => {
+    const previous = servers?.find(
+      (server) => server.serverName === entry.serverName,
+    );
+    // A changed URL signs out, so it needs a sign-in as well.
+    const needsSignIn =
+      entry.auth === "oauth" &&
+      entry.enabled &&
+      (previous?.authorization?.kind !== "valid" || previous.url !== entry.url);
+    const tab = needsSignIn ? openSignInTab() : undefined;
+    let saved: McpServerView[];
+    try {
+      await run(() => setMcpServer(entry));
+      saved = tab === undefined ? [] : await listMcpServers();
+    } catch (reason) {
+      tab?.close();
+      throw reason;
+    }
+    if (tab === undefined) {
+      return;
+    }
+    setServers(saved);
+    const server = saved.find(
+      (candidate) => candidate.serverName === entry.serverName,
+    );
+    if (server?.status === "needs-auth") {
+      void connect(server, tab);
+    } else {
+      tab?.close();
+    }
+  };
 
   const openDialog = (next: Dialog) => {
     setConfirming(undefined);
@@ -147,6 +265,8 @@ export function McpSettings({
                   onRetry={() =>
                     void act(() => retryMcpServer(server.serverName))
                   }
+                  signingIn={signIn?.serverName === server.serverName}
+                  onConnect={() => void connect(server)}
                   onEdit={() => openDialog({ kind: "edit", server })}
                   onDelete={() => setConfirming(server.serverName)}
                   onCancelDelete={() => setConfirming(undefined)}
@@ -168,7 +288,7 @@ export function McpSettings({
           <ServerDialog
             dialog={dialog}
             pending={pending}
-            onSave={(entry) => run(() => setMcpServer(entry))}
+            onSave={save}
             onTest={testMcpServer}
             onClose={() => setDialog(undefined)}
           />
@@ -190,6 +310,8 @@ interface ServerCardProps {
   disabled: boolean;
   onToggle: (enabled: boolean) => void;
   onRetry: () => void;
+  signingIn: boolean;
+  onConnect: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onCancelDelete: () => void;
@@ -206,6 +328,8 @@ function ServerCard({
   disabled,
   onToggle,
   onRetry,
+  signingIn,
+  onConnect,
   onEdit,
   onDelete,
   onCancelDelete,
@@ -232,7 +356,9 @@ function ServerCard({
           {server.url}
         </div>
         <div style={{ ...mutedStyle, fontSize: 12 }}>
-          {server.hasToken ? "Token saved" : "No token"}
+          {signingIn
+            ? "Waiting for sign-in in the other tab…"
+            : authText(server)}
         </div>
         {server.error !== undefined ? (
           <div style={cardErrorStyle} title={server.error}>
@@ -267,6 +393,20 @@ function ServerCard({
           </>
         ) : (
           <>
+            {server.auth === "oauth" ? (
+              <Button
+                type="button"
+                size="sm"
+                {...(server.status === "needs-auth"
+                  ? { variant: "primary" as const }
+                  : {})}
+                disabled={disabled}
+                onClick={onConnect}
+                aria-label={`${connectText(server)} ${server.serverName}`}
+              >
+                {connectText(server)}
+              </Button>
+            ) : null}
             {server.status === "error" ? (
               <Button
                 type="button"
@@ -314,6 +454,7 @@ interface ServerDialogProps {
 /**
  * Add a server, or edit one. The name is the server's identity, so editing
  * keeps it; a blank token keeps the saved one, the same rule the host applies.
+ * Saving an OAuth server that has no sign-in opens one.
  */
 function ServerDialog({
   dialog,
@@ -325,8 +466,8 @@ function ServerDialog({
   const edited = dialog?.kind === "edit" ? dialog.server : undefined;
   const [serverName, setServerName] = useState("");
   const [url, setUrl] = useState("");
+  const [auth, setAuth] = useState<McpAuth>("none");
   const [token, setToken] = useState("");
-  const [clearToken, setClearToken] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<McpTestResult>();
   const [error, setError] = useState<string>();
@@ -334,13 +475,14 @@ function ServerDialog({
   useEffect(() => {
     setServerName(edited?.serverName ?? "");
     setUrl(edited?.url ?? "");
+    setAuth(edited?.auth ?? "none");
     setToken("");
-    setClearToken(false);
     setTestResult(undefined);
     setError(undefined);
   }, [dialog, edited]);
 
   const busy = pending || testing;
+  const keepsToken = edited?.auth === "bearer" && edited.hasToken;
 
   const draft = (): McpServerEntry | undefined => {
     const name = serverName.trim();
@@ -352,12 +494,17 @@ function ServerDialog({
     const entry: McpServerEntry = {
       serverName: name,
       url: endpoint,
+      auth,
       enabled: edited?.enabled ?? true,
     };
-    if (clearToken) {
-      return { ...entry, token: null };
+    if (auth !== "bearer") {
+      return entry;
     }
-    return token === "" ? entry : { ...entry, token };
+    if (token !== "") {
+      return { ...entry, token };
+    }
+    // A bearer server needs a token: a typed one, or the one already saved.
+    return keepsToken ? entry : undefined;
   };
   const entry = draft();
 
@@ -474,41 +621,39 @@ function ServerDialog({
           disabled={busy}
           onChange={(event) => change(() => setUrl(event.currentTarget.value))}
         />
-        <label htmlFor="dsh-yawn-mcp-token" style={fieldLabelStyle}>
-          Bearer token
-        </label>
-        <Input
-          id="dsh-yawn-mcp-token"
-          type="password"
-          autoComplete="off"
-          placeholder={
-            clearToken
-              ? "Removed on save"
-              : edited?.hasToken
-                ? "Saved; leave blank to keep"
-                : "Optional"
-          }
-          value={token}
-          disabled={busy || clearToken}
-          onChange={(event) =>
-            change(() => setToken(event.currentTarget.value))
-          }
+        <span id="dsh-yawn-mcp-auth-label" style={fieldLabelStyle}>
+          Authentication
+        </span>
+        <SegmentedControl
+          id="dsh-yawn-mcp-auth"
+          label="Authentication"
+          value={auth}
+          options={authOptions}
+          disabled={busy}
+          onChange={(next) => change(() => setAuth(next))}
         />
-        {edited?.hasToken ? (
-          <div style={{ marginTop: 8 }}>
-            <Checkbox
-              checked={clearToken}
+        <div
+          id={`dsh-yawn-mcp-auth-${auth}-panel`}
+          role="tabpanel"
+          aria-labelledby={`dsh-yawn-mcp-auth-${auth}`}
+        >
+          {auth === "bearer" ? (
+            <Input
+              id="dsh-yawn-mcp-token"
+              aria-label="Bearer token"
+              type="password"
+              autoComplete="off"
+              placeholder={keepsToken ? "Saved; leave blank to keep" : "Token"}
+              value={token}
               disabled={busy}
-              label="Remove the saved token"
-              onChange={(next) =>
-                change(() => {
-                  setClearToken(next);
-                  setToken("");
-                })
+              onChange={(event) =>
+                change(() => setToken(event.currentTarget.value))
               }
+              style={{ marginTop: 8 }}
             />
-          </div>
-        ) : null}
+          ) : null}
+          <p style={hintStyle}>{authHint(auth, edited)}</p>
+        </div>
         {testResult !== undefined ? (
           <p
             role="status"
@@ -537,6 +682,8 @@ function ServerDialog({
 
 function statusTag(server: McpServerView): { tone: TagTone; text: string } {
   switch (server.status) {
+    case "needs-auth":
+      return { tone: "warning", text: "Sign-in needed" };
     case "connected":
       return { tone: "success", text: toolCountText(server.toolCount) };
     case "starting":
@@ -546,6 +693,74 @@ function statusTag(server: McpServerView): { tone: TagTone; text: string } {
     case "disabled":
       return { tone: "neutral", text: "Off" };
   }
+}
+
+/** The card's authentication line. */
+function authText(server: McpServerView): string {
+  switch (server.auth) {
+    case "none":
+      return "No authentication";
+    case "bearer":
+      return server.hasToken ? "Bearer token saved" : "Bearer token missing";
+    case "oauth":
+      switch (server.authorization?.kind) {
+        case "valid":
+          return server.authorization.until === undefined
+            ? "OAuth: signed in"
+            : `OAuth: signed in, expires ${expiryText(server.authorization.until)}`;
+        case "expired":
+          return "OAuth: sign-in expired";
+        default:
+          return "OAuth: not signed in";
+      }
+  }
+}
+
+function connectText(server: McpServerView): string {
+  return server.authorization?.kind === "none" ? "Connect" : "Reauthenticate";
+}
+
+function authHint(auth: McpAuth, edited: McpServerView | undefined): string {
+  switch (auth) {
+    case "none":
+      return "Requests carry no credentials.";
+    case "bearer":
+      return "Sent as an Authorization: Bearer header. Stays on the control plane.";
+    case "oauth":
+      return edited?.auth === "oauth" && edited.authorization?.kind !== "none"
+        ? "Signed in through the server's own login. Changing the URL signs out."
+        : "Saving opens the server's sign-in in a new tab. Tokens stay on the control plane and are not refreshed: sign in again when they expire.";
+  }
+}
+
+/** A coarse "in 7 hours" for an expiry time. */
+function expiryText(until: number): string {
+  const minutes = Math.round((until - Date.now()) / 60_000);
+  if (minutes < 60) {
+    return `in ${Math.max(minutes, 1)} min`;
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) {
+    return `in ${hours} h`;
+  }
+  return `on ${new Date(until).toLocaleDateString()}`;
+}
+
+/** What the page compares to tell that a sign-in finished. */
+function signInState(server: McpServerView): string {
+  return JSON.stringify([server.status, server.authorization]);
+}
+
+/**
+ * A blank tab for a sign-in, cut off from this page: the authorization
+ * server's pages must not be able to reach it through `window.opener`.
+ */
+function openSignInTab(): Window | null {
+  const tab = window.open("", "_blank");
+  if (tab !== null) {
+    tab.opener = null;
+  }
+  return tab;
 }
 
 function toolCountText(count: number): string {

@@ -108,6 +108,13 @@ export async function apply(ctx: Context) {
         ),
       testMcpServer: async (entry: McpServerEntry) =>
         unwrap(await remoteCtx.remote.sandboxManager.testMcpServer(entry)),
+      startMcpAuthorization: async (serverName: string, origin: string) =>
+        unwrap(
+          await remoteCtx.remote.sandboxManager.startMcpAuthorization(
+            serverName,
+            origin,
+          ),
+        ),
     });
     remoteCtx.slots.inject(
       "settings.section",
