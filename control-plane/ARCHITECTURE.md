@@ -130,10 +130,37 @@ when a sandbox is provisioned, woken, or replaced.
 The **Settings → MCP** page adds remote Model Context Protocol servers over
 Streamable HTTP. An enabled server's tools join the model's tool list as
 `mcp__<serverName>__<tool>`, and its resources join the profile's shared
-`mcp-resources` service, which dsh-base mounts. A token is sent as a static
-`Authorization: Bearer` header and is write-only: the browser receives only
-whether a token is saved, never its value, and saving with **Remove the saved
-token** clears one. Each server shows as a card with its live status and an
+`mcp-resources` service, which dsh-base mounts. Each server picks one
+authentication method in its dialog: **None**, **Bearer token**, or **OAuth**.
+Switching methods drops the secrets of the old one.
+
+A bearer token is sent as a static `Authorization: Bearer` header and is
+write-only: the browser receives only whether a token is saved, never its
+value.
+
+**OAuth** is the MCP authorization flow: authorization code with PKCE, with
+discovery (RFC 9728, RFC 8414) and dynamic client registration run by the MCP
+SDK's `auth()` in the control plane (`src/mcp-oauth.ts`). Saving an OAuth
+server, or its card's **Connect** / **Reauthenticate** button, opens the
+server's sign-in in a new tab; only the authorization URL reaches the browser.
+The authorization server returns the browser to
+`/dsh-yawn/mcp/oauth/callback` on the origin the Settings page was opened on.
+That route sits outside `/api`, because the return trip is a cross-site
+navigation, which dsh's `/api` fence refuses and which carries no
+`SameSite=Strict` session cookie. A single-use `state`, issued to an
+authenticated Settings page and forgotten after ten minutes, is what ties the
+request to a sign-in. The client registration and the access token are saved
+with the server and never leave the host; a refresh token, which nothing would
+read, is not kept. A server is mounted with the access token as a bearer
+header while it is valid. **Tokens are not refreshed**: once the
+access token's `expires_in` passes, the next reconcile (any Settings read)
+unmounts the server and its card asks for a sign-in again. Until then a tool
+call made after the expiry fails with the server's 401. Changing the URL
+signs out, because the sign-in authorizes the old server. The redirect URI
+must be one the authorization server accepts, which for most servers means
+HTTPS or a loopback address.
+
+Each server shows as a card with its live status and an
 Enabled switch; **Add server** and **Edit** open a dialog, and Delete asks
 for confirmation. Adding, editing, disabling, or removing a server mounts or
 unmounts its tools for new tool calls without restarting the host, and **Test

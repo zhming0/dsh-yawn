@@ -98,9 +98,12 @@ export class McpPool {
     );
     for (const [serverName, live] of [...this.mounts]) {
       const entry = wanted.get(serverName);
+      // `mountable` rather than `enabled`: a server switched to OAuth before
+      // its first sign-in keeps the token it had (none), so only this tells
+      // the old credential-less mount to go.
       if (
         entry === undefined ||
-        !entry.enabled ||
+        !this.mountable(entry) ||
         live.entry.url !== entry.url ||
         live.token !== this.store.tokenFor(serverName)
       ) {
@@ -108,17 +111,33 @@ export class McpPool {
       }
     }
     for (const entry of wanted.values()) {
-      if (!entry.enabled || this.mounts.has(entry.serverName)) {
+      if (!this.mountable(entry) || this.mounts.has(entry.serverName)) {
         continue;
       }
       this.mountEntry(entry);
     }
   }
 
+  /**
+   * An OAuth server without a usable access token stays unmounted until the
+   * operator signs in: a mount would only fail its handshake with 401.
+   */
+  private mountable(entry: McpServerEntry): boolean {
+    return (
+      entry.enabled &&
+      (entry.auth !== "oauth" ||
+        this.store.tokenFor(entry.serverName) !== undefined)
+    );
+  }
+
   /** Browser-facing status for every stored server, sorted by name. */
   views(): McpServerView[] {
     return this.store.list().map((entry) => {
       const live = this.mounts.get(entry.serverName);
+      const authorization =
+        entry.auth === "oauth"
+          ? this.store.oauthStatus(entry.serverName)
+          : undefined;
       const toolCount =
         live === undefined ? 0 : this.toolCount(entry.serverName);
       // Tools in the registry outrank a recorded failure: a reconnect that
@@ -130,7 +149,9 @@ export class McpPool {
       // two-phase mount exists to avoid.
       const status =
         live === undefined
-          ? "disabled"
+          ? entry.enabled && entry.auth === "oauth"
+            ? "needs-auth"
+            : "disabled"
           : toolCount > 0
             ? "connected"
             : live.status === "connected"
@@ -141,8 +162,10 @@ export class McpPool {
       return {
         serverName: entry.serverName,
         url: entry.url,
+        auth: entry.auth,
         enabled: entry.enabled,
-        hasToken: this.store.tokenFor(entry.serverName) !== undefined,
+        hasToken: this.store.hasBearerToken(entry.serverName),
+        ...(authorization === undefined ? {} : { authorization }),
         status,
         toolCount: status === "connected" ? toolCount : 0,
         ...(error === undefined ? {} : { error }),
@@ -155,7 +178,7 @@ export class McpPool {
     await this.serialize(async () => {
       await this.unmount(serverName);
       const entry = this.store.get(serverName);
-      if (entry !== undefined && entry.enabled) {
+      if (entry !== undefined && this.mountable(entry)) {
         this.mountEntry(entry);
       }
     });
@@ -173,12 +196,7 @@ export class McpPool {
    */
   async testConnection(entry: McpServerEntry): Promise<McpTestResult> {
     validateMcpServerEntry(entry);
-    const token =
-      entry.token === null
-        ? undefined
-        : entry.token === undefined || entry.token === ""
-          ? this.store.tokenFor(entry.serverName)
-          : entry.token;
+    const token = this.probeToken(entry);
     const probeName = this.probeName(entry.serverName);
     let fiber: McpMount | undefined;
     try {
@@ -198,6 +216,29 @@ export class McpPool {
           );
         }
       }
+    }
+  }
+
+  /**
+   * The token a probe sends: a typed bearer token, else the saved one the
+   * same auth mode would keep. An OAuth probe uses the saved sign-in, and
+   * only for the URL it authorizes.
+   */
+  private probeToken(entry: McpServerEntry): string | undefined {
+    const saved = this.store.get(entry.serverName);
+    const sameMode = saved?.auth === entry.auth;
+    switch (entry.auth) {
+      case "none":
+        return undefined;
+      case "bearer":
+        if (entry.token !== undefined && entry.token !== "") {
+          return entry.token;
+        }
+        return sameMode ? this.store.tokenFor(entry.serverName) : undefined;
+      case "oauth":
+        return sameMode && saved.url === entry.url
+          ? this.store.tokenFor(entry.serverName)
+          : undefined;
     }
   }
 

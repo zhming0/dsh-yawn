@@ -139,6 +139,7 @@ describe("MCP pool against a real server", () => {
       await store.upsert({
         serverName: "yawn",
         url: server.url,
+        auth: "none",
         enabled: true,
       });
 

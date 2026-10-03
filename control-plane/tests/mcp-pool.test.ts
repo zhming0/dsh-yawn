@@ -74,10 +74,15 @@ describe("MCP pool", () => {
   let pool: McpPool;
   let mounts: FakeMount[];
   let tools: Set<string>;
+  let now: number;
 
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), "dsh-yawn-mcp-"));
-    store = new McpServerStore({ path: join(directory, "mcp.json") });
+    now = 0;
+    store = new McpServerStore({
+      path: join(directory, "mcp.json"),
+      now: () => now,
+    });
     await store.initialize();
     const recorder = mountRecorder();
     mounts = recorder.mounts;
@@ -100,12 +105,14 @@ describe("MCP pool", () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "bearer",
       token: "alpha-token",
       enabled: true,
     });
     await store.upsert({
       serverName: "beta",
       url: "https://beta.example/mcp",
+      auth: "none",
       enabled: false,
     });
 
@@ -131,6 +138,7 @@ describe("MCP pool", () => {
       {
         serverName: "alpha",
         url: "https://alpha.example/mcp",
+        auth: "bearer",
         enabled: true,
         hasToken: true,
         status: "starting",
@@ -139,6 +147,7 @@ describe("MCP pool", () => {
       {
         serverName: "beta",
         url: "https://beta.example/mcp",
+        auth: "none",
         enabled: false,
         hasToken: false,
         status: "disabled",
@@ -159,11 +168,13 @@ describe("MCP pool", () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "none",
       enabled: true,
     });
     await store.upsert({
       serverName: "beta",
       url: "https://beta.example/mcp",
+      auth: "none",
       enabled: true,
     });
     await pool.sync();
@@ -192,6 +203,7 @@ describe("MCP pool", () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "none",
       enabled: true,
     });
     await pool.sync();
@@ -214,6 +226,7 @@ describe("MCP pool", () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "none",
       enabled: true,
     });
     await pool.sync();
@@ -238,6 +251,7 @@ describe("MCP pool", () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "none",
       enabled: true,
     });
 
@@ -252,6 +266,7 @@ describe("MCP pool", () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "none",
       enabled: true,
     });
     await pool.sync();
@@ -282,6 +297,7 @@ describe("MCP pool", () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "none",
       enabled: false,
     });
     await pool.retry("alpha");
@@ -293,6 +309,7 @@ describe("MCP pool", () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "none",
       enabled: true,
     });
     await pool.sync();
@@ -320,6 +337,7 @@ describe("MCP pool", () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "bearer",
       token: "one",
       enabled: true,
     });
@@ -329,6 +347,7 @@ describe("MCP pool", () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://changed.example/mcp",
+      auth: "bearer",
       enabled: true,
     });
     await pool.sync();
@@ -342,6 +361,7 @@ describe("MCP pool", () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://changed.example/mcp",
+      auth: "bearer",
       token: "two",
       enabled: true,
     });
@@ -353,10 +373,72 @@ describe("MCP pool", () => {
     });
   });
 
+  it("mounts an OAuth server only while its sign-in is valid", async () => {
+    const entry = {
+      serverName: "notion",
+      url: "https://notion.example/mcp",
+      auth: "oauth",
+      enabled: true,
+    } as const;
+    await store.upsert(entry);
+    await pool.sync();
+    expect(mounts).toHaveLength(0);
+    expect(pool.views()).toMatchObject([
+      { status: "needs-auth", authorization: { kind: "none" } },
+    ]);
+
+    await store.saveOAuth("notion", entry.url, {
+      redirectUri: "https://dsh.example/callback",
+      client: { client_id: "client-1" },
+      tokens: { access_token: "access-1", token_type: "Bearer" },
+      expiresAt: 1_000,
+    });
+    await pool.sync();
+    expect(mounts).toHaveLength(1);
+    expect(mounts[0]?.config.headers).toEqual({
+      Authorization: "Bearer access-1",
+    });
+
+    // Nothing refreshes the token: once it expires the mount goes, and the
+    // row asks for a sign-in again.
+    now = 1_000;
+    await pool.sync();
+    expect(mounts[0]?.disposed).toBe(true);
+    expect(pool.views()).toMatchObject([
+      { status: "needs-auth", authorization: { kind: "expired" } },
+    ]);
+
+    // A disabled OAuth server is off, not waiting for a sign-in.
+    await store.upsert({ ...entry, enabled: false });
+    await pool.sync();
+    expect(pool.views()).toMatchObject([{ status: "disabled" }]);
+  });
+
+  it("unmounts a server switched to OAuth until it is signed in", async () => {
+    // A credential-less mount and a not-yet-signed-in OAuth server both have
+    // no token, so the token comparison alone would keep the old mount.
+    const entry = {
+      serverName: "notion",
+      url: "https://notion.example/mcp",
+      auth: "none",
+      enabled: true,
+    } as const;
+    await store.upsert(entry);
+    await pool.sync();
+    expect(mounts).toHaveLength(1);
+
+    await store.upsert({ ...entry, auth: "oauth" });
+    await pool.sync();
+    expect(mounts[0]?.disposed).toBe(true);
+    expect(mounts).toHaveLength(1);
+    expect(pool.views()).toMatchObject([{ status: "needs-auth" }]);
+  });
+
   it("disposes a mount when its entry is disabled or removed", async () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "none",
       enabled: true,
     });
     await pool.sync();
@@ -364,6 +446,7 @@ describe("MCP pool", () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "none",
       enabled: false,
     });
     await pool.sync();
@@ -379,6 +462,7 @@ describe("MCP pool", () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "none",
       enabled: true,
     });
     await pool.sync();
@@ -403,6 +487,7 @@ describe("MCP pool", () => {
     await other.upsert({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "none",
       enabled: true,
     });
 
@@ -414,6 +499,7 @@ describe("MCP pool", () => {
     const result = pool.testConnection({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "bearer",
       token: "typed",
       enabled: true,
     });
@@ -434,6 +520,7 @@ describe("MCP pool", () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "bearer",
       token: "saved",
       enabled: true,
     });
@@ -441,6 +528,7 @@ describe("MCP pool", () => {
     const result = pool.testConnection({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "bearer",
       enabled: true,
     });
     expect(mounts[0]?.config.headers).toEqual({
@@ -460,6 +548,7 @@ describe("MCP pool", () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "none",
       enabled: true,
     });
     await pool.sync();
@@ -467,6 +556,7 @@ describe("MCP pool", () => {
     const result = pool.testConnection({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "none",
       enabled: true,
     });
     expect(mounts).toHaveLength(2);
@@ -482,6 +572,7 @@ describe("MCP pool", () => {
       pool.testConnection({
         serverName: "bad name",
         url: "https://alpha.example/mcp",
+        auth: "none",
         enabled: true,
       }),
     ).rejects.toThrow("invalid MCP server name");
@@ -492,11 +583,13 @@ describe("MCP pool", () => {
     await store.upsert({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
+      auth: "none",
       enabled: true,
     });
     await store.upsert({
       serverName: "beta",
       url: "https://beta.example/mcp",
+      auth: "none",
       enabled: true,
     });
     await pool.sync();
