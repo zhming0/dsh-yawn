@@ -24,7 +24,8 @@ a runner come first.
 `GITHUB_TOKEN` is the secret most installs need. It is injected like any other
 secret, and it doubles as the Git credential for github.com: the control plane
 serves it to Git over a Unix socket, so it never lands in the workspace or in a
-remote URL.
+remote URL. Every sandbox gets it, whichever host its own repository is on, so
+a session in a GitLab Workspace can still clone from GitHub.
 
 Use a fine-grained personal access token scoped to the repositories sessions
 work on, with **Contents: read** — add write access if the agent should push.

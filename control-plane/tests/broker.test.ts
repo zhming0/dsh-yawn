@@ -9,7 +9,6 @@ import {
   GLOBAL_SECRET_SCOPE,
   normalizeRepositoryUrl,
   type SecretScope,
-  testing as brokerTesting,
 } from "../src/broker.js";
 
 /** One workspace scope, as the manager builds it from a registered anchor. */
@@ -65,10 +64,16 @@ describe("credential broker", () => {
       },
     ]);
 
-    // Only github.com is mapped.
+    // A workspace hosted elsewhere still gets the github.com credential.
     expect(
       await broker.gitCredentials("https://gitlab.com/example/repo.git"),
-    ).toEqual([]);
+    ).toEqual([
+      {
+        host: "github.com",
+        username: "x-access-token",
+        password: "pat-value",
+      },
+    ]);
   });
 
   it("scopes secrets per workspace with same-name override", async () => {
@@ -217,13 +222,7 @@ describe("credential broker", () => {
     expect(saved.workspaces).toEqual({});
   });
 
-  it("parses repository hosts and normalizes clone URLs", () => {
-    expect(
-      brokerTesting.repositoryHost("git@github.com:example/repo.git"),
-    ).toBe("github.com");
-    expect(
-      brokerTesting.repositoryHost("https://gitlab.com/example/repo.git"),
-    ).toBe("gitlab.com");
+  it("normalizes clone URLs", () => {
     expect(normalizeRepositoryUrl("git@github.com:example/repo.git")).toBe(
       "https://github.com/example/repo.git",
     );

@@ -109,15 +109,12 @@ export class CredentialBroker {
   /**
    * A GITHUB_TOKEN secret doubles as the github.com credential, so pasting a
    * token (fine-grained PAT or `gh auth token`) is the whole GitHub setup. A
-   * workspace-scoped token serves that workspace's clones.
+   * workspace-scoped token serves that workspace's clones. The workspace's own
+   * host does not matter: a session in any workspace may clone from GitHub.
    */
   async gitCredentials(
     repositoryUrl: string,
   ): Promise<Array<{ host: string; username: string; password: string }>> {
-    const host = repositoryHost(repositoryUrl);
-    if (host !== "github.com") {
-      return [];
-    }
     // Read through the merge, so scope precedence has one definition.
     const token = this.secrets({
       kind: "workspace",
@@ -126,7 +123,9 @@ export class CredentialBroker {
     if (token === undefined) {
       return [];
     }
-    return [{ host, username: "x-access-token", password: token }];
+    return [
+      { host: "github.com", username: "x-access-token", password: token },
+    ];
   }
 
   /** The names stored in one scope, before the global merge. */
@@ -145,18 +144,6 @@ export class CredentialBroker {
       await rename(temporary, this.options.path);
     });
     return this.writeChain;
-  }
-}
-
-function repositoryHost(url: string): string | undefined {
-  const scpStyle = /^[^@]+@([^:]+):/.exec(url);
-  if (scpStyle?.[1] !== undefined) {
-    return scpStyle[1].toLowerCase();
-  }
-  try {
-    return new URL(url).hostname.toLowerCase();
-  } catch {
-    return undefined;
   }
 }
 
@@ -253,5 +240,3 @@ function parseBrokerFile(value: unknown): BrokerFile {
 function isNotFound(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
-
-export const testing = { repositoryHost };
