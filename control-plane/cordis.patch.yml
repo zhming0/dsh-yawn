@@ -162,10 +162,17 @@
     - id: skills
       name: '@zhming0/dsh-yawn/skills'
 
-    # Keeps fresh installations off dsh 0.1.7's automatic default Workspace:
-    # this product picks workspaces by repository URL, and the client treats
-    # the `undefined` answer as plain ineligibility — no error, no default
-    # workspace, no blank session. See src/workspace-first-use.ts.
+    # Keeps the Scratch Workspace (no repository; each session starts in an
+    # empty sandbox) registered whenever the Web workspace registry comes up,
+    # and refuses to delete it. Same wait-not-inject shape as the rows above.
+    - id: sandbox-scratch-workspace
+      name: '@zhming0/dsh-yawn/scratch-workspace'
+
+    # Keeps fresh installations off dsh 0.1.7's automatic default Workspace,
+    # which would land in a Documents folder the image does not have; the
+    # Scratch Workspace registered by the row above takes its place.
+    # The client treats the `undefined` answer as plain ineligibility — no
+    # error. See src/workspace-first-use.ts.
     - id: workspace-first-use
       name: '@zhming0/dsh-yawn/workspace-first-use'
 

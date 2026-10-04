@@ -86,7 +86,8 @@ docker run -d --name dsh-yawn \
 1. Open <http://localhost:3000/launch-token>.
 2. **Settings → Sandboxes → New profile**: `name: standard`, `backend: docker`.
 3. Add a model credential in the Web UI settings.
-4. **New session → Add workspace…** with a repository URL, then send a message.
+4. Send a message in the **Scratch** workspace, whose sessions start in an
+   empty sandbox, or use **New session → Add workspace…** with a repository URL.
 
 To clean up: `docker rm -f dsh-yawn`. What each flag does is in the
 [FAQ](docs/faq.md#what-does-the-quick-start-command-do).

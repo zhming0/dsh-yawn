@@ -201,8 +201,8 @@ export class SandboxLifecycle {
    * A session is about to run: return its live runner. The machine answers
    * from the state the session is in — provisioning its first sandbox,
    * waking a hibernated one, or recovering a dead one. `repository` resolves
-   * the repository URL and is only consulted when the session has no record
-   * yet.
+   * the repository URL, empty in the Scratch Workspace, and is only consulted
+   * when the session has no record yet.
    */
   ensureRunning(
     sessionId: string,

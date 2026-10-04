@@ -69,6 +69,7 @@ export function provisionsFromImage(
 
 export interface SandboxSpec {
   sessionId: string;
+  /** Empty for a session in the Scratch Workspace, which has no repository. */
   repositoryUrl: string;
 }
 
@@ -124,6 +125,11 @@ interface SessionRecordBase {
   backend: string;
   /** Profile the sandbox was provisioned with. */
   profile: string;
+  /**
+   * The repository cloned into the sandbox workspace. Empty for a session in
+   * the Scratch Workspace: its workspace starts empty, it gets global secrets
+   * and instructions only, and a checkpoint carries only its artifacts folder.
+   */
   repositoryUrl: string;
   /**
    * When the current sandbox incarnation was provisioned, as opposed to
@@ -152,8 +158,9 @@ export interface HibernatedRecord extends SessionRecordBase {
 
 /**
  * No sandbox exists: the backend could not hibernate, so the work was saved
- * as a git bundle on the host and the sandbox destroyed. The next turn
- * provisions a fresh one and restores it, until `expiresAt`.
+ * as a git bundle on the host (or, without a repository, only the artifacts
+ * folder) and the sandbox destroyed. The next turn provisions a fresh one and
+ * restores it, until `expiresAt`.
  */
 export interface CheckpointedRecord extends SessionRecordBase {
   state: "checkpointed";
@@ -165,3 +172,8 @@ export type SessionRecord =
   | RunningRecord
   | HibernatedRecord
   | CheckpointedRecord;
+
+/** Whether the session's sandbox holds a clone; false in the Scratch Workspace. */
+export function hasRepository(record: { repositoryUrl: string }): boolean {
+  return record.repositoryUrl !== "";
+}

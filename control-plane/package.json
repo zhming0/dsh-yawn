@@ -63,6 +63,10 @@
       "types": "./dist/launch-token.d.ts",
       "default": "./dist/launch-token.js"
     },
+    "./scratch-workspace": {
+      "types": "./dist/scratch-workspace.d.ts",
+      "default": "./dist/scratch-workspace.js"
+    },
     "./workspace-first-use": {
       "types": "./dist/workspace-first-use.d.ts",
       "default": "./dist/workspace-first-use.js"

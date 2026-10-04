@@ -13,12 +13,14 @@ import {
   parseSaveOutput,
   RESTORE_ARTIFACTS_SCRIPT,
   RESTORE_SCRIPT,
+  restoreCheckpoint,
   restoreEnvironment,
   SAVE_ARTIFACTS_SCRIPT,
   SAVE_SCRIPT,
   type GitCheckpoint,
 } from "../src/checkpoint.js";
 import { IdleSchedule } from "../src/manager/idle.js";
+import type { RunnerClient } from "../src/runner-client.js";
 import { sleep } from "./fakes.js";
 
 const execute = promisify(execFile);
@@ -122,6 +124,27 @@ describe("checkpoint", () => {
     for (const name of Object.keys(env)) {
       expect(RESTORE_SCRIPT).toContain(`$${name}`);
     }
+  });
+
+  it("refuses a repository checkpoint that lost its commit", async () => {
+    const execs: unknown[] = [];
+    const client = {
+      exec: (request: unknown) => {
+        execs.push(request);
+        throw new Error("no script should run");
+      },
+    } as unknown as RunnerClient;
+    await expect(
+      restoreCheckpoint(
+        client,
+        "/workspace/repository",
+        true,
+        {},
+        new Uint8Array(),
+        new Uint8Array(),
+      ),
+    ).rejects.toThrow("has no commit");
+    expect(execs).toEqual([]);
   });
 });
 

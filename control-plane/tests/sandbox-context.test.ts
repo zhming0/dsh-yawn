@@ -3,6 +3,7 @@ import { SystemPrompt, renderPrompt } from "@deepseek-ai/dsh-system-prompt";
 import { describe, expect, it } from "vitest";
 
 import {
+  NO_REPOSITORY_ENVIRONMENT_PROMPT,
   SANDBOX_ENVIRONMENT_PROMPT,
   SANDBOX_ENVIRONMENT_SECTION,
   apply,
@@ -219,6 +220,46 @@ describe("installSandboxContext", () => {
 
   it("sends output that must outlive the sandbox to the artifacts folder", () => {
     expect(SANDBOX_ENVIRONMENT_PROMPT).toContain("always comes back");
+  });
+
+  it("describes a session without a repository without naming a checkout", () => {
+    const install = (capabilities: BackendCapabilities | undefined) => {
+      const systemPrompt = makeSystemPromptStub();
+      installSandboxContext(
+        systemPrompt,
+        () => "/workspace/repository",
+        () => capabilities,
+        () => undefined,
+        false,
+      );
+      return systemPrompt;
+    };
+    expect(install(undefined).sections).toEqual([
+      {
+        name: SANDBOX_ENVIRONMENT_SECTION,
+        order: 0,
+        text: NO_REPOSITORY_ENVIRONMENT_PROMPT,
+      },
+    ]);
+    expect(NO_REPOSITORY_ENVIRONMENT_PROMPT).not.toMatch(
+      /repository|checkout is mounted|\.agents\/setup/,
+    );
+    expect(NO_REPOSITORY_ENVIRONMENT_PROMPT).toContain("started empty");
+    expect(NO_REPOSITORY_ENVIRONMENT_PROMPT).toContain("always comes back");
+    expect(isHostOnlySection(NO_REPOSITORY_ENVIRONMENT_PROMPT)).toBe(false);
+
+    const retention = (capabilities: BackendCapabilities | undefined) =>
+      install(capabilities).variables.get("workdir_retention")?.({});
+    expect(retention(undefined)).toContain("may not keep");
+    expect(retention({ supportsHibernate: false })).toBe(
+      "A sleep replaces this machine and does not keep your working directory.",
+    );
+    expect(
+      retention({ supportsHibernate: true, wakeKeepsFilesystem: true }),
+    ).toContain("comes back with its files");
+    expect(
+      retention({ supportsHibernate: true, wakeKeepsFilesystem: false }),
+    ).toContain("your working directory included");
   });
 });
 

@@ -126,16 +126,15 @@ func (s *Service) Setup(ctx context.Context, request *connect.Request[v1.SetupRe
 		return nil, cerr(connect.CodeInternal, gitError)
 	}
 	cloned := false
-	if os.IsNotExist(gitError) {
+	// Without a repository URL the workspace is never cloned into: it starts
+	// empty and keeps whatever the session puts there, across wakes too.
+	if os.IsNotExist(gitError) && request.Msg.RepositoryUrl != "" {
 		entries, readError := os.ReadDir(workspace)
 		if readError != nil {
 			return nil, cerr(connect.CodeInternal, readError)
 		}
 		if len(entries) != 0 {
 			return nil, cerr(connect.CodeFailedPrecondition, errors.New("workspace is not empty"))
-		}
-		if request.Msg.RepositoryUrl == "" {
-			return nil, cerr(connect.CodeInvalidArgument, errors.New("repository_url required"))
 		}
 		if err := s.run(ctx, filepath.Dir(workspace), "git", "clone", request.Msg.RepositoryUrl, workspace); err != nil {
 			return nil, cerr(connect.CodeInternal, err)
@@ -150,7 +149,10 @@ func (s *Service) Setup(ctx context.Context, request *connect.Request[v1.SetupRe
 			return nil, cerr(connect.CodeInternal, err)
 		}
 	}
-	if path, ok := setupHookPath(workspace); ok {
+	// Only a repository's own hook runs. Without one the workspace holds what
+	// the session wrote, and a file it happened to name `.agents/setup` is not
+	// setup.
+	if path, ok := setupHookPath(workspace); ok && request.Msg.RepositoryUrl != "" {
 		if err := s.run(ctx, workspace, path); err != nil {
 			return nil, cerr(connect.CodeInternal, err)
 		}

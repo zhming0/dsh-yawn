@@ -239,6 +239,8 @@ message SetGitCredentialsRequest {
 message SetGitCredentialsResponse {}
 
 message SetupRequest {
+  // Empty for a workspace without a repository: nothing is cloned, the
+  // workspace starts empty, and no `.agents/setup` hook runs.
   string repository_url = 1;
   string revision = 2;
   string workspace = 3;
