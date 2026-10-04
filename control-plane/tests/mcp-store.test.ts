@@ -325,6 +325,54 @@ describe("MCP server store", () => {
       expect(store.oauthFor("notion")).toBeUndefined();
     });
 
+    it("replaces only the sign-in a refresh token belongs to", async () => {
+      const store = new McpServerStore({
+        path: join(directory, "mcp.json"),
+        now: () => 0,
+      });
+      await store.initialize();
+      await store.upsert(oauthEntry);
+      const renewable = {
+        ...credential,
+        tokens: { ...credential.tokens, refresh_token: "refresh-1" },
+      };
+      await store.saveOAuth("notion", oauthEntry.url, renewable);
+      expect(store.oauthStatus("notion")).toEqual({
+        kind: "valid",
+        until: 10_000,
+        renews: true,
+      });
+
+      const renewed = {
+        ...renewable,
+        tokens: {
+          access_token: "access-2",
+          token_type: "Bearer",
+          refresh_token: "refresh-2",
+        },
+        expiresAt: 20_000,
+      };
+      await expect(
+        store.replaceOAuth("notion", "refresh-0", renewed),
+      ).resolves.toBe(false);
+      expect(store.tokenFor("notion")).toBe("access-1");
+      await expect(
+        store.replaceOAuth("notion", "refresh-1", renewed),
+      ).resolves.toBe(true);
+      expect(store.oauthFor("notion")).toEqual(renewed);
+
+      // Without an expiry nothing is renewed, so the card must not say so.
+      const { expiresAt: _expiresAt, ...unbounded } = renewed;
+      await store.replaceOAuth("notion", "refresh-2", unbounded);
+      expect(store.oauthStatus("notion")).toEqual({ kind: "valid" });
+
+      await expect(
+        store.replaceOAuth("notion", "refresh-2", undefined),
+      ).resolves.toBe(true);
+      expect(store.oauthFor("notion")).toBeUndefined();
+      expect(store.get("notion")).toEqual(oauthEntry);
+    });
+
     it("refuses a sign-in for a server that changed meanwhile", async () => {
       const store = new McpServerStore({ path: join(directory, "mcp.json") });
       await store.initialize();

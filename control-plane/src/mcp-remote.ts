@@ -23,7 +23,7 @@ export type McpServerStatus =
 export type McpAuthorizationView =
   | { kind: "none" }
   | { kind: "expired" }
-  | { kind: "valid"; until?: number };
+  | { kind: "valid"; until?: number; renews?: true };
 
 /** Read-only browser view of one configured server. Never carries a secret. */
 export interface McpServerView {

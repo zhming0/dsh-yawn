@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
   auth,
+  type OAuthClientMetadata,
   type OAuthClientProvider,
   type OAuthDiscoveryState,
   type StoredOAuthClientInformation,
@@ -23,6 +24,20 @@ export const MCP_OAUTH_CALLBACK_PATH = "/dsh-yawn/mcp/oauth/callback";
 /** A sign-in that is not finished by then is forgotten. */
 const pendingLifetimeMs = 10 * 60_000;
 
+/**
+ * An access token is renewed this long before it expires, or halfway through
+ * its lifetime when that is shorter. Renewing remounts the server, so it is
+ * left late.
+ */
+const renewalMarginMs = 10 * 60_000;
+
+/** After a failed renewal, wait this long, doubling per failure up to the cap. */
+const renewalRetryMs = 60_000;
+const renewalRetryCapMs = 30 * 60_000;
+
+/** One request to the authorization server during a renewal may take this long. */
+const renewalRequestTimeoutMs = 30_000;
+
 /** One sign-in between the redirect to the authorization server and its return. */
 interface PendingSignIn {
   serverName: string;
@@ -39,24 +54,41 @@ export interface McpOAuthOptions {
   store: McpServerStore;
   /** Runs after a sign-in is saved, so the server is mounted with its token. */
   authorized: (serverName: string) => Promise<void>;
+  warn: (message: string) => void;
+  /** Clock for token expiry and renewal retries; tests replace it. */
+  now?: () => number;
+}
+
+/** A renewal that failed, and when to try it again. */
+interface RenewalFailure {
+  attempts: number;
+  retryAt: number;
 }
 
 /**
  * The OAuth authorization code flow (with PKCE) for remote MCP servers, run
  * by the control plane: discovery, dynamic client registration, and the code
  * exchange go through the MCP SDK's `auth()`. Only the authorization URL ever
- * reaches the browser. Tokens are not refreshed: once the access token
- * expires, the server waits for the operator to sign in again.
+ * reaches the browser. When the server issues a refresh token,
+ * {@link renewDue} uses it to replace the access token shortly before it
+ * expires; without one, the server waits for the operator to sign in again.
  */
 export class McpOAuth {
   private readonly store: McpServerStore;
   private readonly authorized: (serverName: string) => Promise<void>;
+  private readonly warn: (message: string) => void;
+  private readonly now: () => number;
   /** Keyed by the `state` parameter. */
   private readonly pending = new Map<string, PendingSignIn>();
+  /** Keyed by server name; dropped once the server is not due. */
+  private readonly failures = new Map<string, RenewalFailure>();
+  private renewing: Promise<void> | undefined;
 
   constructor(options: McpOAuthOptions) {
     this.store = options.store;
     this.authorized = options.authorized;
+    this.warn = options.warn;
+    this.now = options.now ?? Date.now;
   }
 
   /**
@@ -80,7 +112,7 @@ export class McpOAuth {
       serverName,
       url: entry.url,
       redirectUri,
-      createdAt: Date.now(),
+      createdAt: this.now(),
     };
     // A registration is bound to its redirect URI; reach the control plane on
     // another address and the client registers again.
@@ -114,7 +146,7 @@ export class McpOAuth {
     if (
       state === null ||
       signIn === undefined ||
-      Date.now() - signIn.createdAt > pendingLifetimeMs
+      this.now() - signIn.createdAt > pendingLifetimeMs
     ) {
       throw new Error(
         "This sign-in is unknown or has expired. Start it again from Settings → MCP.",
@@ -149,17 +181,11 @@ export class McpOAuth {
     ) {
       throw new Error("The authorization server returned no access token.");
     }
-    // Nothing refreshes, so a refresh token would be a long-lived credential
-    // with no reader; it is not kept.
-    const { refresh_token: _refreshToken, ...tokens } = signIn.tokens;
-    const lifetime = tokens.expires_in;
     await this.store.saveOAuth(signIn.serverName, signIn.url, {
       redirectUri: signIn.redirectUri,
       client: signIn.client,
-      tokens,
-      ...(typeof lifetime === "number"
-        ? { expiresAt: Date.now() + lifetime * 1000 }
-        : {}),
+      tokens: signIn.tokens,
+      ...this.expiry(signIn.tokens),
     });
     await this.authorized(signIn.serverName);
     return signIn.serverName;
@@ -191,6 +217,179 @@ export class McpOAuth {
     }
   }
 
+  /**
+   * Renew every saved sign-in whose access token is about to expire. Never
+   * rejects; a failure is logged and retried later with a growing delay. The
+   * caller remounts afterwards, since a renewed token is a new header.
+   */
+  renewDue(): Promise<void> {
+    this.renewing ??= this.renewAll().finally(() => {
+      this.renewing = undefined;
+    });
+    return this.renewing;
+  }
+
+  private async renewAll(): Promise<void> {
+    try {
+      await this.store.refresh();
+    } catch (reason) {
+      this.warn(
+        `MCP OAuth renewal could not read the servers: ${describe(reason)}`,
+      );
+      return;
+    }
+    for (const entry of this.store.list()) {
+      if (!this.renewalDue(entry.serverName)) {
+        this.failures.delete(entry.serverName);
+        continue;
+      }
+      const failure = this.failures.get(entry.serverName);
+      if (failure !== undefined && failure.retryAt > this.now()) {
+        continue;
+      }
+      try {
+        await this.renew(entry.serverName);
+        this.failures.delete(entry.serverName);
+      } catch (reason) {
+        const attempts = (failure?.attempts ?? 0) + 1;
+        this.failures.set(entry.serverName, {
+          attempts,
+          retryAt:
+            this.now() +
+            Math.min(renewalRetryMs * 2 ** (attempts - 1), renewalRetryCapMs),
+        });
+        this.warn(
+          `MCP server ${entry.serverName} could not renew its OAuth access token: ${describe(reason)}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Whether the saved sign-in has a refresh token and an access token close
+   * enough to expiry, or past it, to renew now.
+   */
+  private renewalDue(serverName: string): boolean {
+    const oauth = this.store.oauthFor(serverName);
+    if (
+      oauth?.tokens.refresh_token === undefined ||
+      oauth.expiresAt === undefined
+    ) {
+      return false;
+    }
+    const lifetimeMs = (oauth.tokens.expires_in ?? 0) * 1000;
+    const margin = Math.min(renewalMarginMs, lifetimeMs / 2);
+    return this.now() >= oauth.expiresAt - margin;
+  }
+
+  /**
+   * One refresh grant through `auth()`, which also checks that the
+   * authorization server is still the one the sign-in used. A refused
+   * refresh token ends the renewals: the access token is kept until it
+   * expires, and then the server waits for a sign-in. A refused client
+   * removes the sign-in, so the next one registers a new client.
+   */
+  private async renew(serverName: string): Promise<void> {
+    const entry = this.store.get(serverName);
+    const saved = this.store.oauthFor(serverName);
+    const refreshToken = saved?.tokens.refresh_token;
+    if (
+      entry === undefined ||
+      saved === undefined ||
+      refreshToken === undefined
+    ) {
+      return;
+    }
+    let client: StoredOAuthClientInformation | undefined = saved.client;
+    let tokens: StoredOAuthTokens | undefined = saved.tokens;
+    let refused = false;
+    const provider: OAuthClientProvider = {
+      redirectUrl: saved.redirectUri,
+      clientMetadata: clientMetadata(saved.redirectUri),
+      clientInformation: () => client,
+      // No saveClientInformation: without it the SDK cannot register a new
+      // client, which is a sign-in's job, not a renewal's.
+      tokens: () => tokens,
+      saveTokens: (renewed) => {
+        tokens = renewed;
+      },
+      // The SDK calls this when the authorization server refuses the refresh
+      // token or the client, then retries once and falls back to a browser
+      // sign-in: a REDIRECT for refused tokens, a throw for a refused client
+      // (it cannot register another).
+      invalidateCredentials: (scope) => {
+        if (scope === "all" || scope === "client") {
+          client = undefined;
+        }
+        if (scope === "all" || scope === "client" || scope === "tokens") {
+          refused = true;
+          tokens = undefined;
+        }
+      },
+      redirectToAuthorization: () => {},
+      saveCodeVerifier: () => {},
+      codeVerifier: () => {
+        throw new Error("a renewal has no PKCE code verifier");
+      },
+    };
+    let result: Awaited<ReturnType<typeof auth>> | undefined;
+    try {
+      result = await auth(provider, {
+        serverUrl: entry.url,
+        // A stalled authorization server must not hold up the other
+        // servers' renewals, nor the reconcile that follows them.
+        fetchFn: (url, init) => {
+          const timeout = AbortSignal.timeout(renewalRequestTimeoutMs);
+          return fetch(url, {
+            ...init,
+            signal:
+              init?.signal === undefined || init.signal === null
+                ? timeout
+                : AbortSignal.any([init.signal, timeout]),
+          });
+        },
+      });
+    } catch (reason) {
+      if (!refused) {
+        throw reason;
+      }
+    }
+    if (refused) {
+      const { refresh_token: _refused, ...kept } = saved.tokens;
+      await this.store.replaceOAuth(
+        serverName,
+        refreshToken,
+        client === undefined ? undefined : { ...saved, tokens: kept },
+      );
+      throw new Error(
+        client === undefined
+          ? "the authorization server refused the client; sign in again"
+          : "the authorization server refused the refresh token; sign in again",
+      );
+    }
+    // Anything but AUTHORIZED means the refresh grant failed and the SDK fell
+    // back to starting a browser sign-in, which nobody will open.
+    if (result !== "AUTHORIZED" || tokens === undefined) {
+      throw new Error(
+        "the authorization server did not renew the access token",
+      );
+    }
+    // Skipped when the operator signed in again meanwhile; that sign-in wins.
+    const { expiresAt: _previous, ...credential } = saved;
+    await this.store.replaceOAuth(serverName, refreshToken, {
+      ...credential,
+      tokens,
+      ...this.expiry(tokens),
+    });
+  }
+
+  /** When an access token expires, if the server gave its lifetime. */
+  private expiry(tokens: StoredOAuthTokens): { expiresAt?: number } {
+    return typeof tokens.expires_in === "number"
+      ? { expiresAt: this.now() + tokens.expires_in * 1000 }
+      : {};
+  }
+
   private provider(
     signIn: PendingSignIn,
     state: string,
@@ -198,12 +397,7 @@ export class McpOAuth {
   ): OAuthClientProvider {
     return {
       redirectUrl: signIn.redirectUri,
-      clientMetadata: {
-        client_name: "DeepSeek Harness",
-        redirect_uris: [signIn.redirectUri],
-        grant_types: ["authorization_code"],
-        response_types: ["code"],
-      },
+      clientMetadata: clientMetadata(signIn.redirectUri),
       state: () => state,
       clientInformation: () => signIn.client,
       saveClientInformation: (client) => {
@@ -233,11 +427,21 @@ export class McpOAuth {
 
   private forgetExpired(): void {
     for (const [state, signIn] of this.pending) {
-      if (Date.now() - signIn.createdAt > pendingLifetimeMs) {
+      if (this.now() - signIn.createdAt > pendingLifetimeMs) {
         this.pending.delete(state);
       }
     }
   }
+}
+
+/** What dynamic client registration asks for. */
+function clientMetadata(redirectUri: string): OAuthClientMetadata {
+  return {
+    client_name: "DeepSeek Harness",
+    redirect_uris: [redirectUri],
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+  };
 }
 
 /** The callback URL on the origin the browser used for Settings. */

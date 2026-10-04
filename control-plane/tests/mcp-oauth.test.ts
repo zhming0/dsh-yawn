@@ -26,22 +26,35 @@ import { McpPool } from "../src/mcp-pool.js";
 import { McpServerStore } from "../src/mcp-store.js";
 
 const ORIGIN = "http://dsh.localhost:8080";
-const ACCESS_TOKEN = "access-1";
 
 /**
  * One local server playing both parts the MCP authorization spec describes:
  * an OAuth-protected Streamable HTTP MCP endpoint at `/mcp`, and the
  * authorization server it names, with dynamic client registration and PKCE.
  * `/authorize` approves at once and redirects with a code, standing in for
- * the user's consent page.
+ * the user's consent page. Every token response issues a new access token
+ * and rotates the refresh token; only the newest access token is accepted.
  */
+type Refusal = "invalid_grant" | "invalid_client" | "server_error";
+
 async function startProtectedServer(): Promise<{
   url: string;
   registrations: () => number;
+  tokenRequests: () => number;
+  /** The bearer token of the last request `/mcp` accepted. */
+  lastAccepted: () => string;
+  /** Answer the next refresh grants with this OAuth error, or succeed. */
+  refuseRefresh: (error: Refusal | undefined) => void;
   close: () => Promise<void>;
 }> {
   let base = "";
   let registrations = 0;
+  let tokenRequests = 0;
+  let issued = 0;
+  let accessToken = "";
+  let refreshToken = "";
+  let lastAccepted = "";
+  let refusal: Refusal | undefined;
   const codes = new Map<string, { challenge: string; redirectUri: string }>();
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     void handle(req, res).catch(() => {
@@ -96,38 +109,62 @@ async function startProtectedServer(): Promise<{
       return res.end();
     }
     if (url.pathname === "/token") {
+      tokenRequests += 1;
       const form = new URLSearchParams(body);
-      const issued = codes.get(form.get("code") ?? "");
+      if (form.get("grant_type") === "refresh_token") {
+        if (refusal !== undefined) {
+          const status = { server_error: 500, invalid_client: 401 }[
+            refusal as string
+          ];
+          return json(res, status ?? 400, { error: refusal });
+        }
+        if (form.get("refresh_token") !== refreshToken) {
+          return json(res, 400, { error: "invalid_grant" });
+        }
+        return json(res, 200, issueTokens());
+      }
+      const grant = codes.get(form.get("code") ?? "");
       const verifier = form.get("code_verifier") ?? "";
       const challenge = createHash("sha256")
         .update(verifier)
         .digest("base64url");
       if (
-        issued === undefined ||
-        issued.challenge !== challenge ||
-        issued.redirectUri !== form.get("redirect_uri")
+        grant === undefined ||
+        grant.challenge !== challenge ||
+        grant.redirectUri !== form.get("redirect_uri")
       ) {
         return json(res, 400, { error: "invalid_grant" });
       }
       codes.delete(form.get("code") ?? "");
-      return json(res, 200, {
-        access_token: ACCESS_TOKEN,
-        token_type: "Bearer",
-        expires_in: 3600,
-        refresh_token: "refresh-1",
-      });
+      return json(res, 200, issueTokens());
     }
     if (url.pathname === "/mcp") {
-      if (req.headers.authorization !== `Bearer ${ACCESS_TOKEN}`) {
+      if (
+        accessToken === "" ||
+        req.headers.authorization !== `Bearer ${accessToken}`
+      ) {
         res.writeHead(401, {
           "www-authenticate": `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`,
         });
         return res.end();
       }
+      lastAccepted = accessToken;
       return serveMcp(req, res, body);
     }
     res.writeHead(404);
     res.end();
+  }
+
+  function issueTokens() {
+    issued += 1;
+    accessToken = `access-${issued}`;
+    refreshToken = `refresh-${issued}`;
+    return {
+      access_token: accessToken,
+      token_type: "Bearer",
+      expires_in: 3600,
+      refresh_token: refreshToken,
+    };
   }
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -135,6 +172,11 @@ async function startProtectedServer(): Promise<{
   return {
     url: `${base}/mcp`,
     registrations: () => registrations,
+    tokenRequests: () => tokenRequests,
+    lastAccepted: () => lastAccepted,
+    refuseRefresh: (error) => {
+      refusal = error;
+    },
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }
@@ -233,15 +275,28 @@ describe("MCP OAuth sign-in", () => {
   let pool: McpPool;
   let oauth: McpOAuth;
   let protectedServer: Awaited<ReturnType<typeof startProtectedServer>>;
+  let warnings: string[];
+  /** Added to the clock, to bring an access token close to expiry. */
+  let skewMs: number;
 
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), "dsh-yawn-mcp-oauth-"));
-    store = new McpServerStore({ path: join(directory, "mcp.json") });
+    skewMs = 0;
+    store = new McpServerStore({
+      path: join(directory, "mcp.json"),
+      now: () => Date.now() + skewMs,
+    });
     await store.initialize();
     const ctx = new Context();
     await ctx.plugin(toolsPlugin);
     pool = new McpPool({ ctx, store, warn: () => {} });
-    oauth = new McpOAuth({ store, authorized: () => pool.sync() });
+    warnings = [];
+    oauth = new McpOAuth({
+      store,
+      authorized: () => pool.sync(),
+      warn: (message) => warnings.push(message),
+      now: () => Date.now() + skewMs,
+    });
     protectedServer = await startProtectedServer();
     await store.upsert({
       serverName: "notion",
@@ -277,16 +332,14 @@ describe("MCP OAuth sign-in", () => {
     const callback = await approve(authorizationUrl.href);
 
     await expect(oauth.finish(callback.searchParams)).resolves.toBe("notion");
-    expect(store.tokenFor("notion")).toBe(ACCESS_TOKEN);
-    // Nothing refreshes, so the refresh token is not kept.
-    expect(store.oauthFor("notion")?.tokens.refresh_token).toBeUndefined();
+    expect(store.tokenFor("notion")).toBe("access-1");
     const connected = await waitFor(() => {
       const view = pool.views()[0];
       return view?.status === "connected" ? view : undefined;
     });
     expect(connected).toMatchObject({
       toolCount: 1,
-      authorization: { kind: "valid" },
+      authorization: { kind: "valid", renews: true },
     });
 
     // The state is single-use.
@@ -305,6 +358,96 @@ describe("MCP OAuth sign-in", () => {
     // Another address is another redirect URI, so it registers again.
     await approve(await oauth.start("notion", "http://other.localhost:8080"));
     expect(protectedServer.registrations()).toBe(2);
+  }, 30_000);
+
+  it("renews an access token close to expiry and remounts with it", async () => {
+    const callback = await approve(await oauth.start("notion", ORIGIN));
+    await oauth.finish(callback.searchParams);
+    await waitFor(() =>
+      pool.views()[0]?.status === "connected" ? true : undefined,
+    );
+
+    // Not due until ten minutes before expiry: nothing is sent.
+    skewMs = 3600_000 - 10 * 60_000 - 1_000;
+    await oauth.renewDue();
+    expect(protectedServer.tokenRequests()).toBe(1);
+
+    skewMs += 2_000;
+    await oauth.renewDue();
+    expect(protectedServer.tokenRequests()).toBe(2);
+    expect(store.tokenFor("notion")).toBe("access-2");
+    expect(store.oauthFor("notion")?.tokens.refresh_token).toBe("refresh-2");
+    expect(warnings).toEqual([]);
+
+    // The new token is not due again.
+    await oauth.renewDue();
+    expect(protectedServer.tokenRequests()).toBe(2);
+
+    await pool.sync();
+    await waitFor(() =>
+      protectedServer.lastAccepted() === "access-2" &&
+      pool.views()[0]?.status === "connected"
+        ? true
+        : undefined,
+    );
+    expect(protectedServer.registrations()).toBe(1);
+  }, 30_000);
+
+  it("stops renewing once the refresh token is refused", async () => {
+    const callback = await approve(await oauth.start("notion", ORIGIN));
+    await oauth.finish(callback.searchParams);
+    protectedServer.refuseRefresh("invalid_grant");
+    skewMs = 3600_000 - 5 * 60_000;
+
+    await oauth.renewDue();
+    expect(warnings).toEqual([
+      expect.stringContaining("refused the refresh token"),
+    ]);
+    // The access token still works until it expires; then a sign-in is due.
+    expect(store.tokenFor("notion")).toBe("access-1");
+    expect(store.oauthFor("notion")?.tokens.refresh_token).toBeUndefined();
+    expect(store.oauthStatus("notion")).toEqual({
+      kind: "valid",
+      until: expect.any(Number) as number,
+    });
+    await oauth.renewDue();
+    expect(protectedServer.tokenRequests()).toBe(2);
+    expect(protectedServer.registrations()).toBe(1);
+  }, 30_000);
+
+  it("drops the sign-in when the client is refused, without registering", async () => {
+    const callback = await approve(await oauth.start("notion", ORIGIN));
+    await oauth.finish(callback.searchParams);
+    protectedServer.refuseRefresh("invalid_client");
+    skewMs = 3600_000 - 5 * 60_000;
+
+    await oauth.renewDue();
+    expect(warnings).toEqual([expect.stringContaining("refused the client")]);
+    expect(store.oauthFor("notion")).toBeUndefined();
+    expect(protectedServer.registrations()).toBe(1);
+
+    // So the next sign-in registers a new client.
+    await approve(await oauth.start("notion", ORIGIN));
+    expect(protectedServer.registrations()).toBe(2);
+  }, 30_000);
+
+  it("retries a failed renewal later, not on every tick", async () => {
+    const callback = await approve(await oauth.start("notion", ORIGIN));
+    await oauth.finish(callback.searchParams);
+    protectedServer.refuseRefresh("server_error");
+    skewMs = 3600_000 - 5 * 60_000;
+
+    await oauth.renewDue();
+    await oauth.renewDue();
+    expect(protectedServer.tokenRequests()).toBe(2);
+    expect(warnings).toHaveLength(1);
+    expect(store.oauthFor("notion")?.tokens.refresh_token).toBe("refresh-1");
+
+    // A minute later the next tick tries again.
+    protectedServer.refuseRefresh(undefined);
+    skewMs += 60_000;
+    await oauth.renewDue();
+    expect(store.tokenFor("notion")).toBe("access-2");
   }, 30_000);
 
   it("reports a refused sign-in and saves nothing", async () => {

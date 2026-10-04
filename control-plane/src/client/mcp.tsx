@@ -713,6 +713,9 @@ function authText(server: McpServerView): string {
     case "oauth":
       switch (server.authorization?.kind) {
         case "valid":
+          if (server.authorization.renews === true) {
+            return "OAuth: signed in, renews automatically";
+          }
           return server.authorization.until === undefined
             ? "OAuth: signed in"
             : `OAuth: signed in, expires ${expiryText(server.authorization.until)}`;
@@ -737,7 +740,7 @@ function authHint(auth: McpAuth, edited: McpServerView | undefined): string {
     case "oauth":
       return edited?.auth === "oauth" && edited.authorization?.kind !== "none"
         ? "Signed in through the server's own login. Changing the URL signs out."
-        : "Saving opens the server's sign-in in a new tab. Tokens stay on the control plane and are not refreshed: sign in again when they expire.";
+        : "Saving opens the server's sign-in in a new tab. Tokens stay on the control plane and are renewed before they expire when the server allows it.";
   }
 }
 
