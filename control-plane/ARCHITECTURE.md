@@ -149,14 +149,28 @@ That route sits outside `/api`, because the return trip is a cross-site
 navigation, which dsh's `/api` fence refuses and which carries no
 `SameSite=Strict` session cookie. A single-use `state`, issued to an
 authenticated Settings page and forgotten after ten minutes, is what ties the
-request to a sign-in. The client registration and the access token are saved
-with the server and never leave the host; a refresh token, which nothing would
-read, is not kept. A server is mounted with the access token as a bearer
-header while it is valid. **Tokens are not refreshed**: once the
-access token's `expires_in` passes, the next reconcile (any Settings read)
-unmounts the server and its card asks for a sign-in again. Until then a tool
-call made after the expiry fails with the server's 401. Changing the URL
-signs out, because the sign-in authorizes the old server. The redirect URI
+request to a sign-in. The client registration, the access token, and any
+refresh token are saved with the server and never leave the host. A server is
+mounted with the access token as a bearer header while it is valid.
+
+The control plane renews tokens itself, on a one-minute tick that starts
+after boot: when an access token with a refresh token is within ten minutes
+of expiry (or half its lifetime, if that is shorter), it runs the refresh
+grant through the SDK's `auth()`, each request limited to 30 seconds, and
+saves the new tokens, including a rotated refresh token, unless the server
+was signed in again meanwhile. The mcp-client takes only static headers, so a
+renewed token means a remount: the server's tools drop out for the length of
+a handshake, and a call in flight at that moment fails. Renewal is left late
+to keep that rare for tokens that last hours, such as Notion's; a token that
+lasts minutes remounts every few minutes. A failed renewal is retried with a
+delay that doubles from one minute to thirty. A refused refresh token
+(`invalid_grant`) ends the renewals, and the access token is used until it
+expires. A refused client (`invalid_client`) removes the sign-in, so the next
+one registers a new client; a renewal never registers one itself. Each tick
+then reconciles the mounts: an expired token unmounts the server and its card
+asks for a sign-in again. A server that issues no refresh token, or no
+`expires_in`, is never renewed. Changing the URL signs out,
+because the sign-in authorizes the old server. The redirect URI
 must be one the authorization server accepts, which for most servers means
 HTTPS or a loopback address.
 

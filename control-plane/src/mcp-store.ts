@@ -175,7 +175,8 @@ export class McpServerStore {
 
   /**
    * The OAuth sign-in state the browser may see: none, expired, or valid,
-   * with the expiry time when the server gave a lifetime.
+   * with the expiry time when the server gave a lifetime and whether a
+   * refresh token will renew it before then.
    */
   oauthStatus(serverName: string): McpAuthorizationView {
     const oauth = this.oauthFor(serverName);
@@ -185,9 +186,14 @@ export class McpServerStore {
     if (this.expired(oauth)) {
       return { kind: "expired" };
     }
-    return oauth.expiresAt === undefined
-      ? { kind: "valid" }
-      : { kind: "valid", until: oauth.expiresAt };
+    return {
+      kind: "valid",
+      ...(oauth.expiresAt === undefined ? {} : { until: oauth.expiresAt }),
+      ...(oauth.tokens.refresh_token === undefined ||
+      oauth.expiresAt === undefined
+        ? {}
+        : { renews: true }),
+    };
   }
 
   /**
@@ -243,6 +249,30 @@ export class McpServerStore {
     }
     this.replace({ ...stored, oauth });
     await this.persist();
+  }
+
+  /**
+   * Replace, or with `undefined` remove, the sign-in that `refreshToken`
+   * belongs to. Answers false, saving nothing, when the server was signed in
+   * again, changed, or removed meanwhile.
+   */
+  async replaceOAuth(
+    serverName: string,
+    refreshToken: string,
+    oauth: McpOAuthCredential | undefined,
+  ): Promise<boolean> {
+    await this.refresh();
+    const stored = find(this.state.servers, serverName);
+    if (
+      stored?.auth !== "oauth" ||
+      stored.oauth?.tokens.refresh_token !== refreshToken
+    ) {
+      return false;
+    }
+    const { oauth: _previous, ...server } = stored;
+    this.replace(oauth === undefined ? server : { ...server, oauth });
+    await this.persist();
+    return true;
   }
 
   async remove(serverName: string): Promise<void> {

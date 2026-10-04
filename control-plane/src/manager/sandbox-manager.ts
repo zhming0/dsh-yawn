@@ -238,6 +238,7 @@ export class SandboxManager extends TypertRemoteService {
               `MCP server ${serverName} signed in but could not be remounted: ${String(reason)}`,
             );
         }),
+      warn: (message) => this.ctx.logger("sandbox").warn(message),
     });
     const fileIndexes = new FileIndexStore(
       join(this.config.stateDir, "file-index"),
@@ -464,6 +465,43 @@ export class SandboxManager extends TypertRemoteService {
     });
     ctx.inject(["workspaceRegistry"], () => {
       this.archiveRelease.reconcile();
+    });
+    // Renewed OAuth tokens are new headers, and an expired one must stop
+    // being sent, so every tick ends with a reconcile of the mounts. Ticks
+    // start once boot has mounted the servers, and a tick that outlives
+    // disposal must not mount anything.
+    ctx.effect(() => {
+      let stopped = false;
+      let timer: NodeJS.Timeout | undefined;
+      const tick = async () => {
+        await this.mcpOAuth.renewDue();
+        if (stopped) {
+          return;
+        }
+        try {
+          await this.mcpPool.sync();
+        } catch (reason) {
+          this.ctx
+            .logger("sandbox")
+            .warn(`MCP servers could not be reconciled: ${String(reason)}`);
+        }
+      };
+      this.ready.then(
+        () => {
+          if (stopped) {
+            return;
+          }
+          void tick();
+          timer = setInterval(() => void tick(), 60_000);
+          timer.unref();
+        },
+        // A failed boot is reported by everything that awaits `ready`.
+        () => {},
+      );
+      return () => {
+        stopped = true;
+        clearInterval(timer);
+      };
     });
     ctx.effect(() => () => {
       this.idle.dispose();

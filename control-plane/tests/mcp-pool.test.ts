@@ -399,8 +399,8 @@ describe("MCP pool", () => {
       Authorization: "Bearer access-1",
     });
 
-    // Nothing refreshes the token: once it expires the mount goes, and the
-    // row asks for a sign-in again.
+    // Without a refresh token nothing renews it: once it expires the mount
+    // goes, and the row asks for a sign-in again.
     now = 1_000;
     await pool.sync();
     expect(mounts[0]?.disposed).toBe(true);
