@@ -25,6 +25,10 @@
 
 import type { AuthoredSkill } from "../skills.js";
 
+import { attachingMediaToGithub } from "./attaching-media-to-github/index.js";
 import { usingAgentBrowser } from "./using-agent-browser/index.js";
 
-export const skills: readonly AuthoredSkill[] = [usingAgentBrowser];
+export const skills: readonly AuthoredSkill[] = [
+  attachingMediaToGithub,
+  usingAgentBrowser,
+];

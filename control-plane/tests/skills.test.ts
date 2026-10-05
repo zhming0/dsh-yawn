@@ -281,12 +281,16 @@ describe("apply", () => {
       const content = definition?.content ?? "";
       expect(content.trim().length).toBeGreaterThan(0);
     }
-    // The shipped skill has to name the command the image carries and the
-    // place media must go; those are the parts a session cannot guess.
+    // Each shipped skill has to name what a session cannot guess: the
+    // commands the image carries and the place media must go.
     const browserSkill = await ctx.skills.get("using-agent-browser");
     expect(browserSkill?.content).toContain("install-browser");
     expect(browserSkill?.content).toContain("/workspace/artifacts/");
     expect(browserSkill?.content).toContain("keep the folder small");
+    const attachSkill = await ctx.skills.get("attaching-media-to-github");
+    expect(attachSkill?.content).toContain("--attach");
+    expect(attachSkill?.content).toContain("/workspace/artifacts/");
+    expect(attachSkill?.content).toContain("instead of falling back");
   });
 
   it("serves an injected list, bodies included", async () => {
