@@ -31,6 +31,13 @@ ARG UV_SHA256_arm64=7eb9bf48516448c9db6a9e436d8e747ac9c8a9cac74717160a29918249b0
 ARG YQ_VERSION=4.53.6
 ARG YQ_SHA256_amd64=c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385
 ARG YQ_SHA256_arm64=88a1016bc1d657375a35864e4f44b6f333df8ff97b559f51bba0adcb2169df09
+# Debian trixie ships gh 2.46.0, which predates `--attach` (added in 2.99.0),
+# the flag that uploads local images and videos into issues, pull requests, and
+# comments. Install the pinned release instead of the apt package, and keep the
+# pin equal to mise.toml, whose gh `.agents/setup` puts ahead of this copy.
+ARG GH_VERSION=2.102.0
+ARG GH_SHA256_amd64=bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386
+ARG GH_SHA256_arm64=7862c86c72f43df3a2d93ddde6f473285b4e2af61b494849846827e513ef6484
 # agent-browser backs the `using-agent-browser` skill. Only the CLI is in this
 # image: Chrome, the libraries it links against, and a font are larger than
 # everything else here, and `install-browser` adds them on demand. The CLI is
@@ -40,13 +47,13 @@ ARG AGENT_BROWSER_VERSION=0.37.1
 ARG AGENT_BROWSER_INSTALL_DIR=/opt/agent-browser
 RUN set -eux; \
     case "${TARGETARCH}" in \
-      amd64) jj_arch=x86_64-unknown-linux-musl;  mise_arch=linux-x64-musl;   jj_sha="${JJ_SHA256_amd64}"; mise_sha="${MISE_SHA256_amd64}"; rg_arch=x86_64-unknown-linux-musl;  rg_sha="${RIPGREP_SHA256_amd64}"; uv_arch=x86_64-unknown-linux-musl;  uv_sha="${UV_SHA256_amd64}"; yq_sha="${YQ_SHA256_amd64}" ;; \
-      arm64) jj_arch=aarch64-unknown-linux-musl; mise_arch=linux-arm64-musl; jj_sha="${JJ_SHA256_arm64}"; mise_sha="${MISE_SHA256_arm64}"; rg_arch=aarch64-unknown-linux-musl; rg_sha="${RIPGREP_SHA256_arm64}"; uv_arch=aarch64-unknown-linux-musl; uv_sha="${UV_SHA256_arm64}"; yq_sha="${YQ_SHA256_arm64}" ;; \
+      amd64) jj_arch=x86_64-unknown-linux-musl;  mise_arch=linux-x64-musl;   jj_sha="${JJ_SHA256_amd64}"; mise_sha="${MISE_SHA256_amd64}"; rg_arch=x86_64-unknown-linux-musl;  rg_sha="${RIPGREP_SHA256_amd64}"; uv_arch=x86_64-unknown-linux-musl;  uv_sha="${UV_SHA256_amd64}"; yq_sha="${YQ_SHA256_amd64}"; gh_sha="${GH_SHA256_amd64}" ;; \
+      arm64) jj_arch=aarch64-unknown-linux-musl; mise_arch=linux-arm64-musl; jj_sha="${JJ_SHA256_arm64}"; mise_sha="${MISE_SHA256_arm64}"; rg_arch=aarch64-unknown-linux-musl; rg_sha="${RIPGREP_SHA256_arm64}"; uv_arch=aarch64-unknown-linux-musl; uv_sha="${UV_SHA256_arm64}"; yq_sha="${YQ_SHA256_arm64}"; gh_sha="${GH_SHA256_arm64}" ;; \
       *) echo "unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-      bash build-essential ca-certificates curl file gh git jq \
+      bash build-essential ca-certificates curl file git jq \
       openssh-client patch pkg-config procps \
       python3 python3-venv python-is-python3 \
       rsync sudo unzip xz-utils zip; \
@@ -76,7 +83,10 @@ RUN set -eux; \
     curl -fsSL "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_${TARGETARCH}" -o /usr/local/bin/yq; \
     echo "${yq_sha}  /usr/local/bin/yq" | sha256sum -c -; \
     chmod +x /usr/local/bin/yq; \
-    rm -rf /tmp/jj.tar.gz /tmp/mise.tar.gz /tmp/mise-cache /tmp/rg.tar.gz /tmp/uv.tar.gz; \
+    curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${TARGETARCH}.tar.gz" -o /tmp/gh.tar.gz; \
+    echo "${gh_sha}  /tmp/gh.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/gh.tar.gz -C /usr/local/bin --strip-components=2 "gh_${GH_VERSION}_linux_${TARGETARCH}/bin/gh"; \
+    rm -rf /tmp/jj.tar.gz /tmp/mise.tar.gz /tmp/mise-cache /tmp/rg.tar.gz /tmp/uv.tar.gz /tmp/gh.tar.gz; \
     mkdir -p /etc/profile.d; \
     printf '%s\n' \
       '# Debian /etc/profile resets PATH for every login shell, discarding the' \
