@@ -44,10 +44,12 @@ try {
   let client = await waitForRunner(tunnel, handle.sandboxId);
   await client.setSecrets({ SMOKE_VALUE: "present" });
   await assertSandboxStatus(client);
+  // Tool presence, plus the `--attach` flag: Debian's gh predates it, so the
+  // image installs a pinned release instead of the apt package.
   await run(client, [
     "/bin/bash",
     "-lc",
-    'test "$SMOKE_VALUE" = present && git --version && jj --version && mise --version && python --version && uv --version && uvx --version && node --version && npm --version && jq --version && yq --version && docker --version && docker buildx version && docker compose version && for command in cc make pkg-config unzip zip xz file patch ssh rsync ps gh pnpm yarn agent-browser install-browser sudo; do command -v "$command" || exit 1; done && ! command -v pip && ! command -v dockerd && ! command -v containerd',
+    'test "$SMOKE_VALUE" = present && git --version && jj --version && mise --version && python --version && uv --version && uvx --version && node --version && npm --version && jq --version && yq --version && gh --version && gh issue comment --help | grep -q -- --attach && docker --version && docker buildx version && docker compose version && for command in cc make pkg-config unzip zip xz file patch ssh rsync ps gh pnpm yarn agent-browser install-browser sudo; do command -v "$command" || exit 1; done && ! command -v pip && ! command -v dockerd && ! command -v containerd',
   ]);
 
   // A repository setup hook may install system packages, so the sandbox user
