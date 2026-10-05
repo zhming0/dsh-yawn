@@ -330,7 +330,7 @@ bundled rank, so a repository's own `.agents/skills` still wins a name
 collision. dsh's `minimal` agent preset mounts no skill tool, so a session on
 it sees no catalog regardless.
 
-The one shipped skill, `using-agent-browser`, covers driving a browser from a
+Two skills ship. `using-agent-browser` covers driving a browser from a
 session: `install-browser` once per sandbox, then the CLI. The runner image
 carries both commands; Chrome, the libraries it links against, and the font it
 draws with are larger than the rest of the image, so `install-browser` adds
@@ -339,6 +339,12 @@ ships in the image rather than in the skill body, which keeps the body short
 and pins the script to the image the session is running. The skill writes media
 to the session's artifacts folder, defined under
 [Idle and hibernation](README.md#idle-and-hibernation).
+
+`attaching-media-to-github` covers `gh --attach`, which uploads images and
+videos into issues, pull requests, and comments. The flag is newer than most
+models' training data, so without the skill a session commits screenshots to a
+side branch and links them. It needs gh 2.99.0 or later, which the runner image
+provides.
 
 One module is not part of the bundle patch:
 `@zhming0/dsh-yawn/launch-token`. Mounted as a row, it serves
