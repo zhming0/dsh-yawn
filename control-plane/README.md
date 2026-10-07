@@ -439,6 +439,23 @@ checkout. Global plus workspace content is limited to 65,536 UTF-8 bytes for
 each effective workspace. Removing and later re-adding a Workspace with the
 same normalized repository URL restores its saved layer.
 
+### Other Workspaces
+
+When this host has a repository Workspace other than the session's own, the
+model is also given a list of them: each Workspace's sidebar title and
+repository URL, with the session's own Workspace marked. This lets the user
+mention another project by name. The list also says that only the session's
+repository is checked out, and that another one can be cloned beside the
+working directory (for example `/workspace/<name>`). A Scratch Workspace
+session sees every repository Workspace, and none is marked as its own.
+
+The list is sent the same way as the instructions: on the next model request,
+and again only when it changes, for example after a Workspace is added,
+renamed, or removed. Once no other Workspace is left, a removal notice
+replaces it. It carries names and URLs only. Cloning a private repository
+needs credentials in this sandbox, such as a global `GITHUB_TOKEN`; a
+workspace-scoped secret still reaches only its own Workspace's sandboxes.
+
 ## Secrets
 
 Secrets and tokens never go in YAML, because a profile layer is a plain file

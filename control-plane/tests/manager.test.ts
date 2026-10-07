@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { Context, Service } from "@deepseek-ai/cordis";
 import { agentEvents, type Agent } from "@deepseek-ai/dsh-agent";
-import { createUserMessage } from "@deepseek-ai/dsh-llm";
+import { createUserMessage, type Message } from "@deepseek-ai/dsh-llm";
 import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -1156,6 +1156,94 @@ describe("repository workspaces and instructions", () => {
     ).toBe("repository");
   });
 
+  it("lists the other repository Workspaces once, and again when they change", async () => {
+    const backend = new FakeBackend();
+    const workspaceRegistry = new FakeWorkspaceRegistry();
+    const ctx = new Context();
+    const manager = new SandboxManager(
+      ctx,
+      {
+        profiles: { standard: { backend: "docker" } },
+        stateDir: directory,
+      },
+      {
+        backends: { standard: backend },
+        gateway: gatewayFor(backend),
+        workspaceRegistry,
+      },
+    );
+    const anchor = await manager.createRepositoryWorkspace(
+      "https://github.com/example/public.git",
+    );
+    // The model holds what this session's log says it was last given.
+    const log: Message[] = [];
+    const agent = {
+      id: "session-one",
+      session: {
+        header: { cwd: anchor },
+        events: [],
+        surface: {
+          get nodes() {
+            return log.map((_, index) => index);
+          },
+        },
+        eventAt: (index: number) => ({
+          type: "user/message",
+          data: log[index],
+        }),
+      },
+    } as unknown as Agent;
+    const catalogs = async (): Promise<string[]> => {
+      const prompt = createUserMessage({
+        content: [{ type: "text", text: "Continue." }],
+        source: { kind: "user" },
+      });
+      const decision = await agentEvents(ctx, agent).waterfall(
+        "agent/pre-step",
+        {
+          messages: [prompt],
+          turn: 1,
+          step: 1,
+          signal: new AbortController().signal,
+        },
+        () => Promise.resolve({ kind: "enter" as const, messages: [prompt] }),
+      );
+      const entered = decision.kind === "enter" ? decision.messages : [];
+      log.push(...entered);
+      return entered
+        .filter(
+          (message) =>
+            message.source.kind === "dsh-yawn" &&
+            message.source.form === "catalog",
+        )
+        .map((message) =>
+          message.content
+            .map((block) => (block.type === "text" ? block.text : ""))
+            .join(""),
+        );
+    };
+
+    // Only its own Workspace exists: nothing to tell.
+    expect(await catalogs()).toEqual([]);
+
+    await manager.createRepositoryWorkspace("git@github.com:example/other.git");
+    const [listed] = await catalogs();
+    expect(listed).toContain(
+      "- example/public: https://github.com/example/public (this session's Workspace)",
+    );
+    expect(listed).toContain(
+      "- example/other: https://github.com/example/other",
+    );
+    expect(listed).toContain("git clone <url> /workspace/<name>");
+    expect(await catalogs()).toEqual([]);
+
+    workspaceRegistry.creates.pop();
+    expect(await catalogs()).toEqual([
+      expect.stringContaining("no other Workspaces now"),
+    ]);
+    expect(await catalogs()).toEqual([]);
+  });
+
   it("scopes secrets per workspace and pushes the effective set to the runner", async () => {
     const backend = new FakeBackend();
     const workspaceRegistry = new FakeWorkspaceRegistry();
@@ -1404,6 +1492,11 @@ describe("Scratch workspace", () => {
     const prompt = JSON.stringify(decision);
     expect(prompt).toContain("Use concise answers.");
     expect(prompt).not.toContain("Run the repository tests.");
+    // Every repository Workspace is another project to a Scratch session.
+    expect(prompt).toContain(
+      "- example/public: https://github.com/example/public",
+    );
+    expect(prompt).toContain("None of these repositories is checked out");
   });
 
   it("checkpoints only the artifacts folder and says the rest is gone", async () => {
