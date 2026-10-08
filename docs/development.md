@@ -85,12 +85,19 @@ dsh plugin --profile web add "$PWD/control-plane"
 
 `scripts/dev.mjs start` does those steps in a scratch `DSH_HOME` instead of
 yours, points it at a Docker sandbox profile, and runs `dsh web` in the
-foreground on free ports (`--port` pins one). The launcher prints the tokenized
-URL, and Ctrl-C stops it. `clean` removes what a run left behind: a control
-plane still running from that home, and the sandboxes its sessions created,
-which outlive the control plane because they are children of the Docker daemon.
-A later `start` cleans them too before replacing the home. Use it for acceptance
-runs so your own profile stays untouched.
+foreground on free ports (`--port` pins one). It also settles the address a
+sandbox dials to reach the tunnel. The profile's default,
+`host.docker.internal`, is mapped to the host by a daemon running as root; a
+rootless daemon points it at a bridge nothing listens in, where every runner
+fails to register. So a short-lived container asks which candidate address
+reaches the tunnel port, and the winner becomes the profile's
+`controlPlaneUrl` (`--control-plane-url` names one instead; a probe that finds
+nothing leaves the default). The launcher prints the tokenized URL, and Ctrl-C
+stops it. `clean` removes what a run left behind: a control plane still running
+from that home, and the sandboxes its sessions created, which outlive the
+control plane because they are children of the Docker daemon. A later `start`
+cleans them too before replacing the home. Use it for acceptance runs so your
+own profile stays untouched.
 
 To exercise the profile picker without a cluster, declare two Docker profiles
 with the same image and different names:
