@@ -5,11 +5,11 @@
  *
  * `start` prepares a scratch `DSH_HOME` — the pinned dsh CLI, a profile that
  * points at this checkout and at a Docker sandbox profile, the socket
- * permission a sandboxed runner user needs, a free tunnel port — then hands
- * the terminal to `dsh web` in the foreground. The launcher's own output,
- * including the tokenized URL, is the interface, and a signal to this process
- * goes on to the launcher, so a process manager (Overmind, foreman) can own
- * the pair.
+ * permission a sandboxed runner user needs, a free tunnel port, and the
+ * address a sandbox uses to dial that tunnel — then hands the terminal to
+ * `dsh web` in the foreground. The launcher's own output, including the
+ * tokenized URL, is the interface, and a signal to this process goes on to the
+ * launcher, so a process manager (Overmind, foreman) can own the pair.
  *
  * The acceptance steps in between are not scripted: the feature under test
  * decides what to drive with `agent-browser` and what to read back with
@@ -17,15 +17,18 @@
  * running from that home and the sandboxes its sessions created.
  *
  * Usage:
- *   node scripts/dev.mjs start [--runner-image <tag>] [--port <port>] [--home <dir>]
+ *   node scripts/dev.mjs start [--runner-image <tag>] [--control-plane-url <ws url>]
+ *                              [--port <port>] [--home <dir>]
  *   node scripts/dev.mjs clean [--purge]
  *
  * `--port 0` (the default) lets the launcher pick a free port.
+ * `--control-plane-url` names the tunnel URL for sandboxes instead of probing.
  */
 
 import { execFile, spawn } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
+import { networkInterfaces } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -177,6 +180,111 @@ function freePort() {
   });
 }
 
+/** IPv4 addresses this machine holds, which a sandbox may be able to dial. */
+function hostAddresses() {
+  const addresses = [];
+  for (const entries of Object.values(networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.family === "IPv4" && !entry.internal) {
+        addresses.push(entry.address);
+      }
+    }
+  }
+  return addresses;
+}
+
+/**
+ * The tunnel URL a sandbox dials, or undefined to leave the Docker backend's
+ * own default alone.
+ *
+ * `host.docker.internal` is the right answer where Docker maps it to the host,
+ * which is what the Docker backend assumes. It is the wrong answer for a
+ * rootless daemon: there it resolves to the rootless bridge gateway, a
+ * namespace this process does not bind in, and every runner fails to register
+ * — the dev-only "runner did not become healthy". So bind the tunnel port
+ * briefly and ask a container which address reaches it, preferring the mapped
+ * name and falling back to an address this machine holds. A machine where both
+ * work keeps the name, so a profile written here still reads like a
+ * hand-written one. The caller's `override` answers for the probe.
+ */
+async function sandboxControlPlaneUrl(tunnelPort, runnerImage, override) {
+  if (override !== undefined && override !== "") {
+    return override;
+  }
+  // A port probe is not an HTTP request: the server only has to accept the
+  // connection, and whatever the socket then does must not escape as an error.
+  const server = createServer((socket) => socket.end());
+  server.on("clientError", (_error, socket) => socket.destroy());
+  const listening = await new Promise((resolve_) => {
+    server.once("error", () => resolve_(false));
+    server.listen(tunnelPort, "0.0.0.0", () => resolve_(true));
+  });
+  if (!listening) {
+    return undefined;
+  }
+  try {
+    const address = await probeFromSandbox(
+      ["host.docker.internal", ...hostAddresses()],
+      tunnelPort,
+      runnerImage,
+    );
+    return address === undefined
+      ? undefined
+      : `ws://${address}:${tunnelPort}/tunnel`;
+  } finally {
+    await new Promise((resolve_) => server.close(resolve_));
+  }
+}
+
+/**
+ * One container's answer to "which of these addresses reaches the port", or
+ * undefined when none does.
+ *
+ * The container is the runner image and the address mapping is the one the
+ * Docker backend adds, so this asks the question the sandboxes this control
+ * plane will create are about to ask. It removes itself, so it is never a
+ * leftover to clean up.
+ */
+async function probeFromSandbox(candidates, port, runnerImage) {
+  const script = [
+    'for address in "$@"; do',
+    '  if nc -z -w 2 "$address" "$DSH_YAWN_PROBE_PORT" 2>/dev/null; then',
+    '    printf %s "$address"',
+    "    exit 0",
+    "  fi",
+    "done",
+    "exit 1",
+  ].join("\n");
+  try {
+    const { stdout } = await run(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--entrypoint",
+        "sh",
+        "--add-host",
+        "host.docker.internal:host-gateway",
+        "--env",
+        `DSH_YAWN_PROBE_PORT=${port}`,
+        runnerImage,
+        "-c",
+        script,
+        "probe",
+        ...candidates,
+      ],
+      { timeout: 60_000 },
+    );
+    const address = stdout.trim();
+    return candidates.includes(address) ? address : undefined;
+  } catch {
+    // An image without the tools to probe, or a daemon that refuses this
+    // container, is not a reason to fail a run: the default may still work,
+    // and `--control-plane-url` is the way out when it does not.
+    return undefined;
+  }
+}
+
 /** Session ids this scratch control plane created, read from its own state. */
 function recordedSessionIds(home) {
   try {
@@ -266,6 +374,16 @@ async function start(flags) {
   // safe. The tunnel port is picked to avoid the 0.0.0.0 collision above.
   const stateDir = join(home, "state");
   const tunnelPort = await freePort();
+  const controlPlaneUrl = await sandboxControlPlaneUrl(
+    tunnelPort,
+    runnerImage,
+    flags["control-plane-url"],
+  );
+  progress(
+    `dev: sandboxes dial ${
+      controlPlaneUrl ?? `ws://host.docker.internal:${tunnelPort}/tunnel`
+    }`,
+  );
   writeFileSync(
     join(home, "profiles", "web", "cordis.patch.yml"),
     [
@@ -280,6 +398,9 @@ async function start(flags) {
       "      standard:",
       "        backend: docker",
       `        image: ${runnerImage}`,
+      ...(controlPlaneUrl === undefined
+        ? []
+        : [`        controlPlaneUrl: ${controlPlaneUrl}`]),
       "",
     ].join("\n"),
   );
@@ -348,7 +469,8 @@ const { command, flags } = parseArguments(process.argv.slice(2));
 
 const usage = `usage: node scripts/dev.mjs <command>
 
-  start [--runner-image <tag>] [--port <port>] [--home <dir>]
+  start [--runner-image <tag>] [--control-plane-url <ws url>]
+        [--port <port>] [--home <dir>]
   clean [--purge]`;
 
 let exitCode = 0;
