@@ -374,6 +374,7 @@ export class SandboxManager extends TypertRemoteService {
         (this.ctx.get("workspaceRegistry") as
           | WorkspaceRegistryLike
           | undefined),
+      sandboxWorkspace: () => this.workspace,
     });
     this.idle = new IdleSchedule({
       // Read through the runtime holder: a settings change applies to every

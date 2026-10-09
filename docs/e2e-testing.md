@@ -200,6 +200,10 @@ For changes to the Instructions page or model-context injection:
 The settings must persist outside the repository checkout. Confirm the test did
 not create or modify an `AGENTS.md` file in the Workspace.
 
+For changes to the Workspace list, add a second repository Workspace, then ask
+a session in the first one which other projects it knows about. It must name
+the second Workspace's title and repository URL without reading any file.
+
 ### Sandbox profile selection
 
 For changes to profiles, provisioning, or the composer chip. Give the
