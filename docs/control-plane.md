@@ -131,6 +131,55 @@ kubectl -n dsh-yawn port-forward deploy/dsh-yawn-control-plane 3000:3000
 # open http://localhost:3000/launch-token
 ```
 
+### Previews
+
+Set `preview.domain` to serve each sandbox port at its own origin,
+`<sandboxId>-p<port>.<domain>`. The chart then opens the preview listener and
+creates Service `dsh-yawn-control-plane-preview`, and nothing in front of it.
+You provide the wildcard DNS record, a wildcard certificate (cert-manager
+needs the DNS-01 solver; HTTP-01 cannot answer for a wildcard name), the
+Ingress rule, and authentication:
+
+```yaml
+# A second rule on the Web UI's Ingress, with the same timeouts.
+rules:
+  - host: "*.sandbox.example.com"
+    http:
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: dsh-yawn-control-plane-preview
+              port:
+                name: http
+tls:
+  - hosts: ["*.sandbox.example.com"]
+    secretName: dsh-yawn-preview-tls
+```
+
+The listener answers every request that reaches it, and `oidc.enabled` does
+not cover it. Put your own authentication in front of the preview rule, or
+keep the Service internal. Three rules keep that authentication out of
+sandbox code:
+
+- List its session cookie in `preview.authCookieNames`. A front that covers
+  every preview host sets a cookie for the whole wildcard, and the browser
+  sends it with every preview request. The control plane removes the listed
+  cookies, and their numbered `_1`, `_2`, … chunks, before a request enters
+  a sandbox; the previewed app's own cookies pass through.
+- Do not authenticate previews with a header. Only cookies are stripped, so a
+  header such as basic auth's `Authorization` reaches sandbox code.
+- Keep the Web UI's cookie host-only. A cookie domain on the UI's
+  oauth2-proxy that spans the preview hosts sends the UI session with every
+  preview request.
+
+Previews open as top-level browser tabs, so any domain works. A registrable
+domain separate from the UI's is recommended (these examples share
+`example.com` only for brevity), so the browser keeps the two sets of cookies
+apart. The sandbox NetworkPolicy needs no change: sandboxes reach the control
+plane on the tunnel port only.
+
 ### Verify
 
 ```sh

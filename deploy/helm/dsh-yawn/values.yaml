@@ -61,6 +61,20 @@ controlPlane:
   #      # Optional; overrides the top-level idleMs for this profile.
   #      idleMs: 3600000
 
+# Previews: serve each sandbox port at <sandboxId>-p<port>.<preview.domain>.
+# Setting `domain` opens the preview listener and creates the
+# dsh-yawn-control-plane-preview Service. The chart adds no authentication:
+# whatever you put in front of the Service owns it, along with the wildcard
+# DNS record and certificate. See docs/control-plane.md#previews.
+preview:
+  domain: ""
+  # Cookie names the control plane strips from preview requests before they
+  # enter a sandbox, including their numbered _1, _2, … chunks. List the
+  # session cookie of whatever authenticates the preview domain: the browser
+  # attaches it to every preview request, and code in the sandbox must never
+  # read it. The previewed app's own cookies pass through.
+  authCookieNames: []
+
 runner:
   # The in-cluster tunnel address handed to sandbox runners.
   # Defaults to the dsh-yawn-control-plane-tunnel Service this chart creates in

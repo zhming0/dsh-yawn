@@ -68,6 +68,8 @@ reach the control plane over `kubectl port-forward` and open `/launch-token`.
 | `service.port`                                           | `80`                                        | Service port in front of the proxy's 4180                                                                                                      |
 | `service.annotations`                                    | `{}`                                        | Annotations for the Service                                                                                                                    |
 | `controlPlane.sandboxManager`                            | `{}`                                        | Default sandbox-manager settings; unset means no profile is seeded, so no sandbox can be provisioned                                           |
+| `preview.domain` | `""` | Serve each sandbox port at `<sandboxId>-p<port>.<domain>` and create the `dsh-yawn-control-plane-preview` Service; see [Previews](../../../docs/control-plane.md#previews) |
+| `preview.authCookieNames` | `[]` | Cookie names the control plane strips from preview requests before they enter a sandbox; list your preview front's session cookie |
 
 ## Sandbox-manager settings as values
 

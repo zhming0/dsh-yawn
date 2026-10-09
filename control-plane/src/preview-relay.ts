@@ -21,6 +21,13 @@ export interface PreviewRelayOptions {
   gateway: PreviewGateway;
   log?: (message: string) => void;
   /**
+   * Cookie names stripped from the request before it enters the sandbox.
+   * The preview's own cookies pass through untouched; what is named here is
+   * the fronting proxy's session, which authenticates the person, not the
+   * app, and must not become a credential sandbox code can read.
+   */
+  authCookieNames?: string[];
+  /**
    * Called for each relayed preview request. Preview traffic is a user
    * looking at the sandbox, so it counts as session activity.
    */
@@ -55,9 +62,11 @@ const HOP_BY_HOP = new Set([
 
 export class PreviewRelay {
   private readonly log: (message: string) => void;
+  private readonly authCookieNames: readonly string[];
 
   constructor(private readonly options: PreviewRelayOptions) {
     this.log = options.log ?? (() => {});
+    this.authCookieNames = options.authCookieNames ?? [];
   }
 
   /**
@@ -96,9 +105,12 @@ export class PreviewRelay {
       }
     });
     try {
-      const messages = client.httpProxy(previewMessages(request, target), {
-        signal: abort.signal,
-      });
+      const messages = client.httpProxy(
+        previewMessages(request, target, this.authCookieNames),
+        {
+          signal: abort.signal,
+        },
+      );
       let headSeen = false;
       for await (const message of messages) {
         if (message.part.case === "head") {
@@ -172,11 +184,29 @@ function responseHeaders(
 async function* previewMessages(
   request: IncomingMessage,
   target: PreviewTarget,
+  authCookieNames: readonly string[],
 ): AsyncGenerator<HttpProxyRequestMessage> {
   const headers: Array<{ name: string; value: string }> = [];
   for (const [name, value] of Object.entries(request.headers)) {
     const header = name.toLowerCase();
     if (HOP_BY_HOP.has(header)) {
+      continue;
+    }
+    if (header === "cookie" && authCookieNames.length > 0) {
+      // The fronting proxy's session cookie authenticates the viewer, not
+      // the app, and the app inside the sandbox is untrusted code: drop the
+      // named cookies and keep the app's own.
+      const entries = Array.isArray(value)
+        ? value
+        : value === undefined
+          ? []
+          : [value];
+      for (const entry of entries) {
+        const kept = withoutAuthCookies(entry, authCookieNames);
+        if (kept !== "") {
+          headers.push({ name: header, value: kept });
+        }
+      }
       continue;
     }
     // Node folds repeatable headers into comma-joined strings except
@@ -206,6 +236,26 @@ async function* previewMessages(
   for await (const chunk of body) {
     yield { part: { case: "body", value: chunk } };
   }
+}
+
+/**
+ * Remove the named cookies from one Cookie header value. A large proxy
+ * session is split into `<name>_1`, `<name>_2`, … chunks, so a trailing
+ * `_<digits>` on a named cookie goes too. An empty result means the header
+ * carried nothing worth forwarding.
+ */
+function withoutAuthCookies(value: string, names: readonly string[]): string {
+  const dropped = names.map((name) => name.toLowerCase());
+  const kept = value.split(";").filter((pair) => {
+    const eq = pair.indexOf("=");
+    const name = (eq === -1 ? pair : pair.slice(0, eq)).trim().toLowerCase();
+    if (dropped.includes(name)) {
+      return false;
+    }
+    const chunk = name.match(/^(.*)_(\d+)$/);
+    return !(chunk !== null && dropped.includes(chunk[1] ?? ""));
+  });
+  return kept.join("; ").trim();
 }
 
 function reply(
