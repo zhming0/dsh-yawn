@@ -129,6 +129,14 @@
     - id: sandbox-workspace-policy
       name: '@zhming0/dsh-yawn/sandbox-policy'
 
+    # Keeps dsh's per-session working directory (the stock working-directory
+    # row) in sandbox paths: the model's "Current working directory" line and
+    # the `working_directory` tool name the sandbox workspace, not the host
+    # anchor, and the service reaches the sandbox as the agent it serves.
+    # Same wait-not-inject shape as the rows below.
+    - id: sandbox-working-directory
+      name: '@zhming0/dsh-yawn/working-directory'
+
     # Runs the Web Files and Preview sidebar (the stock workspace-files row
     # above) as the session it serves. Waits for the Web-only services instead
     # of injecting them, so a headless profile still boots with this row.

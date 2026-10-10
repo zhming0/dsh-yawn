@@ -197,8 +197,8 @@ host row loaded, so with the service off the row would render an error rather
 than disappear. The policy line would tell
 the model it may write under the session workspace and name that workspace by
 its host anchor path, which does not exist inside the sandbox; the model only
-ever needs sandbox paths, and it finds its working directory the way any shell
-user does.
+ever needs sandbox paths, and it learns its working directory, in sandbox
+paths, from the working-directory line described below.
 
 The right sidebar's **Files** and **Preview** tabs and the file cards under
 each turn (`workspace-files`, `ui-sidebar-files`, `ui-sidebar-documentpreview`,
@@ -289,10 +289,22 @@ it launches a desktop application on the host against the session `cwd`.
 That `cwd` is the anchor, and the application probe would run through the
 sandbox subprocess seam and report programs installed in the sandbox.
 
-The bundle also corrects the model-facing system prompt. dsh's stock opener
-names the session working directory in host coordinates — the anchor directory
-above — and adds paragraphs about the host's dsh implementation checkout and
-its Web GUI, none of which holds inside a sandbox. The `sandbox-context` row
+Since dsh 0.2.1 one service, `workingDirectory`, owns each session's current
+directory. Tools take their cwd from it, every model request carries it as a
+"Current working directory" line, and the `working_directory` tool changes it.
+It starts from the session `cwd`, which is the anchor, so the model would be
+told a host path that a shell `cd` cannot reach. The bundle keeps the stock
+row and adds `sandbox-working-directory`, which wraps the live service: `get`
+maps the anchor and anything under it onto the sandbox workspace, so the
+prompt line, the tool, the shells, and the Terminal tab all name sandbox paths.
+Its checks read the sandbox filesystem, so they run as the agent they serve.
+The composer's skill list also asks for the directory of an open session,
+from a plain browser request; there the wrapper answers the recorded directory
+without checking it, so viewing a session does not wake its sandbox.
+
+The bundle also corrects the model-facing system prompt. dsh's stock prompt
+adds paragraphs about the host's dsh implementation checkout and its Web GUI,
+neither of which holds inside a sandbox. The `sandbox-context` row
 shadows the `cwd` prompt variable with the sandbox workspace, answers the
 artifacts folder beside it and what the session's backend keeps across a sleep
 as two more prompt variables, contributes a short environment section naming
@@ -381,9 +393,10 @@ userns-remapped Docker does not map the host-side value at all — so the lookup
 belongs in the image and the run command needs no `--group-add`. A pod that sets
 `runAsUser`, as the Helm chart does, skips the drop and never starts as root.
 
-`DSH_YAWN_BIND_ALL=1` applies `bind-all.patch.yml`, which binds the Web UI to
-`0.0.0.0` so a published port reaches it. Kubernetes leaves it unset and keeps
-dsh on pod loopback behind oauth2-proxy.
+`DSH_YAWN_BIND_ALL=1` binds the Web UI to the container's own address
+(`hostname -i`) so a published port reaches it; dsh refuses wildcard addresses
+such as `0.0.0.0`. Kubernetes leaves it unset and keeps dsh on pod loopback
+behind oauth2-proxy.
 
 The default backend uses Docker on the same machine as dsh. The Kubernetes
 backend uses Kubernetes SIG agent-sandbox. The Buildkite backend runs each
