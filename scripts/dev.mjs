@@ -243,12 +243,18 @@ async function sandboxControlPlaneUrl(tunnelPort, runnerImage, override) {
  * The container is the runner image and the address mapping is the one the
  * Docker backend adds, so this asks the question the sandboxes this control
  * plane will create are about to ask. It removes itself, so it is never a
- * leftover to clean up.
+ * leftover to clean up. The image installs python3 but no netcat, so the
+ * connect test is a python program with a deadline, not `nc -z`: the wrong
+ * tool here answers nothing and silently leaves the default in place.
  */
 async function probeFromSandbox(candidates, port, runnerImage) {
+  const connect =
+    "import socket,sys;" +
+    "socket.setdefaulttimeout(2);" +
+    "socket.create_connection((sys.argv[1],int(sys.argv[2]))).close()";
   const script = [
     'for address in "$@"; do',
-    '  if nc -z -w 2 "$address" "$DSH_YAWN_PROBE_PORT" 2>/dev/null; then',
+    '  if python3 -c "$PROBE_CODE" "$address" "$PROBE_PORT" 2>/dev/null; then',
     '    printf %s "$address"',
     "    exit 0",
     "  fi",
@@ -266,7 +272,9 @@ async function probeFromSandbox(candidates, port, runnerImage) {
         "--add-host",
         "host.docker.internal:host-gateway",
         "--env",
-        `DSH_YAWN_PROBE_PORT=${port}`,
+        `PROBE_CODE=${connect}`,
+        "--env",
+        `PROBE_PORT=${port}`,
         runnerImage,
         "-c",
         script,
@@ -380,9 +388,10 @@ async function start(flags) {
     flags["control-plane-url"],
   );
   progress(
-    `dev: sandboxes dial ${
-      controlPlaneUrl ?? `ws://host.docker.internal:${tunnelPort}/tunnel`
-    }`,
+    controlPlaneUrl === undefined
+      ? "dev: probe found no reachable address; sandboxes keep " +
+          `ws://host.docker.internal:${tunnelPort}/tunnel`
+      : `dev: sandboxes dial ${controlPlaneUrl}`,
   );
   writeFileSync(
     join(home, "profiles", "web", "cordis.patch.yml"),
