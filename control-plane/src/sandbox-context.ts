@@ -8,9 +8,10 @@
  * describes the Web GUI as if the model could reach it. Sandboxed sessions
  * work entirely in sandbox paths, so this module:
  *
- * 1. shadows the `cwd` prompt variable with the sandbox workspace, so the
- *    "Your working directory is …" line names a path the model's tools
- *    actually resolve;
+ * 1. shadows the `cwd` prompt variable with the sandbox workspace, so any
+ *    prompt text that renders it names a path the model's tools actually
+ *    resolve (dsh's own "Current working directory" line does not use the
+ *    variable; `working-directory.ts` keeps that one in sandbox paths);
  * 2. contributes a short environment section stating where tools run; and
  * 3. drops the host-only checkout and GUI sections from the assembled prompt,
  *    matching their text rather than a section name or position, so the
