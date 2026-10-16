@@ -478,6 +478,11 @@ name is the simplest way to reach private repositories — no OAuth app
 required. A workspace-scoped `GITHUB_TOKEN` serves that workspace's clones in
 place of the global one.
 
+Another forge works the same way under its own name: a secret named after the
+hostname — uppercased with `.` written as `_`, ending in `_TOKEN`, so
+`GIT_FML128_CH_TOKEN` serves `git.fml128.ch` — becomes that host's credential,
+pushed before the workspace clone as well as before every command.
+
 Sandbox code can read injected secrets, which is their purpose. The store
 improves storage and cleanup, not confidentiality from the repository being run.
 Skip `GITHUB_TOKEN` entirely if you only work on public repositories.
