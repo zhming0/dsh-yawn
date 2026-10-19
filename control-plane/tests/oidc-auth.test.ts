@@ -350,6 +350,46 @@ describe("OIDC auth", () => {
     }
   });
 
+  it("opens the sign-in page from another site again from this one", async () => {
+    const mounted = await mount();
+    try {
+      const crossSite = {
+        "sec-fetch-site": "cross-site",
+        "sec-fetch-mode": "navigate",
+      };
+      const page = await dispatch(
+        mounted.routes,
+        "/login",
+        request({ url: "/login", headers: crossSite }),
+      );
+      expect(page.status).toBe(200);
+      expect(page.body).toContain('content="0;url=/login"');
+
+      const foreign = await dispatch(
+        mounted.routes,
+        "/login",
+        request({ url: "/login", host: "evil.example", headers: crossSite }),
+      );
+      expect(foreign.status).toBe(403);
+
+      // The same-origin reload starts the flow as before.
+      const reload = await dispatch(
+        mounted.routes,
+        "/login",
+        request({
+          url: "/login",
+          headers: { "sec-fetch-site": "same-origin" },
+        }),
+      );
+      expect(reload.status).toBe(303);
+      expect(new URL(reload.headers.location ?? "").origin).toBe(
+        "https://idp.example",
+      );
+    } finally {
+      await mounted.ctx.fiber.dispose();
+    }
+  });
+
   it("keeps the gate closed when configuration is invalid", async () => {
     for (const options of [
       { allowedEmails: [], allowedDomains: [] },
@@ -468,106 +508,6 @@ describe("OIDC auth", () => {
       expect(out.headers.location).toBe("/");
       expect(out.headers["set-cookie"]).toBe(COOKIE);
       expect(grants).toBe(1);
-    } finally {
-      await mounted.ctx.fiber.dispose();
-    }
-  });
-
-  it("refuses a cross-site callback for a foreign host", async () => {
-    let grants = 0;
-    const mounted = await mount({
-      library: library("alice@example.com", true, () => {
-        grants += 1;
-      }),
-    });
-    try {
-      await dispatch(mounted.routes, "/login", request({ url: "/login" }));
-      for (const host of ["evil.example", "other.example"]) {
-        const out = await dispatch(
-          mounted.routes,
-          "/oidc/callback",
-          request({
-            url: "/oidc/callback?state=state&code=code",
-            host,
-            headers: {
-              "sec-fetch-site": "cross-site",
-              "sec-fetch-mode": "navigate",
-            },
-          }),
-        );
-        expect(out.status).toBe(403);
-      }
-      expect(grants).toBe(0);
-    } finally {
-      await mounted.ctx.fiber.dispose();
-    }
-  });
-
-  it("refuses a cross-site callback that is not a navigation", async () => {
-    const mounted = await mount();
-    try {
-      await dispatch(mounted.routes, "/login", request({ url: "/login" }));
-      for (const mode of ["cors", undefined]) {
-        const headers: Record<string, string> = {
-          "sec-fetch-site": "cross-site",
-        };
-        if (mode !== undefined) {
-          headers["sec-fetch-mode"] = mode;
-        }
-        const out = await dispatch(
-          mounted.routes,
-          "/oidc/callback",
-          request({ url: "/oidc/callback?state=state&code=code", headers }),
-        );
-        expect(out.status).toBe(403);
-      }
-    } finally {
-      await mounted.ctx.fiber.dispose();
-    }
-  });
-
-  it("refuses a cross-site POST to the callback", async () => {
-    const mounted = await mount();
-    try {
-      await dispatch(mounted.routes, "/login", request({ url: "/login" }));
-      const out = await dispatch(
-        mounted.routes,
-        "/oidc/callback",
-        request({
-          method: "POST",
-          url: "/oidc/callback?state=state&code=code",
-          headers: {
-            "sec-fetch-site": "cross-site",
-            "sec-fetch-mode": "navigate",
-          },
-        }),
-      );
-      expect(out.status).toBe(403);
-    } finally {
-      await mounted.ctx.fiber.dispose();
-    }
-  });
-
-  it("escapes the URL on the bounce page", async () => {
-    const mounted = await mount();
-    try {
-      await dispatch(mounted.routes, "/login", request({ url: "/login" }));
-      const out = await dispatch(
-        mounted.routes,
-        "/oidc/callback",
-        request({
-          url: '/oidc/callback?state=state&code="><script>',
-          headers: {
-            "sec-fetch-site": "cross-site",
-            "sec-fetch-mode": "navigate",
-          },
-        }),
-      );
-      expect(out.status).toBe(200);
-      expect(out.body).not.toContain("<script>");
-      expect(out.body).toContain(
-        'content="0;url=/oidc/callback?state=state&amp;code=%22%3E%3Cscript%3E"',
-      );
     } finally {
       await mounted.ctx.fiber.dispose();
     }

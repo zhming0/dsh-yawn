@@ -22,14 +22,13 @@ import {
   LOGIN_PATH,
   LOGOUT_PATH,
   hasLaunchToken,
-  header,
   installHealth,
   installIndexGate,
   installLogout,
   loggedIn,
   mintDshCookie,
   redirect,
-  sendHtml,
+  reopenCrossSiteNavigation,
   sendText,
   untrusted,
 } from "./auth-core.js";
@@ -254,73 +253,6 @@ function failure(response: ServerResponse, message: string): void {
 
 type OidcSettings = ReturnType<typeof resolved>;
 
-/** Escape the characters that end an HTML text node or a quoted attribute. */
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
-
-/**
- * The identity provider returns the browser to the callback with a cross-site
- * navigation. dsh's fence refuses that with 403, and its cookie is
- * SameSite=Strict, so a 303 from the callback could not carry the new cookie
- * either. Answer this navigation with a page that asks for the same path and
- * query from this site instead: the second request is same-origin, so dsh's
- * fence, the state check, and the cookie all behave normally.
- *
- * Returns true once the response is written.
- */
-function bounceToSameOrigin(
-  request: IncomingMessage,
-  response: ServerResponse,
-  settings: OidcSettings,
-): boolean {
-  if (request.method !== "GET") {
-    return false;
-  }
-  if (header(request, "sec-fetch-site") !== "cross-site") {
-    return false;
-  }
-  if (header(request, "sec-fetch-mode") !== "navigate") {
-    return false;
-  }
-  // Only our own authority. Any other host keeps getting the fence's 403.
-  if (header(request, "host").toLowerCase() !== settings.redirectUrl.host) {
-    return false;
-  }
-  let current: URL;
-  try {
-    current = new URL(request.url ?? "/", settings.redirectUrl);
-  } catch {
-    return false;
-  }
-  if (current.pathname !== settings.redirectUrl.pathname) {
-    return false;
-  }
-  // Same path and query, relative, so this page cannot become an open redirect.
-  const target = escapeHtml(`${current.pathname}${current.search}`);
-  sendHtml(
-    response,
-    200,
-    `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Signing in</title>
-<meta http-equiv="refresh" content="0;url=${target}">
-</head>
-<body>
-<p><a href="${target}">Continue signing in</a></p>
-</body>
-</html>
-`,
-  );
-  return true;
-}
-
 /**
  * Add OIDC sign-in in front of dsh's browser authentication.
  */
@@ -367,6 +299,9 @@ export function apply(ctx: Context, config?: OidcAuthConfig): void {
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<void> {
+    if (reopenCrossSiteNavigation(connection, request, response)) {
+      return;
+    }
     if (untrusted(connection, request, response)) {
       return;
     }
@@ -411,10 +346,10 @@ export function apply(ctx: Context, config?: OidcAuthConfig): void {
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<void> {
-    if (
-      settings !== undefined &&
-      bounceToSameOrigin(request, response, settings)
-    ) {
+    // An identity provider on another site returns the browser here with a
+    // cross-site navigation. Only the same-origin reload runs the exchange, so
+    // the new cookie is set on a request the browser will follow with it.
+    if (reopenCrossSiteNavigation(connection, request, response)) {
       return;
     }
     if (untrusted(connection, request, response)) {

@@ -43,9 +43,11 @@ function request(options: {
   body?: string;
   cookie?: string;
   host?: string;
+  headers?: Record<string, string>;
 }): IncomingMessage {
   const headers: Record<string, string> = {
     host: options.host ?? "localhost:3000",
+    ...options.headers,
   };
   if (options.cookie !== undefined) {
     headers.cookie = options.cookie;
@@ -73,7 +75,7 @@ function request(options: {
  * `connection.authorizeIndex` and minting a cookie that `connection.admit`
  * accepts; a dsh bump that moves either behavior must fail here.
  */
-async function mount(): Promise<{
+async function mount(trustedHosts: string[] = []): Promise<{
   ctx: Context;
   routes: Map<
     string,
@@ -115,7 +117,7 @@ async function mount(): Promise<{
       return () => {};
     },
   });
-  await ctx.plugin(connectionPlugin, { trustedHosts: [] });
+  await ctx.plugin(connectionPlugin, { trustedHosts });
   await ctx.plugin(passcodeAuth, { passcode: PASSCODE });
   return { ctx, routes };
 }
@@ -149,6 +151,43 @@ describe("passcode auth against the pinned dsh connection", () => {
         headers: { host: "localhost:3000", cookie: cookie ?? "" },
       });
       expect("peer" in admission).toBe(true);
+    } finally {
+      await ctx.fiber.dispose();
+    }
+  });
+
+  it("reopens a cross-site navigation only on a host dsh trusts", async () => {
+    // `trustedHosts` is how the chart names the public host.
+    const { ctx, routes } = await mount(["dsh.example.com"]);
+    const crossSite = {
+      "sec-fetch-site": "cross-site",
+      "sec-fetch-mode": "navigate",
+    };
+    try {
+      for (const host of ["localhost:3000", "dsh.example.com"]) {
+        const index = reply();
+        ctx.connection.authorizeIndex(
+          request({ url: "/", host, headers: crossSite }),
+          response(index),
+        );
+        expect(index.status).toBe(200);
+        expect(index.body).toContain('content="0;url=/"');
+
+        const login = reply();
+        await routes.get("/login")?.(
+          request({ url: "/login", host, headers: crossSite }),
+          response(login),
+        );
+        expect(login.status).toBe(200);
+        expect(login.body).toContain('content="0;url=/login"');
+      }
+
+      const foreign = reply();
+      await routes.get("/login")?.(
+        request({ url: "/login", host: "evil.example", headers: crossSite }),
+        response(foreign),
+      );
+      expect(foreign.status).toBe(403);
     } finally {
       await ctx.fiber.dispose();
     }
