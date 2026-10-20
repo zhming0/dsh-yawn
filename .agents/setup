@@ -3,6 +3,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Node's built-in fetch ignores HTTP(S)_PROXY unless NODE_USE_ENV_PROXY is set.
+# A proxied sandbox exports those variables, and this hook bootstraps pnpm
+# through corepack, which uses fetch. An explicit value still wins.
+export NODE_USE_ENV_PROXY="${NODE_USE_ENV_PROXY:-1}"
+
 # Same bootstrap CI uses, so an agent and a build get identical tool versions.
 source "${ROOT_DIR}/.buildkite/steps/lib/mise.bash"
 ensure_tools
