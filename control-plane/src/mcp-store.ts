@@ -62,6 +62,15 @@ export interface McpStoreOptions {
 
 const serverNamePattern = /^[A-Za-z0-9_-]{1,32}$/;
 
+/**
+ * Whether a public tool name belongs to one server. dsh-mcp-client names
+ * tools `mcp__<serverName>__<tool>`; the name rules below keep one server's
+ * prefix from matching another's.
+ */
+export function isToolOfServer(toolName: string, serverName: string): boolean {
+  return toolName.startsWith(`mcp__${serverName}__`);
+}
+
 /** Reject the fields the mcp-client and the HTTP transport depend on. */
 export function validateMcpServerEntry(entry: McpServerEntry): void {
   if (!serverNamePattern.test(entry.serverName)) {

@@ -46,6 +46,7 @@ import { MCP_OAUTH_CALLBACK_PATH, McpOAuth } from "../mcp-oauth.js";
 import { McpPool } from "../mcp-pool.js";
 import type { McpServerView, McpTestResult } from "../mcp-remote.js";
 import { McpServerStore, type McpServerEntry } from "../mcp-store.js";
+import type { SessionHiddenServers } from "../mcp-tool-exclusion.js";
 import { yawnHost } from "../remote-contributions.js";
 import {
   PLACEHOLDER_PREVIEW_PORT,
@@ -58,6 +59,7 @@ import type { RunnerClient } from "../runner-client.js";
 import type { SandboxSettingsView } from "../sandbox-settings-remote.js";
 import type { SecretSettingsView } from "../secrets-remote.js";
 import type { SandboxStatusView } from "../sandbox-status-remote.js";
+import type { SessionMcpView } from "../session-mcp-remote.js";
 import type { SessionProfileView } from "../session-profile-remote.js";
 import { scratchWorkspacePath } from "../scratch-workspace.js";
 import { SessionStore } from "../state-store.js";
@@ -78,6 +80,7 @@ import {
 import { ArchiveRelease } from "./archive-release.js";
 import { FileIndexHooks } from "./file-index-hooks.js";
 import { IdleSchedule } from "./idle.js";
+import { McpChoice } from "./mcp-choice.js";
 import { ProfileChoice } from "./profile-choice.js";
 import { ProfileRegistry } from "./profile-registry.js";
 import { RunnerAttachment } from "./runner-attachment.js";
@@ -121,6 +124,11 @@ declare module "@deepseek-ai/cordis" {
   interface Context {
     sandboxManager: SandboxManager;
   }
+
+  interface Events {
+    /** A session's MCP server choice changed; the mcp-tool-exclusion row follows it. */
+    "sandbox-manager/session-mcp-change"(): void;
+  }
 }
 
 /**
@@ -156,6 +164,7 @@ export class SandboxManager extends TypertRemoteService {
   private readonly idle: IdleSchedule;
   private readonly archiveRelease: ArchiveRelease;
   private readonly profileChoice: ProfileChoice;
+  private readonly mcpChoice: McpChoice;
   private readonly fileIndexHooks: FileIndexHooks;
   private readonly notices: SandboxNotices;
   private readonly attachment: RunnerAttachment;
@@ -295,6 +304,12 @@ export class SandboxManager extends TypertRemoteService {
     );
     this.appliedProfilesJson = JSON.stringify(this.runtime.profiles);
     this.profileChoice = new ProfileChoice(this.runtime, store);
+    this.mcpChoice = new McpChoice({
+      store,
+      servers: () => this.mcpPool.views(),
+      started: (sessionId) => this.sessionStarted(sessionId),
+      changed: () => this.ctx.emit("sandbox-manager/session-mcp-change"),
+    });
     const runtime = this.runtime;
     const attachment = new RunnerAttachment({
       gateway: this.gateway,
@@ -522,6 +537,8 @@ export class SandboxManager extends TypertRemoteService {
     ]);
     void this.prepareBackends();
     await this.engine.initialize();
+    // The store is readable now; agents created before this saw no choices.
+    this.ctx.emit("sandbox-manager/session-mcp-change");
     // Mounting is asynchronous past ctx.plugin, so configured MCP servers are
     // reconnected at boot without holding up the manager.
     await this.mcpPool.sync();
@@ -854,6 +871,44 @@ export class SandboxManager extends TypertRemoteService {
   ): Promise<SessionProfileView> {
     await this.ready;
     return this.profileChoice.set(sessionId, profile);
+  }
+
+  /** MCP server choices for the New Session row; `locked` after the first prompt. */
+  async getSessionMcp(sessionId: string): Promise<SessionMcpView> {
+    await this.ready;
+    return this.mcpChoice.view(sessionId);
+  }
+
+  async setSessionMcp(
+    sessionId: string,
+    disabled: string[],
+  ): Promise<SessionMcpView> {
+    await this.ready;
+    return this.mcpChoice.set(sessionId, disabled);
+  }
+
+  /**
+   * The MCP servers hidden from one agent. A subagent follows its root
+   * session's choice, the same way it shares the root's sandbox.
+   */
+  hiddenMcpServers(agent: Agent): SessionHiddenServers {
+    return this.mcpChoice.hidden(this.rootSessionId(agent));
+  }
+
+  /**
+   * Whether a session has sent a prompt. A session with a sandbox has; one
+   * with no live agent cannot be checked, and a blank Web session always has
+   * one, so it counts as started.
+   */
+  private sessionStarted(sessionId: string): boolean {
+    if (this.engine.record(sessionId) !== undefined) {
+      return true;
+    }
+    const agent = this.agentLookup(sessionId);
+    return (
+      agent === undefined ||
+      agent.session.deriveMessages().some((message) => message.role === "user")
+    );
   }
 
   /**

@@ -1,5 +1,6 @@
 /**
- * Keeps MCP tools out of the agent presets that are meant to stay tiny.
+ * Hides MCP tools and prompt text from the agents that should not see them:
+ * presets meant to stay tiny, and sessions that turned servers off.
  *
  * The control plane mounts every configured MCP server once, at the host
  * root, so its tools join the global tool registry and every agent inherits
@@ -31,13 +32,27 @@
  * the assembly drops every prompt section, so no MCP prompt text reaches it
  * either, and hiding the tool schemas is the whole policy there.
  *
+ * The row also hides the servers one session turned off in the New Session
+ * row's MCP menu, read from the sandbox manager. Those agents run a full persona,
+ * so hiding schemas is not enough: each server's `mcp:<server>` instructions
+ * section is dropped from the assembled prompt, and the shared
+ * `mcp-resource-servers` section either loses the hidden names or, once the
+ * resource tools are hidden too, goes entirely. The sandbox manager emits
+ * `sandbox-manager/session-mcp-change` when a choice changes.
+ *
  * @module @zhming0/dsh-yawn/mcp-tool-exclusion
  */
 
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
+import type {
+  AssembledSection,
+  PromptAssembly,
+} from "@deepseek-ai/dsh-system-prompt";
 import type {} from "@deepseek-ai/dsh-tools";
 import z from "@deepseek-ai/schemastery";
+
+import { isToolOfServer } from "./mcp-store.js";
 
 /** Presets excluded unless the row config names another list. */
 export const DEFAULT_EXCLUDED_PRESETS = ["minimal"] as const;
@@ -76,6 +91,131 @@ export function mcpToolNames(names: readonly string[]): string[] {
 }
 
 /**
+ * What one session hides: the servers it turned off, and whether those are
+ * every enabled server. The second is decided from the configured servers,
+ * not from the tools registered right now, so a server that is still
+ * connecting, or one that offers only resources, cannot flip the shared
+ * resource tools on or off mid-session.
+ */
+export interface SessionHiddenServers {
+  servers: readonly string[];
+  everyServer: boolean;
+}
+
+/** What one session hides, as the row works with it. */
+export interface HiddenSessionServers {
+  servers: ReadonlySet<string>;
+  everyServer: boolean;
+}
+
+/** Which MCP servers one agent must not see; "all" for an excluded preset. */
+export type HiddenServers = "all" | HiddenSessionServers;
+
+/**
+ * The tool names one agent must not see, sorted: every MCP name for an
+ * excluded preset, otherwise the hidden servers' tools, plus the shared
+ * resource tools once every server is hidden.
+ */
+export function hiddenMcpToolNames(
+  names: readonly string[],
+  hidden: HiddenServers,
+): string[] {
+  const mcp = mcpToolNames(names);
+  if (hidden === "all") {
+    return mcp;
+  }
+  return mcp.filter((name) =>
+    MCP_RESOURCE_TOOL_NAMES.has(name)
+      ? hidden.everyServer
+      : [...hidden.servers].some((server) => isToolOfServer(name, server)),
+  );
+}
+
+const RESOURCE_SECTION = "mcp-resource-servers";
+/**
+ * dsh-mcp-resources 0.2.1-rc.2 ends its section with "...as the server
+ * argument: <JSON list of names>." (`lib/index.js`). The fixture in
+ * mcp-tool-exclusion.test.ts is copied from that release, so a dsh upgrade
+ * that changes the sentence fails there.
+ */
+const RESOURCE_SERVER_LIST = /(\[[^\]]*\])\.$/;
+
+/**
+ * Remove the hidden servers from one assembly's prompt sections: their
+ * `mcp:<server>` instructions, and their names in the resource section. The
+ * resource section goes entirely when every server is hidden or none is left
+ * in it. A resource section this cannot read is kept and reported through
+ * `warn`, because guessing at another package's text could drop the wrong
+ * part.
+ */
+export function withoutHiddenMcpSections(
+  sections: readonly AssembledSection[],
+  hidden: HiddenSessionServers,
+  warn: (message: string) => void,
+): AssembledSection[] {
+  const result: AssembledSection[] = [];
+  for (const section of sections) {
+    if (
+      section.name.startsWith("mcp:") &&
+      hidden.servers.has(section.name.slice("mcp:".length))
+    ) {
+      continue;
+    }
+    if (section.name !== RESOURCE_SECTION) {
+      result.push(section);
+      continue;
+    }
+    if (hidden.everyServer) {
+      continue;
+    }
+    const remaining = remainingResourceServers(section.text, hidden.servers);
+    if (remaining === undefined) {
+      warn(
+        `mcp-tool-exclusion: cannot read the ${RESOURCE_SECTION} prompt section; hidden MCP server names stay in it`,
+      );
+      result.push(section);
+    } else if (remaining.length > 0) {
+      result.push({
+        ...section,
+        text: section.text.replace(
+          RESOURCE_SERVER_LIST,
+          `${JSON.stringify(remaining)}.`,
+        ),
+      });
+    }
+  }
+  return result;
+}
+
+function remainingResourceServers(
+  text: string,
+  hidden: ReadonlySet<string>,
+): string[] | undefined {
+  const match = RESOURCE_SERVER_LIST.exec(text);
+  if (match?.[1] === undefined) {
+    return undefined;
+  }
+  let names: unknown;
+  try {
+    names = JSON.parse(match[1]);
+  } catch {
+    return undefined;
+  }
+  if (
+    !Array.isArray(names) ||
+    names.some((name: unknown) => typeof name !== "string")
+  ) {
+    return undefined;
+  }
+  return (names as string[]).filter((name) => !hidden.has(name));
+}
+
+/** The per-session choice read face of the sandbox manager. */
+interface SessionMcpLike {
+  hiddenMcpServers(agent: Agent): SessionHiddenServers;
+}
+
+/**
  * The live-preset read face of the agent-preset registry. Only the Web
  * surface mounts the registry; a profile without it composes no presets, so
  * every agent runs the host composition and nothing is excluded.
@@ -90,7 +230,7 @@ interface FiberLike {
   dispose(): unknown;
 }
 
-/** One excluded agent's live restriction. */
+/** One restricted agent's live mask. */
 interface AgentPolicy {
   fiber: FiberLike;
   /** Set before a disposed agent's injected scope callback can still run. */
@@ -118,7 +258,7 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Applies the exclusion to the matching agents and tracks it until disposal. */
+/** Hides MCP tools from the matching agents and tracks them until disposal. */
 export class McpToolExclusion {
   private readonly agents = new Map<Agent, AgentPolicy>();
   private readonly excluded: Set<string>;
@@ -131,6 +271,8 @@ export class McpToolExclusion {
       excludedPresets: readonly string[];
       /** The live preset of one agent, undefined when it runs none. */
       presetFor: (agent: Agent) => string | undefined;
+      /** What one agent's session turned off. */
+      sessionHiddenFor: (agent: Agent) => SessionHiddenServers;
       /** Every live agent, so registry changes re-read each live preset. */
       agents: () => readonly Agent[];
       /** Every name in the global tool registry, MCP or not. */
@@ -141,30 +283,49 @@ export class McpToolExclusion {
     this.excluded = new Set(options.excludedPresets);
   }
 
-  /** Whether one agent's live preset is currently excluded. */
-  private isExcluded(agent: Agent): boolean {
-    if (this.excluded.size === 0) {
-      return false;
+  /**
+   * The servers one agent must not see: all of them for an excluded preset,
+   * otherwise its session's choice; undefined when it sees every server.
+   */
+  hiddenServers(agent: Agent): HiddenServers | undefined {
+    if (this.excluded.size > 0) {
+      const preset = this.options.presetFor(agent);
+      if (preset !== undefined && this.excluded.has(preset)) {
+        return "all";
+      }
     }
-    const preset = this.options.presetFor(agent);
-    return preset !== undefined && this.excluded.has(preset);
+    const { servers, everyServer } = this.options.sessionHiddenFor(agent);
+    return servers.length === 0
+      ? undefined
+      : { servers: new Set(servers), everyServer };
   }
 
-  /** Apply or lift the restriction for one agent's live preset. */
+  private hiddenNames(agent: Agent): string[] {
+    const hidden = this.hiddenServers(agent);
+    return hidden === undefined
+      ? []
+      : hiddenMcpToolNames(this.options.toolNames(), hidden);
+  }
+
+  /** Apply or lift the restriction for one agent's preset and choice. */
   sync(agent: Agent): void {
     if (this.disposed) {
       return;
     }
-    if (this.isExcluded(agent)) {
+    if (this.hiddenServers(agent) !== undefined) {
       this.install(agent);
     } else {
       this.remove(agent);
     }
   }
 
-  /** Start hiding MCP tools from one agent when its preset is excluded. */
+  /** Start hiding MCP tools from one agent when it should not see some. */
   install(agent: Agent): void {
-    if (this.disposed || this.agents.has(agent) || !this.isExcluded(agent)) {
+    if (
+      this.disposed ||
+      this.agents.has(agent) ||
+      this.hiddenServers(agent) === undefined
+    ) {
       return;
     }
     const policy: AgentPolicy = {
@@ -199,7 +360,7 @@ export class McpToolExclusion {
           policy.names = names;
           previous?.();
         };
-        policy.update(mcpToolNames(this.options.toolNames()));
+        policy.update(this.hiddenNames(agent));
       });
     } catch (error) {
       this.agents.delete(agent);
@@ -210,7 +371,7 @@ export class McpToolExclusion {
     }
   }
 
-  /** Drop one disposed agent's policy. */
+  /** Drop one agent's policy, lifting its mask. */
   remove(agent: Agent): void {
     const policy = this.agents.get(agent);
     if (policy === undefined) {
@@ -247,9 +408,8 @@ export class McpToolExclusion {
         for (const agent of this.options.agents()) {
           this.sync(agent);
         }
-        const names = mcpToolNames(this.options.toolNames());
-        for (const policy of this.agents.values()) {
-          policy.update?.(names);
+        for (const [agent, policy] of this.agents) {
+          policy.update?.(this.hiddenNames(agent));
         }
       } while (this.recheck);
     } finally {
@@ -276,6 +436,8 @@ export class McpToolExclusion {
 export const name = "mcp-tool-exclusion";
 
 export function apply(ctx: Context, config: Config): void {
+  const warn = (message: string) =>
+    ctx.logger("mcp-tool-exclusion").warn(message);
   ctx.inject(["agents", "tools"], (scope) => {
     const exclusion = new McpToolExclusion({
       excludedPresets: config.excludedPresets,
@@ -285,9 +447,20 @@ export function apply(ctx: Context, config: Config): void {
           | undefined;
         return presets?.composedPreset(agent.ctx);
       },
+      sessionHiddenFor: (agent) => {
+        const manager = scope.get("sandboxManager") as
+          | SessionMcpLike
+          | undefined;
+        return (
+          manager?.hiddenMcpServers(agent) ?? {
+            servers: [],
+            everyServer: false,
+          }
+        );
+      },
       agents: () => scope.agents.list(),
       toolNames: () => scope.tools.schemas().map((schema) => schema.name),
-      warn: (message) => ctx.logger("mcp-tool-exclusion").warn(message),
+      warn,
     });
     // Covers agents that already exist when the row mounts; a later
     // `tools/change` covers a preset rebound on a blank session.
@@ -298,6 +471,26 @@ export function apply(ctx: Context, config: Config): void {
     });
     scope.on("agent/disposed", ({ agent }) => exclusion.remove(agent));
     scope.on("tools/change", () => exclusion.reconcile());
+    scope.on("sandbox-manager/session-mcp-change", () => exclusion.reconcile());
+    // Tool masks hide schemas; the hidden servers' prompt text goes here. An
+    // excluded preset is skipped: its complete persona replaces every section.
+    scope.on(
+      "system-prompt/assemble",
+      async (_assembly, context, next): Promise<PromptAssembly> => {
+        const assembly = await next();
+        const hidden =
+          context.agent === undefined
+            ? undefined
+            : exclusion.hiddenServers(context.agent);
+        if (hidden === undefined || hidden === "all") {
+          return assembly;
+        }
+        return {
+          ...assembly,
+          sections: withoutHiddenMcpSections(assembly.sections, hidden, warn),
+        };
+      },
+    );
     scope.effect(() => () => exclusion.dispose());
   });
 }

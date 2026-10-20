@@ -11,10 +11,23 @@ interface StateFile {
    * choice moves onto the session record when the sandbox is provisioned.
    */
   pendingProfiles: Record<string, string>;
+  /**
+   * MCP servers a session turned off before its first prompt. Kept apart from
+   * the sandbox record: the choice outlives hibernation and expiry, because
+   * it belongs to the conversation, not to its sandbox. dsh has no
+   * session-deletion signal, so entries stay, like `pendingProfiles`; one
+   * entry is a few names, written only by a session that made a choice.
+   */
+  disabledMcpServers: Record<string, string[]>;
 }
 
 export class SessionStore {
-  private state: StateFile = { version: 1, sessions: {}, pendingProfiles: {} };
+  private state: StateFile = {
+    version: 1,
+    sessions: {},
+    pendingProfiles: {},
+    disabledMcpServers: {},
+  };
   private writeChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly path: string) {}
@@ -59,6 +72,23 @@ export class SessionStore {
     await this.persist();
   }
 
+  disabledMcpServers(sessionId: string): readonly string[] {
+    return this.state.disabledMcpServers[sessionId] ?? [];
+  }
+
+  /** Changes the in-memory state before it returns; the promise is the write. */
+  setDisabledMcpServers(
+    sessionId: string,
+    serverNames: string[],
+  ): Promise<void> {
+    if (serverNames.length === 0) {
+      delete this.state.disabledMcpServers[sessionId];
+    } else {
+      this.state.disabledMcpServers[sessionId] = serverNames;
+    }
+    return this.persist();
+  }
+
   private persist(): Promise<void> {
     const snapshot = `${JSON.stringify(this.state, null, 2)}\n`;
     this.writeChain = this.writeChain.then(async () => {
@@ -89,12 +119,19 @@ function parseState(value: unknown): StateFile {
     value.pendingProfiles !== null
       ? (value.pendingProfiles as Record<string, string>)
       : {};
+  const disabledMcpServers =
+    "disabledMcpServers" in value &&
+    typeof value.disabledMcpServers === "object" &&
+    value.disabledMcpServers !== null
+      ? (value.disabledMcpServers as Record<string, string[]>)
+      : {};
   return {
     version: 1,
     sessions: backfillStartTimes(
       value.sessions as Record<string, SessionRecord>,
     ),
     pendingProfiles,
+    disabledMcpServers,
   };
 }
 

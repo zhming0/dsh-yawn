@@ -7,8 +7,11 @@ import {
   DEFAULT_EXCLUDED_PRESETS,
   McpToolExclusion,
   apply,
+  hiddenMcpToolNames,
   isMcpToolName,
   mcpToolNames,
+  withoutHiddenMcpSections,
+  type SessionHiddenServers,
 } from "../src/mcp-tool-exclusion.js";
 
 const flush = (): Promise<void> =>
@@ -24,6 +27,8 @@ function makeHarness(
     preset?: string | undefined;
     deferInject?: boolean;
     presets?: boolean;
+    /** Servers the session turned off, read through a fake sandbox manager. */
+    disabled?: SessionHiddenServers | ((agent: Agent) => SessionHiddenServers);
   } = {},
 ) {
   const ctx = new Context();
@@ -91,6 +96,15 @@ function makeHarness(
       composedPreset: () => preset,
     });
   }
+  let disabled = options.disabled;
+  if (disabled !== undefined) {
+    ctx.provide("sandboxManager", {
+      hiddenMcpServers: (agent: Agent) =>
+        typeof disabled === "function"
+          ? disabled(agent)
+          : (disabled ?? { servers: [], everyServer: false }),
+    });
+  }
   return {
     agent,
     agents,
@@ -101,6 +115,9 @@ function makeHarness(
     schemaNames,
     selectPreset: (next: string | undefined) => {
       preset = next;
+    },
+    setDisabled: (next: SessionHiddenServers) => {
+      disabled = next;
     },
     tools,
   };
@@ -330,6 +347,7 @@ describe("McpToolExclusion.dispose", () => {
     const exclusion = new McpToolExclusion({
       excludedPresets: ["minimal"],
       presetFor: () => "minimal",
+      sessionHiddenFor: () => ({ servers: [], everyServer: false }),
       agents: () => harness.agents.list(),
       toolNames: () => harness.schemaNames,
       warn: () => undefined,
@@ -341,5 +359,221 @@ describe("McpToolExclusion.dispose", () => {
     exclusion.reconcile();
     exclusion.sync(harness.agent);
     expect(harness.restrictions).toHaveLength(1);
+  });
+});
+
+const none: SessionHiddenServers = { servers: [], everyServer: false };
+
+function hiding(servers: string[], everyServer = false) {
+  return { servers: new Set(servers), everyServer };
+}
+
+describe("hiddenMcpToolNames", () => {
+  const names = [
+    "bash",
+    "mcp__buildkite__list_builds",
+    "mcp__notion__search",
+    "mcp__notion-extra__search",
+    "list_mcp_resources",
+    "read_mcp_resource",
+  ];
+
+  it("hides every MCP name for an excluded preset", () => {
+    expect(hiddenMcpToolNames(names, "all")).toEqual(mcpToolNames(names));
+  });
+
+  it("hides only the named servers, matching the whole server name", () => {
+    expect(hiddenMcpToolNames(names, hiding(["notion"]))).toEqual([
+      "mcp__notion__search",
+    ]);
+  });
+
+  it("keeps the resource tools until every configured server is hidden", () => {
+    // Every server with tools is hidden, but the caller reports another
+    // configured server (still connecting, or resources only), so the shared
+    // resource tools stay.
+    expect(
+      hiddenMcpToolNames(
+        names,
+        hiding(["buildkite", "notion", "notion-extra"], false),
+      ),
+    ).toEqual([
+      "mcp__buildkite__list_builds",
+      "mcp__notion-extra__search",
+      "mcp__notion__search",
+    ]);
+    expect(
+      hiddenMcpToolNames(
+        names,
+        hiding(["buildkite", "notion", "notion-extra"], true),
+      ),
+    ).toEqual(mcpToolNames(names));
+  });
+});
+
+describe("withoutHiddenMcpSections", () => {
+  // Copied verbatim from dsh-mcp-resources 0.2.1-rc.2 `lib/index.js`. If a dsh
+  // upgrade changes this sentence, update both this fixture and
+  // RESOURCE_SERVER_LIST in src/mcp-tool-exclusion.ts.
+  const resourceText = (names: string[]) => `## MCP resource servers
+
+Use list_mcp_resources, list_mcp_resource_templates, or read_mcp_resource with one of these names as the server argument: ${JSON.stringify(names)}.`;
+  const resource = (names: string[]) => ({
+    name: "mcp-resource-servers",
+    text: resourceText(names),
+    interpolate: false,
+  });
+  const sections = [
+    { name: "tool:bash", text: "bash" },
+    { name: "mcp:buildkite", text: "### MCP server: buildkite" },
+    { name: "mcp:notion", text: "### MCP server: notion" },
+    resource(["buildkite", "notion"]),
+  ];
+  const noWarning = () => {
+    throw new Error("unexpected warning");
+  };
+
+  it("drops hidden servers' instructions and names", () => {
+    expect(
+      withoutHiddenMcpSections(sections, hiding(["notion"]), noWarning),
+    ).toEqual([
+      { name: "tool:bash", text: "bash" },
+      { name: "mcp:buildkite", text: "### MCP server: buildkite" },
+      resource(["buildkite"]),
+    ]);
+  });
+
+  it("drops the resource section when no listed server is left", () => {
+    expect(
+      withoutHiddenMcpSections(
+        sections,
+        hiding(["buildkite", "notion"]),
+        noWarning,
+      ),
+    ).toEqual([{ name: "tool:bash", text: "bash" }]);
+  });
+
+  it("drops the resource section when every server is hidden", () => {
+    expect(
+      withoutHiddenMcpSections(
+        [resource(["buildkite", "files"])],
+        hiding(["buildkite"], true),
+        noWarning,
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps a resource section it cannot read, and says so", () => {
+    const odd = { name: "mcp-resource-servers", text: "servers: notion" };
+    const warn = vi.fn();
+    expect(withoutHiddenMcpSections([odd], hiding(["notion"]), warn)).toEqual([
+      odd,
+    ]);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("apply with a session choice", () => {
+  it("hides the session's servers and follows its changes", async () => {
+    const harness = makeHarness({ preset: "standard", disabled: none });
+    harness.schemaNames.push("mcp__notion__search");
+    harness.agents.list = () => [harness.agent];
+    apply(harness.ctx, { excludedPresets: ["minimal"] });
+    await flush();
+    expect(harness.restrictions).toHaveLength(0);
+
+    harness.setDisabled({ servers: ["notion"], everyServer: false });
+    harness.ctx.emit("sandbox-manager/session-mcp-change");
+    expect(harness.restrictions.map((call) => call.deny)).toEqual([
+      ["mcp__notion__search"],
+    ]);
+
+    harness.setDisabled({
+      servers: ["buildkite", "notion"],
+      everyServer: true,
+    });
+    harness.ctx.emit("sandbox-manager/session-mcp-change");
+    expect(harness.restrictions.map((call) => call.deny)).toEqual([
+      ["mcp__notion__search"],
+      [
+        "mcp__buildkite__list_builds",
+        "mcp__notion__search",
+        "read_mcp_resource",
+      ],
+    ]);
+
+    harness.setDisabled(none);
+    harness.ctx.emit("sandbox-manager/session-mcp-change");
+    expect(harness.fiberDisposals[0]).toHaveBeenCalledTimes(1);
+    expect(harness.restrictions[1]?.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides a turned-off server's tools again after it reconnects", async () => {
+    const harness = makeHarness({
+      preset: "standard",
+      disabled: { servers: ["notion"], everyServer: false },
+    });
+    harness.schemaNames.push("mcp__notion__search");
+    harness.agents.list = () => [harness.agent];
+    apply(harness.ctx, { excludedPresets: ["minimal"] });
+    await flush();
+    expect(harness.restrictions.map((call) => call.deny)).toEqual([
+      ["mcp__notion__search"],
+    ]);
+
+    // An OAuth renewal remounts the server: its tools leave the registry,
+    // then come back, possibly with a new one, each with its own tools/change.
+    harness.schemaNames.splice(
+      harness.schemaNames.indexOf("mcp__notion__search"),
+      1,
+    );
+    harness.ctx.emit("tools/change");
+    expect(harness.restrictions[0]?.dispose).toHaveBeenCalledTimes(1);
+    harness.schemaNames.push("mcp__notion__search", "mcp__notion__create_page");
+    harness.ctx.emit("tools/change");
+    expect(harness.restrictions.at(-1)?.deny).toEqual([
+      "mcp__notion__create_page",
+      "mcp__notion__search",
+    ]);
+    expect(harness.restrictions.at(-1)?.dispose).not.toHaveBeenCalled();
+  });
+
+  it("drops the hidden servers' prompt sections for that agent only", async () => {
+    const other = { id: "session-other" } as unknown as Agent;
+    // The other agent's session made no choice.
+    const harness = makeHarness({
+      preset: "standard",
+      disabled: (agent) =>
+        agent === other ? none : { servers: ["notion"], everyServer: false },
+    });
+    apply(harness.ctx, { excludedPresets: ["minimal"] });
+    await flush();
+
+    const assembly = {
+      sections: [
+        { name: "mcp:buildkite", text: "buildkite" },
+        { name: "mcp:notion", text: "notion" },
+      ],
+      contexts: [],
+      tools: [],
+      variables: {},
+    };
+    // dsh-agent's assembleContextFor sets both fields to the same agent.
+    const assemble = (agent: Agent) =>
+      harness.ctx.waterfall(
+        "system-prompt/assemble",
+        assembly,
+        { agent, scope: agent },
+        () => Promise.resolve(assembly),
+      );
+    const mine = await assemble(harness.agent);
+    expect(mine.sections.map((section) => section.name)).toEqual([
+      "mcp:buildkite",
+    ]);
+    const theirs = await assemble(other);
+    expect(theirs.sections.map((section) => section.name)).toEqual([
+      "mcp:buildkite",
+      "mcp:notion",
+    ]);
   });
 });

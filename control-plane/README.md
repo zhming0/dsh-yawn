@@ -45,6 +45,16 @@ the `mcp-tool-exclusion` row keeps MCP tools out of it. The excluded presets
 are the row's `excludedPresets` list (default `[minimal]`); an empty list
 turns the exclusion off.
 
+A new session can also turn individual servers off before its first prompt,
+from the **MCP** menu on the New Session row. Every server's tool schemas and
+instructions are sent with every model request, so an unused server costs
+tokens on each step. A turned-off server's tools, its instructions, and its
+name in the MCP resources section are left out of that session's requests,
+and its subagents follow the same choice. The choice is fixed once the first
+prompt is sent, so the cached prompt prefix stays valid. It is a cost
+control, not an access boundary: every session still shares one connection
+per server.
+
 ## What changes for the agent
 
 The tools keep their names, schemas, and prompt guidance; only where they run

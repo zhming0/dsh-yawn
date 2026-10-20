@@ -211,6 +211,27 @@ schemas. An excluded preset without a complete persona would still assemble
 the `mcp-resource-servers` section, so the config is meant for shell-only
 compositions.
 
+The same row applies each session's own choice. The New Session row's MCP
+menu (`conversation.hero.options`, rendered only for a blank session) writes
+the servers a session turned off into `stateDir/sessions.json`, beside the
+sandbox records but outliving them. The sandbox manager refuses a change once
+the session has a user message or a sandbox, or has no live agent to check,
+so the tools and prompt text stay the same for the whole session. It emits
+`sandbox-manager/session-mcp-change` on a write, in the same synchronous step
+as the lock check, and the row reconciles: it denies that session's agents
+the turned-off servers' `mcp__<server>__*` tools, plus the three shared
+resource tools once the session has turned off every enabled server. That
+last test reads the configured servers, not the registered tools, so a
+server that is still connecting or offers only resources cannot flip it.
+Subagents resolve to their root session, as they do for the sandbox. A full
+persona assembles every section, so a `system-prompt/assemble` listener also
+drops the `mcp:<server>` instruction sections and removes the hidden names
+from `mcp-resource-servers`, or drops that section when every server is off
+or no name is left. That edit matches the sentence dsh-mcp-resources renders;
+a rendering it cannot read is kept and logged. The resource tools can still
+read a hidden server's resources if the model names it: the choice controls
+tokens, not access.
+
 The bundle also disables dsh's local shell permission presets and its file
 policy line. The remote shell uses one fixed container boundary and does not
 claim to enforce those per-command sandbox modes. Both halves of the preset

@@ -13,6 +13,8 @@ import type { SandboxStatusRemote } from "./sandbox-status-remote.js";
 import { sandboxStatusDescriptors } from "./sandbox-status-remote.js";
 import type { SandboxSecretsRemote } from "./secrets-remote.js";
 import { sandboxSecretsDescriptors } from "./secrets-remote.js";
+import type { SessionMcpRemote } from "./session-mcp-remote.js";
+import { sessionMcpDescriptors } from "./session-mcp-remote.js";
 import type { SessionProfileRemote } from "./session-profile-remote.js";
 import { sessionProfileDescriptors } from "./session-profile-remote.js";
 
@@ -22,6 +24,7 @@ type SandboxManagerRemote = RepositoryWorkspaceRemote &
   SandboxInstructionsRemote &
   SandboxMcpRemote &
   SessionProfileRemote &
+  SessionMcpRemote &
   SandboxStatusRemote &
   SandboxSettingsRemote;
 
@@ -50,6 +53,8 @@ declare module "@deepseek-ai/dsh-typert-protocol" {
     "sandboxManager/setWorkspaceInstructions": SandboxManagerRemote["setWorkspaceInstructions"];
     "sandboxManager/getSessionProfile": SandboxManagerRemote["getSessionProfile"];
     "sandboxManager/setSessionProfile": SandboxManagerRemote["setSessionProfile"];
+    "sandboxManager/getSessionMcp": SandboxManagerRemote["getSessionMcp"];
+    "sandboxManager/setSessionMcp": SandboxManagerRemote["setSessionMcp"];
     "sandboxManager/getSandboxStatus": SandboxManagerRemote["getSandboxStatus"];
     "sandboxManager/getSandboxSettings": SandboxManagerRemote["getSandboxSettings"];
   }
@@ -64,6 +69,7 @@ const descriptors = [
   ...sandboxInstructionsDescriptors,
   ...sandboxMcpDescriptors,
   ...sessionProfileDescriptors,
+  ...sessionMcpDescriptors,
   ...sandboxStatusDescriptors,
   ...sandboxSettingsDescriptors,
 ];

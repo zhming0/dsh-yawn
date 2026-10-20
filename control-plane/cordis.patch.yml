@@ -239,7 +239,9 @@
     # agent-preset registry rather than the creation header, so a blank
     # session switched to `minimal` in the Web UI is covered too. It
     # recomputes the exact-name deny list whenever the registry changes.
-    # Remove a preset id to let its sessions see MCP tools again.
+    # Remove a preset id to let its sessions see MCP tools again. The row
+    # also hides the servers a session turned off from the New Session row's
+    # MCP menu, with their prompt sections; that needs no config.
     - id: mcp-tool-exclusion
       name: '@zhming0/dsh-yawn/mcp-tool-exclusion'
       config:
