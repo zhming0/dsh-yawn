@@ -42,6 +42,7 @@ import {
   loggedIn,
   mintDshCookie,
   redirect,
+  reopenCrossSiteNavigation,
   sendHtml,
   sendText,
   untrusted,
@@ -191,6 +192,9 @@ function handleLogin(
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> | void {
+  if (reopenCrossSiteNavigation(connection, request, response)) {
+    return;
+  }
   if (untrusted(connection, request, response)) {
     return;
   }

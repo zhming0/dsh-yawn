@@ -181,10 +181,85 @@ export function loggedIn(
   return connection.requestRejection(request) === undefined;
 }
 
+/** Escape the characters that end an HTML text node or a quoted attribute. */
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+/**
+ * A link from another site, or an identity provider on another site, arrives
+ * as a cross-site navigation. dsh's fence refuses it with 403, and dsh's
+ * cookie is SameSite=Strict, so the browser does not send it and a signed-in
+ * user looks signed out. Answer with a page that opens the same path and query
+ * again from this site: that request is same-origin, carries the cookie, and
+ * passes every normal check. The fragment never reaches the server, so it is
+ * lost; links point at `/`, where none is used.
+ *
+ * Only a top-level GET on a Host dsh trusts is answered, so other requests get
+ * what they got before. Any site can now make a signed-in browser load the
+ * page, so ARCHITECTURE.md lists where that is acceptable. Returns true once
+ * the response is written.
+ */
+export function reopenCrossSiteNavigation(
+  connection: HostConnectionHandle,
+  request: IncomingMessage,
+  response: ServerResponse,
+): boolean {
+  if (request.method !== "GET") {
+    return false;
+  }
+  if (header(request, "sec-fetch-site") !== "cross-site") {
+    return false;
+  }
+  if (header(request, "sec-fetch-mode") !== "navigate") {
+    return false;
+  }
+  // Ask dsh's fence about everything except the cross-site marker this page
+  // exists to handle, so the Host and Origin checks stay dsh's.
+  const headers = { ...request.headers };
+  delete headers["sec-fetch-site"];
+  if (connection.requestRejection({ headers }) === 403) {
+    return false;
+  }
+  let target: string;
+  try {
+    const url = new URL(request.url ?? "/", "http://dsh.invalid");
+    target = `${url.pathname}${url.search}`;
+  } catch {
+    return false;
+  }
+  // A path starting with `//` would name another host.
+  if (target.startsWith("//")) {
+    return false;
+  }
+  const href = escapeHtml(target);
+  sendHtml(
+    response,
+    200,
+    `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DeepSeek Harness</title>
+<meta http-equiv="refresh" content="0;url=${href}">
+</head>
+<body>
+<p><a href="${href}">Continue to DeepSeek Harness</a></p>
+</body>
+</html>
+`,
+  );
+  return true;
+}
+
 /**
  * Put a login page in front of dsh's browser authentication. A logged-out
- * index request goes to `loginPath`; dsh's token URL is refused while this
- * gate is mounted.
+ * index request goes to `loginPath`, after a link from another site is opened
+ * again from this one; dsh's token URL is refused while this gate is mounted.
  */
 export function installIndexGate(
   ctx: Context,
@@ -204,7 +279,15 @@ export function installIndexGate(
           return true;
         }
         if (probe.status === 401) {
-          redirect(response as ServerResponse, loginPath);
+          if (
+            !reopenCrossSiteNavigation(
+              connection,
+              request as IncomingMessage,
+              response as ServerResponse,
+            )
+          ) {
+            redirect(response as ServerResponse, loginPath);
+          }
           return false;
         }
         const status = probe.status === 0 ? 500 : probe.status;

@@ -45,10 +45,12 @@ function request(
     body?: string;
     contentType?: string;
     remoteAddress?: string;
+    headers?: Record<string, string>;
   } = {},
 ): IncomingMessage {
   const headers: Record<string, string> = {
     host: options.host ?? "localhost:3000",
+    ...options.headers,
   };
   if (options.cookie !== undefined) {
     headers.cookie = options.cookie;
@@ -114,7 +116,11 @@ async function mount(passcode = PASSCODE): Promise<Mounted> {
       return url.href;
     },
     requestRejection(candidate: IncomingMessage): 401 | 403 | undefined {
-      if (candidate.headers.host === "evil.example.com") {
+      // Like dsh's fence: only our Host passes, and a cross-site marker fails.
+      if (candidate.headers.host !== "localhost:3000") {
+        return 403;
+      }
+      if (candidate.headers["sec-fetch-site"] === "cross-site") {
         return 403;
       }
       return candidate.headers.cookie === COOKIE ? undefined : 401;
@@ -214,6 +220,102 @@ describe("passcode auth", () => {
       request({ host: "evil.example.com" }),
     );
     expect(forbidden.status).toBe(403);
+  });
+
+  const crossSite = {
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+  };
+
+  it("opens a link from another site again from this one", async () => {
+    mounted = await mount();
+    const url = '/?tab=files&q="<x>"';
+    const out = reply();
+    expect(
+      mounted.connection.authorizeIndex(
+        request({ url, headers: crossSite }),
+        response(out),
+      ),
+    ).toBe(false);
+    expect(out.status).toBe(200);
+    expect(out.headers["content-type"]).toContain("text/html");
+    expect(out.headers["cache-control"]).toBe("no-store");
+    const target = "/?tab=files&amp;q=%22%3Cx%3E%22";
+    expect(out.body).toContain(`content="0;url=${target}"`);
+    expect(out.body).toContain(`href="${target}"`);
+
+    // The reload is same-origin and carries the cookie, so a signed-in user
+    // gets the app and a signed-out one gets the sign-in page.
+    expect(
+      mounted.connection.authorizeIndex(
+        request({
+          url,
+          cookie: COOKIE,
+          headers: { "sec-fetch-site": "same-origin" },
+        }),
+        response(reply()),
+      ),
+    ).toBe(true);
+    const signedOut = reply();
+    mounted.connection.authorizeIndex(
+      request({ url, headers: { "sec-fetch-site": "same-origin" } }),
+      response(signedOut),
+    );
+    expect(signedOut.status).toBe(303);
+    expect(signedOut.headers.location).toBe(LOGIN_PATH);
+  });
+
+  it("only reopens a top-level navigation on a trusted host", async () => {
+    mounted = await mount();
+    const cases = [
+      request({ host: "evil.example.com", headers: crossSite }),
+      request({ headers: { ...crossSite, "sec-fetch-mode": "no-cors" } }),
+      request({ method: "HEAD", headers: crossSite }),
+      // `//evil.example.com/` would leave this origin.
+      request({ url: "/.//evil.example.com/", headers: crossSite }),
+    ];
+    for (const candidate of cases) {
+      const out = reply();
+      mounted.connection.authorizeIndex(candidate, response(out));
+      expect(out.status).toBe(303);
+      expect(out.headers.location).toBe(LOGIN_PATH);
+    }
+  });
+
+  it("opens the sign-in page from another site again from this one", async () => {
+    mounted = await mount();
+    const page = await dispatch(
+      mounted.routes,
+      LOGIN_PATH,
+      request({ url: LOGIN_PATH, headers: crossSite }),
+    );
+    expect(page.status).toBe(200);
+    expect(page.body).toContain(`content="0;url=${LOGIN_PATH}"`);
+    expect(page.body).not.toContain('name="passcode"');
+
+    const foreign = await dispatch(
+      mounted.routes,
+      LOGIN_PATH,
+      request({
+        url: LOGIN_PATH,
+        host: "evil.example.com",
+        headers: crossSite,
+      }),
+    );
+    expect(foreign.status).toBe(403);
+
+    const post = await dispatch(
+      mounted.routes,
+      LOGIN_PATH,
+      request({
+        method: "POST",
+        url: LOGIN_PATH,
+        body: `passcode=${encodeURIComponent(PASSCODE)}`,
+        headers: crossSite,
+      }),
+    );
+    expect(post.status).toBe(403);
+    expect(post.headers["set-cookie"]).toBeUndefined();
   });
 
   it("rejects a wrong passcode and rate-limits repeated attempts", async () => {

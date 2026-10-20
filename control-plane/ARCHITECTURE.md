@@ -427,6 +427,31 @@ use only dsh's public connection surface — no cookie signing, no private field
 root token request through `authorizeIndex` mints a cookie `admit` accepts) is
 pinned by `tests/passcode-auth-dsh.test.ts`.
 
+A navigation that starts on another site — a link in a pull request, or an
+identity provider on another registrable domain returning to the OIDC callback
+— carries `Sec-Fetch-Site: cross-site`. dsh's request fence refuses it with
+403, and dsh's `SameSite=Strict` cookie is not sent on it, so a signed-in
+browser looks signed out. For a top-level GET on a Host dsh trusts, the index
+gate, `/login`, and the OIDC callback answer with a page that opens the same
+path and query again from this origin (`reopenCrossSiteNavigation`). That
+request is same-origin, so the cookie and every check apply as usual; on the
+callback, only the reload exchanges the code and sets the cookie. The Host
+check is dsh's own: the row asks `requestRejection` with only the cross-site
+marker removed, so an untrusted Host or a bad `Origin` still gets 403, and so
+does every non-navigation request, including a cross-site POST.
+
+This makes these GETs behave as if dsh's cookie were `SameSite=Lax`: any site
+can make a signed-in browser load them. For the index and `/login` that is
+safe because loading does nothing on its own — dsh serves the index only at
+`/` and its configured index path, the client reads no state from the URL, and
+every API call meets the fence itself. The callback does act on load: a valid
+code and state complete sign-in, so another site that holds a callback URL can
+sign a browser in to the control plane. Only the state ties a callback to the
+browser that began it; that is accepted because everyone the allowlist admits
+shares one owner identity. Two rules keep this safe: the app must not act on
+load from the URL's path, query, or fragment, and no other route that changes
+state, such as `/logout`, may call this helper.
+
 The client bundle takes dsh's generic `settings.launcher` seat, so the sidebar
 foot offers a **More** menu with Settings and Sign out. `installLogout`
 advertises `/logout` as the `__DSH_YAWN_AUTH__` index global; a profile with no
@@ -435,12 +460,7 @@ sign-in row keeps dsh's plain Settings trigger.
 The passcode row reads `DSH_YAWN_PASSCODE`. The OIDC row reads
 `DSH_YAWN_OIDC_*`, runs the authorization code flow with PKCE, state, and a
 nonce in the control-plane process, and accepts only the configured emails or
-domains. An identity provider on another site returns the browser to the
-callback with a cross-site navigation, which dsh's fence refuses and whose
-redirect could not carry dsh's `SameSite=Strict` cookie anyway; the callback
-answers that navigation with a page that reloads the same path and query from
-this origin, and only the reloaded same-origin request runs the exchange. Both
-rows also register `/healthz`, which reports the
+domains. Both rows also register `/healthz`, which reports the
 row is mounted without contacting the identity provider. It replaces the former oauth2-proxy sidecar and `/launch-token`
 shortcut, both of which are gone. The image entrypoint mounts exactly one row
 and refuses to start without a sign-in mode.
