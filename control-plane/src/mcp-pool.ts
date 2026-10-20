@@ -3,7 +3,7 @@ import * as mcpClient from "@deepseek-ai/dsh-mcp-client";
 
 import type { McpServerView, McpTestResult } from "./mcp-remote.js";
 import type { McpServerEntry, McpServerStore } from "./mcp-store.js";
-import { validateMcpServerEntry } from "./mcp-store.js";
+import { isToolOfServer, validateMcpServerEntry } from "./mcp-store.js";
 
 /** A connection test may wait this long for the MCP handshake. */
 const testTimeoutMs = 15_000;
@@ -361,10 +361,10 @@ export class McpPool {
     if (tools === undefined) {
       return 0;
     }
-    const prefix = `mcp__${serverName}__`;
     try {
-      return tools.schemas().filter((tool) => tool.name.startsWith(prefix))
-        .length;
+      return tools
+        .schemas()
+        .filter((tool) => isToolOfServer(tool.name, serverName)).length;
     } catch {
       return 0;
     }

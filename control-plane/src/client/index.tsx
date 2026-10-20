@@ -21,6 +21,7 @@ import {
 import { SandboxProfileChip } from "./profile.js";
 import { RepositoryDirectoryFlow } from "./repository-directory-flow.js";
 import { SandboxStatusTab } from "./sandbox.js";
+import { SessionMcpChip } from "./session-mcp.js";
 import { GitCredentialsSettings } from "./git-credentials.js";
 import { logoutPath } from "./logout-route.js";
 import { MoreMenu, MORE_MENU_STYLE } from "./more-menu.js";
@@ -37,8 +38,9 @@ export const inject = ["remote", "slots"];
 
 /** Mount the Remote endpoints, replace folder picking with repository entry,
  * add the Instructions, Secrets, Git credentials, Sandboxes, MCP, and
- * Notifications sections to the Settings page, and show a browser notification
- * when a turn finishes. */
+ * Notifications sections to the Settings page, offer per-session MCP opt-out
+ * on the New Session row, and show a browser notification when a turn
+ * finishes. */
 export async function apply(ctx: Context) {
   const disposeRemote = await ctx.remote.$mount(yawnRemote);
 
@@ -198,6 +200,32 @@ export async function apply(ctx: Context) {
             inject: injectedProfile,
           },
           SandboxProfileChip,
+        );
+      },
+    );
+    const injectedSessionMcp = () => ({
+      getSessionMcp: async (sessionId: string) =>
+        unwrap(await remoteCtx.remote.sandboxManager.getSessionMcp(sessionId)),
+      setSessionMcp: async (sessionId: string, disabled: string[]) =>
+        unwrap(
+          await remoteCtx.remote.sandboxManager.setSessionMcp(
+            sessionId,
+            disabled,
+          ),
+        ),
+    });
+    // The New Session row, not the composer: the choice only changes before
+    // the first prompt, which is exactly when that row is on screen.
+    remoteCtx.slots.inject(
+      "conversation.hero.options",
+      function* registerSessionMcpChip() {
+        yield remoteCtx.slots.register(
+          {
+            name: "conversation.hero.options",
+            id: "dsh-yawn.session-mcp",
+            inject: injectedSessionMcp,
+          },
+          SessionMcpChip,
         );
       },
     );
