@@ -232,6 +232,19 @@ a rendering it cannot read is kept and logged. The resource tools can still
 read a hidden server's resources if the model names it: the choice controls
 tokens, not access.
 
+A session that never chose follows the servers marked **Start new sessions
+with this server off** in their edit dialog on the MCP settings page, stored as `offByDefault` in `stateDir/mcp.json`. A
+session's record is written as soon as its first turn starts (`turn/start`),
+whether or not the user touched the menu, so a later change to a server's
+default cannot rewrite a running session's tools or its prompt prefix. A
+session whose next turn is not its first ran with every server on before the
+record existed, so it records everything on rather than today's default. An
+empty record is a choice too: it keeps every server on for that session. The
+write announces itself with `sandbox-manager/session-mcp-change`, as do
+adding, enabling, and deleting a server, because each changes what a session
+without its own choice hides and none of them necessarily raise
+`tools/change`.
+
 The bundle also disables dsh's local shell permission presets and its file
 policy line. The remote shell uses one fixed container boundary and does not
 claim to enforce those per-command sandbox modes. Both halves of the preset

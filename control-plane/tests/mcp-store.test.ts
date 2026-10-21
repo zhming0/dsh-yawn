@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -26,6 +26,7 @@ describe("MCP server store", () => {
       url: "https://zeta.example/mcp",
       auth: "none",
       enabled: true,
+      offByDefault: false,
     });
     await store.upsert({
       serverName: "alpha",
@@ -33,6 +34,7 @@ describe("MCP server store", () => {
       auth: "bearer",
       token: "alpha-token",
       enabled: true,
+      offByDefault: false,
     });
 
     expect(store.list().map((entry) => entry.serverName)).toEqual([
@@ -44,6 +46,7 @@ describe("MCP server store", () => {
       url: "https://alpha.example/mcp",
       auth: "bearer",
       enabled: true,
+      offByDefault: false,
     });
     expect(store.tokenFor("alpha")).toBe("alpha-token");
 
@@ -57,6 +60,69 @@ describe("MCP server store", () => {
     expect((await stat(path)).mode & 0o777).toBe(0o600);
   });
 
+  it("keeps a server that starts new sessions turned off", async () => {
+    const path = join(directory, "mcp.json");
+    const store = new McpServerStore({ path });
+    await store.initialize();
+    await store.upsert({
+      serverName: "stripe",
+      url: "https://stripe.example/mcp",
+      auth: "none",
+      enabled: true,
+      offByDefault: true,
+    });
+    await store.upsert({
+      serverName: "github",
+      url: "https://github.example/mcp",
+      auth: "none",
+      enabled: true,
+      offByDefault: false,
+    });
+
+    // Only the turned-off server carries the field in the file.
+    const file = JSON.parse(await readFile(path, "utf8")) as {
+      servers: Array<Record<string, unknown>>;
+    };
+    expect(file.servers).toEqual([
+      {
+        serverName: "github",
+        url: "https://github.example/mcp",
+        auth: "none",
+        enabled: true,
+      },
+      {
+        serverName: "stripe",
+        url: "https://stripe.example/mcp",
+        auth: "none",
+        enabled: true,
+        offByDefault: true,
+      },
+    ]);
+
+    const reopened = new McpServerStore({ path });
+    await reopened.initialize();
+    expect(reopened.get("stripe")?.offByDefault).toBe(true);
+    expect(reopened.get("github")?.offByDefault).toBe(false);
+  });
+
+  it("reads a file written before the setting as every server on", async () => {
+    const path = join(directory, "mcp.json");
+    await writeFile(
+      path,
+      `${JSON.stringify({
+        version: 1,
+        servers: [{ serverName: "github", url: "https://github.example/mcp" }],
+      })}\n`,
+    );
+    const store = new McpServerStore({ path });
+    await store.initialize();
+    expect(store.get("github")).toMatchObject({
+      auth: "none",
+      enabled: true,
+      offByDefault: false,
+    });
+  });
+
   it("returns no token from list or get", async () => {
     const store = new McpServerStore({ path: join(directory, "mcp.json") });
     await store.initialize();
@@ -66,6 +132,7 @@ describe("MCP server store", () => {
       auth: "bearer",
       token: "alpha-token",
       enabled: true,
+      offByDefault: false,
     });
 
     const [listed] = store.list();
@@ -74,12 +141,14 @@ describe("MCP server store", () => {
       url: "https://alpha.example/mcp",
       auth: "bearer",
       enabled: true,
+      offByDefault: false,
     });
     expect(store.get("alpha")).toEqual({
       serverName: "alpha",
       url: "https://alpha.example/mcp",
       auth: "bearer",
       enabled: true,
+      offByDefault: false,
     });
   });
 
@@ -93,6 +162,7 @@ describe("MCP server store", () => {
       auth: "bearer",
       token: "first-token",
       enabled: true,
+      offByDefault: false,
     });
 
     await store.upsert({
@@ -100,6 +170,7 @@ describe("MCP server store", () => {
       url: "https://alpha.example/mcp",
       auth: "bearer",
       enabled: false,
+      offByDefault: false,
     });
     expect(store.tokenFor("alpha")).toBe("first-token");
     expect(store.get("alpha")?.enabled).toBe(false);
@@ -110,6 +181,7 @@ describe("MCP server store", () => {
       auth: "bearer",
       token: "second-token",
       enabled: true,
+      offByDefault: false,
     });
     expect(store.tokenFor("alpha")).toBe("second-token");
 
@@ -128,6 +200,7 @@ describe("MCP server store", () => {
         url: "https://alpha.example/mcp",
         auth: "none",
         enabled: true,
+        offByDefault: false,
       }),
     ).rejects.toThrow("invalid MCP server name");
     await expect(
@@ -136,6 +209,7 @@ describe("MCP server store", () => {
         url: "not a url",
         auth: "none",
         enabled: true,
+        offByDefault: false,
       }),
     ).rejects.toThrow("invalid MCP server URL");
     await expect(
@@ -144,6 +218,7 @@ describe("MCP server store", () => {
         url: "ftp://alpha.example/mcp",
         auth: "none",
         enabled: true,
+        offByDefault: false,
       }),
     ).rejects.toThrow("must use http or https");
     expect(store.list()).toEqual([]);
@@ -162,6 +237,7 @@ describe("MCP server store", () => {
         url: "https://alpha.example/mcp",
         auth: "none",
         enabled: true,
+        offByDefault: false,
       }),
     ).rejects.toThrow('"__" is reserved');
     await expect(
@@ -170,6 +246,7 @@ describe("MCP server store", () => {
         url: "https://alpha.example/mcp",
         auth: "none",
         enabled: true,
+        offByDefault: false,
       }),
     ).rejects.toThrow('trailing "_" collides');
     expect(store.list()).toEqual([]);
@@ -185,12 +262,14 @@ describe("MCP server store", () => {
       auth: "bearer",
       token: "alpha-token",
       enabled: true,
+      offByDefault: false,
     });
     await store.upsert({
       serverName: "beta",
       url: "https://beta.example/mcp",
       auth: "none",
       enabled: true,
+      offByDefault: false,
     });
 
     await store.remove("alpha");
@@ -214,6 +293,7 @@ describe("MCP server store", () => {
             url: "https://alpha.example/mcp",
             token: "alpha-token",
             enabled: true,
+            offByDefault: false,
           },
           { serverName: "beta", url: "https://beta.example/mcp" },
         ],
@@ -228,12 +308,14 @@ describe("MCP server store", () => {
         url: "https://alpha.example/mcp",
         auth: "bearer",
         enabled: true,
+        offByDefault: false,
       },
       {
         serverName: "beta",
         url: "https://beta.example/mcp",
         auth: "none",
         enabled: true,
+        offByDefault: false,
       },
     ]);
     expect(store.tokenFor("alpha")).toBe("alpha-token");
@@ -248,6 +330,7 @@ describe("MCP server store", () => {
       auth: "bearer",
       token: "alpha-token",
       enabled: true,
+      offByDefault: false,
     });
 
     await store.upsert({
@@ -255,6 +338,7 @@ describe("MCP server store", () => {
       url: "https://alpha.example/mcp",
       auth: "none",
       enabled: true,
+      offByDefault: false,
     });
     expect(store.tokenFor("alpha")).toBeUndefined();
 
@@ -264,6 +348,7 @@ describe("MCP server store", () => {
       url: "https://alpha.example/mcp",
       auth: "bearer",
       enabled: true,
+      offByDefault: false,
     });
     expect(store.hasBearerToken("alpha")).toBe(false);
   });
@@ -274,6 +359,7 @@ describe("MCP server store", () => {
       url: "https://notion.example/mcp",
       auth: "oauth",
       enabled: true,
+      offByDefault: false,
     } as const;
     const credential = {
       redirectUri: "https://dsh.example/dsh-yawn/mcp/oauth/callback",

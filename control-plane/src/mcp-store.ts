@@ -24,6 +24,12 @@ export interface McpServerEntry {
   auth: McpAuth;
   token?: string;
   enabled: boolean;
+  /**
+   * Start new sessions with this server turned off. A session still decides
+   * for itself before its first prompt, and this only supplies the default,
+   * for a server that is rarely worth its tool schemas.
+   */
+  offByDefault: boolean;
 }
 
 /**
@@ -47,6 +53,7 @@ interface StoredServer {
   token?: string;
   oauth?: McpOAuthCredential;
   enabled: boolean;
+  offByDefault?: boolean;
 }
 
 interface McpFile {
@@ -220,6 +227,10 @@ export class McpServerStore {
       auth: entry.auth,
       enabled: entry.enabled,
     };
+    // Absent means on, so the file only carries the turned-off servers.
+    if (entry.offByDefault) {
+      stored.offByDefault = true;
+    }
     if (entry.auth === "bearer") {
       const token =
         entry.token === undefined || entry.token === ""
@@ -333,6 +344,7 @@ function publicEntry(stored: StoredServer): McpServerEntry {
     url: stored.url,
     auth: stored.auth,
     enabled: stored.enabled,
+    offByDefault: stored.offByDefault ?? false,
   };
 }
 
@@ -374,12 +386,13 @@ function parseEntry(value: unknown): StoredServer {
     throw unsupported();
   }
   const record = value as Record<string, unknown>;
-  const { serverName, url, token, enabled, auth, oauth } = record;
+  const { serverName, url, token, enabled, auth, oauth, offByDefault } = record;
   if (
     typeof serverName !== "string" ||
     typeof url !== "string" ||
     (token !== undefined && token !== null && typeof token !== "string") ||
     (enabled !== undefined && typeof enabled !== "boolean") ||
+    (offByDefault !== undefined && typeof offByDefault !== "boolean") ||
     (auth !== undefined && !mcpAuthModes.includes(auth as McpAuth))
   ) {
     throw unsupported();
@@ -396,6 +409,9 @@ function parseEntry(value: unknown): StoredServer {
     auth: mode,
     enabled: enabled ?? true,
   };
+  if (offByDefault === true) {
+    entry.offByDefault = true;
+  }
   if (mode === "bearer" && savedToken !== undefined) {
     entry.token = savedToken;
   }

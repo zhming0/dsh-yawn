@@ -309,6 +309,7 @@ export class SandboxManager extends TypertRemoteService {
       servers: () => this.mcpPool.views(),
       started: (sessionId) => this.sessionStarted(sessionId),
       changed: () => this.ctx.emit("sandbox-manager/session-mcp-change"),
+      warn: (message) => this.ctx.logger("sandbox").warn(message),
     });
     const runtime = this.runtime;
     const attachment = new RunnerAttachment({
@@ -464,6 +465,9 @@ export class SandboxManager extends TypertRemoteService {
       const sessionId = this.rootSessionIdOfSession(session);
       if (event.type === "turn/start") {
         this.idle.beginTurn(sessionId);
+        // The turn decides which servers this session runs with; freeze that,
+        // so a later default change cannot rewrite a running session.
+        this.mcpChoice.freeze(sessionId, event.data.turn);
       } else if (event.type === "turn/end") {
         this.idle.endTurn(sessionId);
         // An archive that landed mid-turn waits for the turn to finish.
@@ -804,6 +808,10 @@ export class SandboxManager extends TypertRemoteService {
     await this.ready;
     await this.mcpStore.upsert(entry);
     await this.mcpPool.sync();
+    // Adding, enabling, or turning a server off by default changes which
+    // servers a session without its own choice hides. An edit that leaves the
+    // mount alone raises no `tools/change`, so this notice is the only signal.
+    this.ctx.emit("sandbox-manager/session-mcp-change");
     return this.mcpPool.views();
   }
 
@@ -811,6 +819,7 @@ export class SandboxManager extends TypertRemoteService {
     await this.ready;
     await this.mcpStore.remove(serverName);
     await this.mcpPool.sync();
+    this.ctx.emit("sandbox-manager/session-mcp-change");
     return this.mcpPool.views();
   }
 

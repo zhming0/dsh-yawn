@@ -164,6 +164,7 @@ export class McpPool {
         url: entry.url,
         auth: entry.auth,
         enabled: entry.enabled,
+        offByDefault: entry.offByDefault,
         hasToken: this.store.hasBearerToken(entry.serverName),
         ...(authorization === undefined ? {} : { authorization }),
         status,

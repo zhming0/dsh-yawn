@@ -14,9 +14,9 @@ interface StateFile {
   /**
    * MCP servers a session turned off before its first prompt. Kept apart from
    * the sandbox record: the choice outlives hibernation and expiry, because
-   * it belongs to the conversation, not to its sandbox. dsh has no
-   * session-deletion signal, so entries stay, like `pendingProfiles`; one
-   * entry is a few names, written only by a session that made a choice.
+   * it belongs to the conversation, not to its sandbox. Every session gets
+   * one when its first turn starts, or sooner if the browser picks; dsh has
+   * no session-deletion signal, so entries stay, like `pendingProfiles`.
    */
   disabledMcpServers: Record<string, string[]>;
 }
@@ -72,20 +72,21 @@ export class SessionStore {
     await this.persist();
   }
 
-  disabledMcpServers(sessionId: string): readonly string[] {
-    return this.state.disabledMcpServers[sessionId] ?? [];
+  /** The servers this session turned off; undefined when it never chose. */
+  disabledMcpServers(sessionId: string): readonly string[] | undefined {
+    return this.state.disabledMcpServers[sessionId];
   }
 
-  /** Changes the in-memory state before it returns; the promise is the write. */
+  /**
+   * Changes the in-memory state before it returns; the promise is the write.
+   * An empty list is a choice too — every server on — and is kept, so a later
+   * change to a server's default leaves this session alone.
+   */
   setDisabledMcpServers(
     sessionId: string,
     serverNames: string[],
   ): Promise<void> {
-    if (serverNames.length === 0) {
-      delete this.state.disabledMcpServers[sessionId];
-    } else {
-      this.state.disabledMcpServers[sessionId] = serverNames;
-    }
+    this.state.disabledMcpServers[sessionId] = serverNames;
     return this.persist();
   }
 
