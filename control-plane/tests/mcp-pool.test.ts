@@ -59,13 +59,21 @@ function tick(): Promise<void> {
  * view of what a mount published, so tests add and remove names to stand for
  * a client registering and unregistering its tools.
  */
-function registryContext(): { ctx: Context; tools: Set<string> } {
+function registryContext(): {
+  ctx: Context;
+  tools: Set<string>;
+  schemaCalls: () => number;
+} {
   const tools = new Set<string>();
+  let schemaCalls = 0;
   const ctx = new Context();
   ctx.provide("tools", {
-    schemas: () => [...tools].map((name) => ({ name })),
+    schemas: () => {
+      schemaCalls += 1;
+      return [...tools].map((name) => ({ name }));
+    },
   });
-  return { ctx, tools };
+  return { ctx, tools, schemaCalls: () => schemaCalls };
 }
 
 describe("MCP pool", () => {
@@ -74,6 +82,7 @@ describe("MCP pool", () => {
   let pool: McpPool;
   let mounts: FakeMount[];
   let tools: Set<string>;
+  let schemaCalls: () => number;
   let now: number;
 
   beforeEach(async () => {
@@ -88,6 +97,7 @@ describe("MCP pool", () => {
     mounts = recorder.mounts;
     const registry = registryContext();
     tools = registry.tools;
+    schemaCalls = registry.schemaCalls;
     pool = new McpPool({
       ctx: registry.ctx,
       store,
@@ -166,6 +176,29 @@ describe("MCP pool", () => {
       "starting",
       "disabled",
     ]);
+  });
+
+  it("projects the tool registry once for every server row", async () => {
+    for (const serverName of ["alpha", "beta", "gamma"]) {
+      await store.upsert({
+        serverName,
+        url: `https://${serverName}.example/mcp`,
+        auth: "none",
+        enabled: true,
+        offByDefault: false,
+      });
+    }
+    await pool.sync();
+    tools.add("mcp__alpha__one");
+    tools.add("mcp__beta__one");
+    tools.add("mcp__gamma__one");
+    tools.add("mcp__gamma__two");
+
+    const before = schemaCalls();
+    const views = pool.views();
+
+    expect(schemaCalls() - before).toBe(1);
+    expect(views.map((view) => view.toolCount)).toEqual([1, 1, 2]);
   });
 
   it("reports starting, then connected or error as the fiber settles", async () => {
