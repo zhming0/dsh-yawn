@@ -865,6 +865,16 @@ export class SandboxManager extends TypertRemoteService {
     return this.profileChoice.view(sessionId);
   }
 
+  /**
+   * Profile choices for a session that does not exist yet, with the
+   * deployment default in `selected`. Used by the session tools before a
+   * child session is created.
+   */
+  async listSandboxProfiles(): Promise<SessionProfileView> {
+    await this.ready;
+    return this.profileChoice.view("");
+  }
+
   async setSessionProfile(
     sessionId: string,
     profile: string,

@@ -43,6 +43,10 @@
       "types": "./dist/mcp-tool-exclusion.d.ts",
       "default": "./dist/mcp-tool-exclusion.js"
     },
+    "./session-tools": {
+      "types": "./dist/session-tools.d.ts",
+      "default": "./dist/session-tools.js"
+    },
     "./sandbox-context": {
       "types": "./dist/sandbox-context.d.ts",
       "default": "./dist/sandbox-context.js"

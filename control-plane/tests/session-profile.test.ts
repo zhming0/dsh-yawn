@@ -49,6 +49,14 @@ describe("session profile choice", () => {
       selected: "standard",
       locked: false,
     });
+    expect(await manager.listSandboxProfiles()).toEqual({
+      profiles: [
+        { name: "standard", backend: "docker" },
+        { name: "large", backend: "kas" },
+      ],
+      selected: "standard",
+      locked: false,
+    });
     await expect(
       manager.setSessionProfile("session-one", "huge"),
     ).rejects.toThrow("unknown sandbox profile: huge");

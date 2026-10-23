@@ -246,3 +246,19 @@
       name: '@zhming0/dsh-yawn/mcp-tool-exclusion'
       config:
         excludedPresets: [minimal]
+
+    # Native tools for managing other top-level sessions: list workspaces,
+    # models, and sandbox profiles; create, message, wait for, and interrupt
+    # the active turn.
+    # create_session can optionally set a sandbox profile and model before the
+    # first prompt; omitted settings use the deployment defaults. A child
+    # reports its result back with send_message; the tools deliberately do not
+    # return a transcript. They are registered per agent, not globally, so
+    # subagents and excluded presets never see them; the calling agent comes
+    # from the tool execution, so the model never passes a session id to
+    # identify itself. Unlike the MCP rows above, these tools are only visible
+    # inside dsh.
+    - id: session-tools
+      name: '@zhming0/dsh-yawn/session-tools'
+      config:
+        excludedPresets: [minimal]

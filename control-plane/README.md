@@ -55,6 +55,40 @@ prompt is sent, so the cached prompt prefix stays valid. It is a cost
 control, not an access boundary: every session still shares one connection
 per server.
 
+### Session tools
+
+Every top-level session outside the excluded presets can also manage other
+sessions with seven native tools: `list_workspaces`, `list_models`,
+`list_sandbox_profiles`, `create_session`, `send_message`, `wait_session`,
+and `cancel_session`. They act on ordinary top-level sessions — each has its
+own sandbox and appears in the Web UI — not on subagents, which stay inside
+the parent's turn and sandbox. The tools do not delete or archive sessions,
+and they never return another session's transcript: `wait_session` returns
+only the session's last assistant message once it is idle, capped and marked
+untrusted, while `send_message` remains for follow-ups and proactive
+reports. Cross-session context for the user stays a bounded, read-only
+snapshot through the existing `@` reference.
+
+There is deliberately no list-all-sessions tool: a parent already has the ids
+of the children it created. If discovery is needed later, the right shape is
+a `find_sessions` that takes explicit session ids (or a workspace/running
+filter), not a full listing.
+
+`create_session` can optionally set a `sandbox_profile` and a `model`
+(`provider`, `model`, and optional `reasoning_effort`) before the first
+prompt. Omitted settings use the deployment defaults: the default sandbox
+profile and the default model. Selecting a model also updates the deployment
+default, exactly as the Web UI model picker does. The two list tools expose
+the available names first.
+
+The tools are registered per agent, so subagents and the `minimal` preset do
+not carry their schemas; the `session-tools` row's `excludedPresets` list
+(default `[minimal]`) chooses the presets that go without them. The calling
+session is taken from the tool execution: `create_session` and `send_message`
+prefix the target's message with `[from session <id>]`, and a session cannot
+message, wait for, or interrupt itself. Because they are native tools, they are
+visible only inside dsh; MCP clients cannot call them.
+
 ## What changes for the agent
 
 The tools keep their names, schemas, and prompt guidance; only where they run
