@@ -300,27 +300,31 @@ export class McpToolExclusion {
       : { servers: new Set(servers), everyServer };
   }
 
-  private hiddenNames(agent: Agent): string[] {
+  private hiddenNames(agent: Agent, names: readonly string[]): string[] {
     const hidden = this.hiddenServers(agent);
-    return hidden === undefined
-      ? []
-      : hiddenMcpToolNames(this.options.toolNames(), hidden);
+    return hidden === undefined ? [] : hiddenMcpToolNames(names, hidden);
   }
 
   /** Apply or lift the restriction for one agent's preset and choice. */
-  sync(agent: Agent): void {
+  sync(
+    agent: Agent,
+    toolNames: () => readonly string[] = () => this.options.toolNames(),
+  ): void {
     if (this.disposed) {
       return;
     }
     if (this.hiddenServers(agent) !== undefined) {
-      this.install(agent);
+      this.install(agent, toolNames);
     } else {
       this.remove(agent);
     }
   }
 
   /** Start hiding MCP tools from one agent when it should not see some. */
-  install(agent: Agent): void {
+  install(
+    agent: Agent,
+    toolNames: () => readonly string[] = () => this.options.toolNames(),
+  ): void {
     if (
       this.disposed ||
       this.agents.has(agent) ||
@@ -360,7 +364,7 @@ export class McpToolExclusion {
           policy.names = names;
           previous?.();
         };
-        policy.update(this.hiddenNames(agent));
+        policy.update(this.hiddenNames(agent, toolNames()));
       });
     } catch (error) {
       this.agents.delete(agent);
@@ -403,13 +407,18 @@ export class McpToolExclusion {
     }
     this.reconciling = true;
     try {
+      // Project the registry once for the whole pass. `schemas()` deep-clones
+      // every tool definition, so computing it per agent made each new session
+      // and each MCP toggle cost (live agents x tool schemas).
+      let projected: readonly string[] | undefined;
+      const toolNames = () => (projected ??= this.options.toolNames());
       do {
         this.recheck = false;
         for (const agent of this.options.agents()) {
-          this.sync(agent);
+          this.sync(agent, toolNames);
         }
         for (const [agent, policy] of this.agents) {
-          policy.update?.(this.hiddenNames(agent));
+          policy.update?.(this.hiddenNames(agent, toolNames()));
         }
       } while (this.recheck);
     } finally {

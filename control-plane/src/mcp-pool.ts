@@ -132,14 +132,25 @@ export class McpPool {
 
   /** Browser-facing status for every stored server, sorted by name. */
   views(): McpServerView[] {
-    return this.store.list().map((entry) => {
+    const entries = this.store.list();
+    // One schema projection shared by every row: each call deep-clones all
+    // registered tool schemas, so asking per server multiplies that cost by
+    // the number of connected servers, and this runs on every New Session.
+    // No mount means no counts to project, which is the common case.
+    const names = entries.some((entry) => this.mounts.has(entry.serverName))
+      ? this.toolNames()
+      : [];
+    return entries.map((entry) => {
       const live = this.mounts.get(entry.serverName);
       const authorization =
         entry.auth === "oauth"
           ? this.store.oauthStatus(entry.serverName)
           : undefined;
       const toolCount =
-        live === undefined ? 0 : this.toolCount(entry.serverName);
+        live === undefined
+          ? 0
+          : names.filter((name) => isToolOfServer(name, entry.serverName))
+              .length;
       // Tools in the registry outrank a recorded failure: a reconnect that
       // succeeded after the first handshake failed publishes its tools
       // without settling anything, and the row must stop reporting the old
@@ -203,7 +214,12 @@ export class McpPool {
     try {
       fiber = this.mount(buildConfig(probeName, entry.url, token, true));
       await withTimeout(fiber.settled, testTimeoutMs);
-      return { ok: true, toolCount: this.toolCount(probeName) };
+      return {
+        ok: true,
+        toolCount: this.toolNames().filter((name) =>
+          isToolOfServer(name, probeName),
+        ).length,
+      };
     } catch (reason) {
       return { ok: false, toolCount: 0, error: describe(reason) };
     } finally {
@@ -354,20 +370,18 @@ export class McpPool {
     return name;
   }
 
-  /** Count the tools the mount published, when the registry is reachable. */
-  private toolCount(serverName: string): number {
+  /** Every registered tool name, when the registry is reachable. */
+  private toolNames(): string[] {
     const tools = this.ctx.get("tools") as
       | { schemas(): Array<{ name: string }> }
       | undefined;
     if (tools === undefined) {
-      return 0;
+      return [];
     }
     try {
-      return tools
-        .schemas()
-        .filter((tool) => isToolOfServer(tool.name, serverName)).length;
+      return tools.schemas().map((schema) => schema.name);
     } catch {
-      return 0;
+      return [];
     }
   }
 }

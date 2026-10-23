@@ -1,4 +1,5 @@
 import { mkdtemp, readFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SandboxManager } from "../src/manager/index.js";
 import { McpChoice } from "../src/manager/mcp-choice.js";
 import type { McpPool } from "../src/mcp-pool.js";
+import type { McpServerEntry } from "../src/mcp-store.js";
 import type { McpServerView } from "../src/mcp-remote.js";
 import type { SessionStore } from "../src/state-store.js";
 import { FakeBackend, gatewayFor, removeDirectory } from "./fakes.js";
@@ -41,6 +43,17 @@ function server(
   };
 }
 
+/** The saved fields of a view, which is all the choice needs from the store. */
+function entry(view: McpServerView): McpServerEntry {
+  return {
+    serverName: view.serverName,
+    url: view.url,
+    auth: view.auth,
+    enabled: view.enabled,
+    offByDefault: view.offByDefault,
+  };
+}
+
 function agentFor(
   id: string,
   messages: Array<{ role: string }> = [],
@@ -63,6 +76,12 @@ function managerWith(
 ) {
   const backend = new FakeBackend();
   const pool = { sync: async () => undefined, views } as unknown as McpPool;
+  // The manager reads server choices from its store and status from the pool;
+  // keep the two in step so the fake pool is enough.
+  writeFileSync(
+    join(directory, "mcp.json"),
+    JSON.stringify({ version: 1, servers: views().map(entry) }),
+  );
   return new SandboxManager(
     ctx,
     {
@@ -230,7 +249,8 @@ describe("McpChoice.set", () => {
     const seen: string[][] = [];
     const choice: McpChoice = new McpChoice({
       store,
-      servers: () => [server("notion")],
+      servers: () => [entry(server("notion"))],
+      views: () => [server("notion")],
       started: () => false,
       changed: () => seen.push([...choice.hidden("blank").servers]),
       warn: () => undefined,
@@ -240,6 +260,31 @@ describe("McpChoice.set", () => {
     expect(seen).toEqual([["notion"]]);
     finishWrite();
     expect((await pending).disabled).toEqual(["notion"]);
+  });
+});
+
+describe("McpChoice.hidden", () => {
+  it("does not project the tool registry to decide what one session hides", () => {
+    const store = {
+      disabledMcpServers: () => undefined,
+    } as unknown as SessionStore;
+    const views = vi.fn(() => {
+      throw new Error("the hidden set must not read live server status");
+    });
+    const choice = new McpChoice({
+      store,
+      servers: () => [entry(server("stripe", { offByDefault: true }))],
+      views,
+      started: () => false,
+      changed: () => undefined,
+      warn: () => undefined,
+    });
+
+    expect(choice.hidden("blank")).toEqual({
+      servers: ["stripe"],
+      everyServer: true,
+    });
+    expect(views).not.toHaveBeenCalled();
   });
 });
 
@@ -263,7 +308,8 @@ describe("servers that start turned off", () => {
     } as unknown as SessionStore;
     return new McpChoice({
       store,
-      servers,
+      servers: () => servers().map(entry),
+      views: servers,
       started: () => false,
       changed: () => undefined,
       warn: () => undefined,
@@ -358,7 +404,8 @@ describe("servers that start turned off", () => {
     } as unknown as SessionStore;
     new McpChoice({
       store,
-      servers: () => [server("stripe", { offByDefault: true })],
+      servers: () => [entry(server("stripe", { offByDefault: true }))],
+      views: () => [server("stripe", { offByDefault: true })],
       started: () => false,
       changed: () => undefined,
       warn: (message) => messages.push(message),

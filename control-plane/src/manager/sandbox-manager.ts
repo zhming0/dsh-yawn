@@ -306,7 +306,8 @@ export class SandboxManager extends TypertRemoteService {
     this.profileChoice = new ProfileChoice(this.runtime, store);
     this.mcpChoice = new McpChoice({
       store,
-      servers: () => this.mcpPool.views(),
+      servers: () => this.mcpStore.list(),
+      views: () => this.mcpPool.views(),
       started: (sessionId) => this.sessionStarted(sessionId),
       changed: () => this.ctx.emit("sandbox-manager/session-mcp-change"),
       warn: (message) => this.ctx.logger("sandbox").warn(message),

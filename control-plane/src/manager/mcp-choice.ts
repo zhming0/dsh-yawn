@@ -1,3 +1,4 @@
+import type { McpServerEntry } from "../mcp-store.js";
 import type { McpServerView } from "../mcp-remote.js";
 import type { SessionHiddenServers } from "../mcp-tool-exclusion.js";
 import type { SessionMcpView } from "../session-mcp-remote.js";
@@ -5,8 +6,10 @@ import type { SessionStore } from "../state-store.js";
 
 export interface McpChoiceOptions {
   store: SessionStore;
-  /** Every configured server, enabled or not, in saved order. */
-  servers: () => McpServerView[];
+  /** The saved server entries; cheap, unlike a status view. */
+  servers: () => McpServerEntry[];
+  /** Every configured server with its live status and tool count. */
+  views: () => McpServerView[];
   /** Whether the session has sent a prompt, so its tool set is in use. */
   started: (sessionId: string) => boolean;
   /** Called after a session's choice changes, so live agents follow it. */
@@ -30,7 +33,7 @@ export class McpChoice {
 
   view(sessionId: string): SessionMcpView {
     const servers = this.options
-      .servers()
+      .views()
       .filter((server) => server.enabled)
       .map(({ serverName, status, toolCount }) => ({
         serverName,

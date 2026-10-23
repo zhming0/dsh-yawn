@@ -508,6 +508,41 @@ describe("apply with a session choice", () => {
     expect(harness.restrictions[1]?.dispose).toHaveBeenCalledTimes(1);
   });
 
+  it("projects the registry once for every agent in one reconcile", async () => {
+    const ctx = new Context();
+    const schemaNames = ["bash", "mcp__notion__search"];
+    const schemas = vi.fn(() => schemaNames.map((name) => ({ name })));
+    const restrict = vi.fn(() => () => undefined);
+    const tools = { schemas, restrict };
+    const agents = Array.from({ length: 5 }, (_, index) => {
+      const id = `session-${index}`;
+      return {
+        id,
+        session: { id, header: {} },
+        ctx: {
+          inject: (_services: string[], callback: (scope: unknown) => void) => {
+            callback({ tools });
+            return { dispose: () => undefined };
+          },
+        },
+      } as unknown as Agent;
+    });
+    ctx.provide("agents", { list: () => agents });
+    ctx.provide("tools", tools);
+    ctx.provide("sandboxManager", {
+      hiddenMcpServers: () => ({ servers: ["notion"], everyServer: false }),
+    });
+    apply(ctx, { excludedPresets: [] });
+    await flush();
+    expect(restrict).toHaveBeenCalledTimes(5);
+
+    schemas.mockClear();
+    ctx.emit("tools/change");
+
+    // Five live agents used to mean five deep clones of every tool schema.
+    expect(schemas).toHaveBeenCalledTimes(1);
+  });
+
   it("hides a turned-off server's tools again after it reconnects", async () => {
     const harness = makeHarness({
       preset: "standard",
