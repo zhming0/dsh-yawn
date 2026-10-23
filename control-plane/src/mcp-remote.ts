@@ -31,6 +31,8 @@ export interface McpServerView {
   url: string;
   auth: McpAuth;
   enabled: boolean;
+  /** Whether new sessions start with this server turned off. */
+  offByDefault: boolean;
   /** Whether a bearer token is saved. */
   hasToken: boolean;
   /** Present for OAuth servers only. */
@@ -83,7 +85,16 @@ const entrySchema: TypertSchema<McpServerEntry> = {
     }
     const record = value as Record<string, unknown>;
     for (const key of Object.keys(record)) {
-      if (!["serverName", "url", "auth", "token", "enabled"].includes(key)) {
+      if (
+        ![
+          "serverName",
+          "url",
+          "auth",
+          "token",
+          "enabled",
+          "offByDefault",
+        ].includes(key)
+      ) {
         throw new TypeError(`unexpected MCP server entry field: ${key}`);
       }
     }
@@ -108,11 +119,21 @@ const entrySchema: TypertSchema<McpServerEntry> = {
         "expected an MCP server entry with a boolean enabled",
       );
     }
+    if (
+      record.offByDefault !== undefined &&
+      typeof record.offByDefault !== "boolean"
+    ) {
+      throw new TypeError(
+        "expected an MCP server entry with a boolean offByDefault",
+      );
+    }
     const entry: McpServerEntry = {
       serverName: record.serverName,
       url: record.url,
       auth: record.auth as McpAuth,
       enabled: record.enabled,
+      // A browser bundle from before the setting sends no value.
+      offByDefault: record.offByDefault === true,
     };
     // Omitting the token keeps the saved one.
     return record.token === undefined
@@ -140,6 +161,7 @@ const viewSchema: TypertSchema<McpServerView> = {
       typeof record.url !== "string" ||
       !mcpAuthModes.includes(record.auth as McpAuth) ||
       typeof record.enabled !== "boolean" ||
+      typeof record.offByDefault !== "boolean" ||
       typeof record.hasToken !== "boolean" ||
       (record.authorization !== undefined &&
         !isAuthorizationView(record.authorization)) ||

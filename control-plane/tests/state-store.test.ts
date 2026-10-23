@@ -37,6 +37,23 @@ describe("session state store", () => {
     expect(reopened.get("one")).toMatchObject({ sandboxId: "sandbox-one" });
   });
 
+  it("keeps a choice of no servers apart from having made none", async () => {
+    const path = join(directory, "sessions.json");
+    const store = new SessionStore(path);
+    await store.initialize();
+    expect(store.disabledMcpServers("one")).toBeUndefined();
+    await store.setDisabledMcpServers("one", []);
+    expect(store.disabledMcpServers("one")).toEqual([]);
+
+    // An empty list is the choice "every server on", so it must survive a
+    // restart: dropping it would let a later default change rewrite the
+    // session.
+    const reopened = new SessionStore(path);
+    await reopened.initialize();
+    expect(reopened.disabledMcpServers("one")).toEqual([]);
+    expect(reopened.disabledMcpServers("two")).toBeUndefined();
+  });
+
   it("gives a record written before createdAt existed one, from updatedAt", async () => {
     const path = join(directory, "sessions.json");
     await writeFile(

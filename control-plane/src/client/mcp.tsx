@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
 
 import {
   Button,
+  Checkbox,
   Input,
   Modal,
   SegmentedControl,
@@ -175,6 +176,7 @@ export function McpSettings({
         url: server.url,
         auth: server.auth,
         enabled,
+        offByDefault: server.offByDefault,
       }),
     );
 
@@ -370,6 +372,11 @@ function ServerCard({
             ? "Waiting for sign-in in the other tab…"
             : authText(server)}
         </div>
+        {server.offByDefault ? (
+          <div style={{ marginTop: 2 }}>
+            <Tag tone="outline">Starts off in new sessions</Tag>
+          </div>
+        ) : null}
         {server.error !== undefined ? (
           <div style={cardErrorStyle} title={server.error}>
             {server.error}
@@ -478,6 +485,7 @@ function ServerDialog({
   const [url, setUrl] = useState("");
   const [auth, setAuth] = useState<McpAuth>("none");
   const [token, setToken] = useState("");
+  const [offByDefault, setOffByDefault] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<McpTestResult>();
   const [error, setError] = useState<string>();
@@ -487,6 +495,7 @@ function ServerDialog({
     setUrl(edited?.url ?? "");
     setAuth(edited?.auth ?? "none");
     setToken("");
+    setOffByDefault(edited?.offByDefault ?? false);
     setTestResult(undefined);
     setError(undefined);
   }, [dialog, edited]);
@@ -506,6 +515,7 @@ function ServerDialog({
       url: endpoint,
       auth,
       enabled: edited?.enabled ?? true,
+      offByDefault,
     };
     if (auth !== "bearer") {
       return entry;
@@ -661,6 +671,19 @@ function ServerDialog({
             />
           ) : null}
           <p style={hintStyle}>{authHint(auth, edited)}</p>
+        </div>
+        <div style={{ marginTop: 4 }}>
+          <Checkbox
+            checked={offByDefault}
+            onChange={setOffByDefault}
+            label="Start new sessions with this server off"
+            disabled={busy}
+          />
+          <p style={hintStyle}>
+            The session shows it turned off in its New Session row and can turn
+            it back on. Its tools and instructions stay out of the request until
+            then.
+          </p>
         </div>
         {testResult !== undefined ? (
           <p

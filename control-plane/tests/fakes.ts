@@ -1,3 +1,5 @@
+import { rm } from "node:fs/promises";
+
 import { FileType } from "../src/gen/dsh/yawn/v1/runner_pb.js";
 import type { RunnerClient } from "../src/runner-client.js";
 import type { RunnerGateway } from "../src/tunnel.js";
@@ -203,6 +205,24 @@ export function gatewayFor(backend: FakeBackend): RunnerGateway {
     waitFor: async () => backend.client as unknown as RunnerClient,
     drop() {},
   };
+}
+
+/**
+ * Remove a test's state directory, retrying while a write the manager started
+ * in the background (a frozen MCP choice, for one) is still landing.
+ */
+export async function removeDirectory(directory: string): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rm(directory, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (attempt === 4) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
 }
 
 export function sleep(milliseconds: number): Promise<void> {

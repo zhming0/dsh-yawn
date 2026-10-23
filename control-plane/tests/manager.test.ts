@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,6 +15,7 @@ import {
   FakeBackend,
   FakeWorkspaceRegistry,
   gatewayFor,
+  removeDirectory,
   sleep,
 } from "./fakes.js";
 
@@ -26,7 +27,7 @@ describe("sandbox lifecycle", () => {
   });
 
   afterEach(async () => {
-    await rm(directory, { recursive: true, force: true });
+    await removeDirectory(directory);
   });
 
   it("provisions, hibernates, and wakes one sandbox per session", async () => {
@@ -889,7 +890,7 @@ describe("archive release", () => {
   });
 
   afterEach(async () => {
-    await rm(directory, { recursive: true, force: true });
+    await removeDirectory(directory);
   });
 
   function persistedRecord(sessionId: string) {
@@ -1040,7 +1041,7 @@ describe("repository workspaces and instructions", () => {
   });
 
   afterEach(async () => {
-    await rm(directory, { recursive: true, force: true });
+    await removeDirectory(directory);
   });
 
   it("registers a repository anchor before a Web session is created", async () => {
@@ -1414,7 +1415,7 @@ describe("Scratch workspace", () => {
   });
 
   afterEach(async () => {
-    await rm(directory, { recursive: true, force: true });
+    await removeDirectory(directory);
   });
 
   function boot(backend: FakeBackend, ctx = new Context()) {

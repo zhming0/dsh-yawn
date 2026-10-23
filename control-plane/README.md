@@ -55,6 +55,16 @@ prompt is sent, so the cached prompt prefix stays valid. It is a cost
 control, not an access boundary: every session still shares one connection
 per server.
 
+A server that is rarely worth its schemas — a payments API, say — can also
+start new sessions turned off: Settings → MCP has a **Start new sessions with
+this server off** option in the server's edit dialog, and its card then shows
+a _Starts off in new sessions_ tag. That option only supplies the default;
+the session still shows it in its MCP menu and can turn it back on. The
+default is copied into the session's own choice when its first turn starts, so
+changing the switch later leaves running sessions alone. A conversation that
+was already under way when the switch arrived keeps every server on until a
+new one starts.
+
 ### Session tools
 
 Every top-level session outside the excluded presets can also manage other

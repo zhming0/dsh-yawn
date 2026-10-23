@@ -141,6 +141,7 @@ describe("MCP pool against a real server", () => {
         url: server.url,
         auth: "none",
         enabled: true,
+        offByDefault: false,
       });
 
       await pool.sync();

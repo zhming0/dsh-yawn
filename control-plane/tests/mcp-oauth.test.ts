@@ -303,6 +303,7 @@ describe("MCP OAuth sign-in", () => {
       url: protectedServer.url,
       auth: "oauth",
       enabled: true,
+      offByDefault: false,
     });
   });
 
@@ -467,6 +468,7 @@ describe("MCP OAuth sign-in", () => {
       url: protectedServer.url,
       auth: "none",
       enabled: true,
+      offByDefault: false,
     });
     await expect(oauth.start("plain", ORIGIN)).rejects.toThrow(
       "does not use OAuth",
