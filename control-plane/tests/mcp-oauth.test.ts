@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import {
   createServer,
+  type IncomingHttpHeaders,
   type IncomingMessage,
+  request as httpRequest,
   type Server,
   type ServerResponse,
 } from "node:http";
@@ -20,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   callbackUrl,
   MCP_OAUTH_CALLBACK_PATH,
+  MCP_OAUTH_CLIENT_METADATA_PATH,
   McpOAuth,
 } from "../src/mcp-oauth.js";
 import { McpPool } from "../src/mcp-pool.js";
@@ -30,16 +33,26 @@ const ORIGIN = "http://dsh.localhost:8080";
 /**
  * One local server playing both parts the MCP authorization spec describes:
  * an OAuth-protected Streamable HTTP MCP endpoint at `/mcp`, and the
- * authorization server it names, with dynamic client registration and PKCE.
- * `/authorize` approves at once and redirects with a code, standing in for
- * the user's consent page. Every token response issues a new access token
- * and rotates the refresh token; only the newest access token is accepted.
+ * authorization server it names, with client registration and PKCE. It can
+ * advertise Client ID Metadata Documents and drop dynamic registration, to
+ * stand in for a server that has moved to CIMD. `/authorize` approves at once
+ * and redirects with a code, standing in for the user's consent page. Every
+ * token response issues a new access token and rotates the refresh token;
+ * only the newest access token is accepted.
  */
 type Refusal = "invalid_grant" | "invalid_client" | "server_error";
 
-async function startProtectedServer(): Promise<{
+async function startProtectedServer(
+  options: { cimd?: boolean; registration?: boolean } = {},
+): Promise<{
   url: string;
   registrations: () => number;
+  /** The `client_id` of each authorization request, in order. */
+  clientIds: () => string[];
+  /** Change the advertisement seen by the next sign-in. */
+  setCimd: (supported: boolean) => void;
+  /** The `client_id` of each token request, in order. */
+  tokenClientIds: () => string[];
   tokenRequests: () => number;
   /** The bearer token of the last request `/mcp` accepted. */
   lastAccepted: () => string;
@@ -47,6 +60,8 @@ async function startProtectedServer(): Promise<{
   refuseRefresh: (error: Refusal | undefined) => void;
   close: () => Promise<void>;
 }> {
+  const { cimd = false, registration = true } = options;
+  let cimdSupported = cimd;
   let base = "";
   let registrations = 0;
   let tokenRequests = 0;
@@ -55,6 +70,8 @@ async function startProtectedServer(): Promise<{
   let refreshToken = "";
   let lastAccepted = "";
   let refusal: Refusal | undefined;
+  const clientIds: string[] = [];
+  const tokenClientIds: string[] = [];
   const codes = new Map<string, { challenge: string; redirectUri: string }>();
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     void handle(req, res).catch(() => {
@@ -79,7 +96,10 @@ async function startProtectedServer(): Promise<{
         issuer: base,
         authorization_endpoint: `${base}/authorize`,
         token_endpoint: `${base}/token`,
-        registration_endpoint: `${base}/register`,
+        ...(registration ? { registration_endpoint: `${base}/register` } : {}),
+        ...(cimdSupported
+          ? { client_id_metadata_document_supported: true }
+          : {}),
         response_types_supported: ["code"],
         grant_types_supported: ["authorization_code", "refresh_token"],
         code_challenge_methods_supported: ["S256"],
@@ -95,6 +115,7 @@ async function startProtectedServer(): Promise<{
       });
     }
     if (url.pathname === "/authorize") {
+      clientIds.push(url.searchParams.get("client_id") ?? "");
       const redirectUri = url.searchParams.get("redirect_uri") ?? "";
       const code = `code-${codes.size + 1}`;
       codes.set(code, {
@@ -111,6 +132,7 @@ async function startProtectedServer(): Promise<{
     if (url.pathname === "/token") {
       tokenRequests += 1;
       const form = new URLSearchParams(body);
+      tokenClientIds.push(form.get("client_id") ?? "");
       if (form.get("grant_type") === "refresh_token") {
         if (refusal !== undefined) {
           const status = { server_error: 500, invalid_client: 401 }[
@@ -172,6 +194,11 @@ async function startProtectedServer(): Promise<{
   return {
     url: `${base}/mcp`,
     registrations: () => registrations,
+    clientIds: () => clientIds,
+    setCimd: (supported) => {
+      cimdSupported = supported;
+    },
+    tokenClientIds: () => tokenClientIds,
     tokenRequests: () => tokenRequests,
     lastAccepted: () => lastAccepted,
     refuseRefresh: (error) => {
@@ -255,6 +282,64 @@ async function approve(authorizationUrl: string): Promise<URL> {
   return new URL(location);
 }
 
+/** A request whose Host header is set explicitly, as a proxy would send it. */
+function requestWithHost(
+  port: number,
+  path: string,
+  host: string,
+  method = "GET",
+): Promise<{ status: number; headers: IncomingHttpHeaders; body: string }> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      // No shared keep-alive agent, so the test server closes as soon as the
+      // response is read instead of waiting for the agent's free socket.
+      {
+        host: "127.0.0.1",
+        port,
+        path,
+        method,
+        headers: { host },
+        agent: false,
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("end", () =>
+          resolve({
+            status: response.statusCode ?? 0,
+            headers: response.headers,
+            body: Buffer.concat(chunks).toString(),
+          }),
+        );
+      },
+    );
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+/** Fetch the CIMD document this control plane serves for one Host. */
+async function fetchMetadataDocument(
+  oauth: McpOAuth,
+  host: string,
+  method = "GET",
+): Promise<{ status: number; headers: IncomingHttpHeaders; body: string }> {
+  const server = createServer((request, response) =>
+    oauth.handleClientMetadata(request, response),
+  );
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    return await requestWithHost(
+      port(server),
+      MCP_OAUTH_CLIENT_METADATA_PATH,
+      host,
+      method,
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
 async function waitFor<T>(read: () => T | undefined): Promise<T> {
   const deadline = Date.now() + 10_000;
   for (;;) {
@@ -275,6 +360,8 @@ describe("MCP OAuth sign-in", () => {
   let pool: McpPool;
   let oauth: McpOAuth;
   let protectedServer: Awaited<ReturnType<typeof startProtectedServer>>;
+  /** Servers a test started itself, closed after the pool lets go of them. */
+  let extraServers: Awaited<ReturnType<typeof startProtectedServer>>[];
   let warnings: string[];
   /** Added to the clock, to bring an access token close to expiry. */
   let skewMs: number;
@@ -298,6 +385,7 @@ describe("MCP OAuth sign-in", () => {
       now: () => Date.now() + skewMs,
     });
     protectedServer = await startProtectedServer();
+    extraServers = [];
     await store.upsert({
       serverName: "notion",
       url: protectedServer.url,
@@ -310,6 +398,9 @@ describe("MCP OAuth sign-in", () => {
   afterEach(async () => {
     await pool.dispose();
     await protectedServer.close();
+    for (const server of extraServers) {
+      await server.close();
+    }
     await rm(directory, { recursive: true, force: true });
   });
 
@@ -360,6 +451,174 @@ describe("MCP OAuth sign-in", () => {
     await approve(await oauth.start("notion", "http://other.localhost:8080"));
     expect(protectedServer.registrations()).toBe(2);
   }, 30_000);
+
+  it("uses Client ID Metadata Documents when the server advertises them", async () => {
+    // No registration endpoint: only CIMD can complete this sign-in.
+    const cimdServer = await startProtectedServer({
+      cimd: true,
+      registration: false,
+    });
+    extraServers.push(cimdServer);
+    await store.upsert({
+      serverName: "linear",
+      url: cimdServer.url,
+      auth: "oauth",
+      enabled: true,
+      offByDefault: false,
+    });
+    const origin = "https://dsh.example";
+    const clientId = `${origin}${MCP_OAUTH_CLIENT_METADATA_PATH}`;
+    const authorizationUrl = new URL(await oauth.start("linear", origin));
+    expect(authorizationUrl.searchParams.get("client_id")).toBe(clientId);
+    expect(cimdServer.registrations()).toBe(0);
+
+    // The document the authorization server fetches names the same client and
+    // redirect URI the authorization request does.
+    const document = JSON.parse(
+      (await fetchMetadataDocument(oauth, "dsh.example")).body,
+    ) as Record<string, unknown>;
+    expect(document["client_id"]).toBe(
+      authorizationUrl.searchParams.get("client_id"),
+    );
+    expect(document["redirect_uris"]).toEqual([
+      authorizationUrl.searchParams.get("redirect_uri"),
+    ]);
+
+    const callback = await approve(authorizationUrl.href);
+    expect(cimdServer.clientIds()).toEqual([clientId]);
+    await expect(oauth.finish(callback.searchParams)).resolves.toBe("linear");
+    expect(cimdServer.tokenClientIds()).toEqual([clientId]);
+    expect(store.oauthFor("linear")?.client).toEqual({
+      client_id: clientId,
+      issuer: expect.any(String) as string,
+    });
+
+    // The saved identifier is what lets the next sign-in work now that the
+    // server no longer advertises CIMD and still has no registration.
+    cimdServer.setCimd(false);
+    const again = new URL(await oauth.start("linear", origin));
+    expect(again.searchParams.get("client_id")).toBe(clientId);
+    const secondCallback = await approve(again.href);
+    await expect(oauth.finish(secondCallback.searchParams)).resolves.toBe(
+      "linear",
+    );
+    expect(cimdServer.clientIds()).toEqual([clientId, clientId]);
+    expect(cimdServer.tokenClientIds()).toEqual([clientId, clientId]);
+    expect(cimdServer.registrations()).toBe(0);
+  }, 30_000);
+
+  it("reuses a dynamic registration when CIMD arrives later", async () => {
+    const server = await startProtectedServer();
+    extraServers.push(server);
+    await store.upsert({
+      serverName: "linear",
+      url: server.url,
+      auth: "oauth",
+      enabled: true,
+      offByDefault: false,
+    });
+    const origin = "https://dsh.example";
+    const first = new URL(await oauth.start("linear", origin));
+    expect(first.searchParams.get("client_id")).toBe("client-1");
+    const callback = await approve(first.href);
+    await oauth.finish(callback.searchParams);
+
+    // The saved registration wins over the newly advertised CIMD.
+    server.setCimd(true);
+    const again = new URL(await oauth.start("linear", origin));
+    expect(again.searchParams.get("client_id")).toBe("client-1");
+    const secondCallback = await approve(again.href);
+    await oauth.finish(secondCallback.searchParams);
+    expect(server.clientIds()).toEqual(["client-1", "client-1"]);
+    expect(server.tokenClientIds()).toEqual(["client-1", "client-1"]);
+    expect(server.registrations()).toBe(1);
+  }, 30_000);
+
+  it("renews a CIMD sign-in without registering", async () => {
+    const cimdServer = await startProtectedServer({
+      cimd: true,
+      registration: false,
+    });
+    extraServers.push(cimdServer);
+    await store.upsert({
+      serverName: "linear",
+      url: cimdServer.url,
+      auth: "oauth",
+      enabled: true,
+      offByDefault: false,
+    });
+    const callback = await approve(
+      await oauth.start("linear", "https://dsh.example"),
+    );
+    await oauth.finish(callback.searchParams);
+    const client = store.oauthFor("linear")?.client;
+
+    skewMs = 3600_000 - 5 * 60_000;
+    await oauth.renewDue();
+    expect(warnings).toEqual([]);
+    expect(store.tokenFor("linear")).toBe("access-2");
+    expect(store.oauthFor("linear")?.tokens.refresh_token).toBe("refresh-2");
+    expect(store.oauthFor("linear")?.client).toEqual(client);
+    expect(cimdServer.tokenRequests()).toBe(2);
+    expect(cimdServer.registrations()).toBe(0);
+  }, 30_000);
+
+  it("keeps dynamic registration on a plain-HTTP origin", async () => {
+    const cimdServer = await startProtectedServer({ cimd: true });
+    extraServers.push(cimdServer);
+    await store.upsert({
+      serverName: "linear",
+      url: cimdServer.url,
+      auth: "oauth",
+      enabled: true,
+      offByDefault: false,
+    });
+    const authorizationUrl = new URL(await oauth.start("linear", ORIGIN));
+    expect(authorizationUrl.searchParams.get("client_id")).toBe("client-1");
+    expect(cimdServer.registrations()).toBe(1);
+    await approve(authorizationUrl.href);
+    expect(cimdServer.clientIds()).toEqual(["client-1"]);
+  }, 30_000);
+
+  it("falls back to dynamic registration when CIMD is not advertised", async () => {
+    const origin = "https://dsh.example";
+    const authorizationUrl = new URL(await oauth.start("notion", origin));
+    expect(authorizationUrl.searchParams.get("client_id")).toBe("client-1");
+    expect(protectedServer.registrations()).toBe(1);
+  }, 30_000);
+
+  it("serves the client metadata document for the fetching host", async () => {
+    const response = await fetchMetadataDocument(oauth, "dsh.example:8443");
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toBe("application/json");
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(JSON.parse(response.body)).toEqual({
+      client_id: `https://dsh.example:8443${MCP_OAUTH_CLIENT_METADATA_PATH}`,
+      client_name: "DeepSeek Harness",
+      redirect_uris: [`https://dsh.example:8443${MCP_OAUTH_CALLBACK_PATH}`],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    });
+
+    // A default HTTPS port normalizes away, so the document URL is the one
+    // the browser's origin produced.
+    const defaultPort = JSON.parse(
+      (await fetchMetadataDocument(oauth, "dsh.example:443")).body,
+    ) as Record<string, unknown>;
+    expect(defaultPort["client_id"]).toBe(
+      `https://dsh.example${MCP_OAUTH_CLIENT_METADATA_PATH}`,
+    );
+    expect(defaultPort["redirect_uris"]).toEqual([
+      `https://dsh.example${MCP_OAUTH_CALLBACK_PATH}`,
+    ]);
+
+    const refused = await fetchMetadataDocument(oauth, "dsh.example", "POST");
+    expect(refused.status).toBe(405);
+
+    const invalid = await fetchMetadataDocument(oauth, "[bad");
+    expect(invalid.status).toBe(400);
+  });
 
   it("renews an access token close to expiry and remounts with it", async () => {
     const callback = await approve(await oauth.start("notion", ORIGIN));
