@@ -33,9 +33,10 @@ export interface McpServerEntry {
 }
 
 /**
- * What an OAuth sign-in leaves behind. The client registration is kept so a
- * later sign-in reuses it; it is bound to the redirect URI it was registered
- * with. Nothing here is ever sent to the browser.
+ * What an OAuth sign-in leaves behind. The client identity is kept so a later
+ * sign-in reuses it: a dynamic registration or a Client ID Metadata Document
+ * identifier, bound to the redirect URI it was created for. Nothing here is
+ * ever sent to the browser.
  */
 export interface McpOAuthCredential {
   redirectUri: string;

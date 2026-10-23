@@ -142,19 +142,32 @@ write-only: the browser receives only whether a token is saved, never its
 value.
 
 **OAuth** is the MCP authorization flow: authorization code with PKCE, with
-discovery (RFC 9728, RFC 8414) and dynamic client registration run by the MCP
-SDK's `auth()` in the control plane (`src/mcp-oauth.ts`). Saving an OAuth
-server, or its card's **Connect** / **Reauthenticate** button, opens the
-server's sign-in in a new tab; only the authorization URL reaches the browser.
-The authorization server returns the browser to
-`/dsh-yawn/mcp/oauth/callback` on the origin the Settings page was opened on.
-That route sits outside `/api`, because the return trip is a cross-site
-navigation, which dsh's `/api` fence refuses and which carries no
+discovery (RFC 9728, RFC 8414) and client registration run by the MCP SDK's
+`auth()` in the control plane (`src/mcp-oauth.ts`). A client identity saved by
+an earlier sign-in for the same redirect URI is reused first. Otherwise, when
+the authorization server advertises Client ID Metadata Documents (CIMD,
+`client_id_metadata_document_supported`) and the Settings page was opened on
+an HTTPS origin, the client identifier is the control plane's own document at
+`/dsh-yawn/mcp/oauth/client-metadata.json` on that origin. That exact URL must
+be reachable by the authorization server over HTTPS, and any TLS-terminating
+proxy must preserve the Host header, because the document's `client_id` has
+to match the URL the server fetched; the document route is public, like the
+callback. This is not a fallback: if the server advertises CIMD but cannot
+fetch the document, the sign-in fails rather than registering a client. A
+server that does not advertise CIMD, or an HTTP origin, gets a dynamically
+registered client (RFC 7591), the method MCP deprecated in favor of CIMD but
+still supports. Saving an OAuth server, or its card's **Connect** /
+**Reauthenticate** button, opens the server's sign-in in a new tab; only the
+authorization URL reaches the browser. The authorization server returns the
+browser to `/dsh-yawn/mcp/oauth/callback` on the origin the Settings page was
+opened on. That route sits outside `/api`, because the return trip is a
+cross-site navigation, which dsh's `/api` fence refuses and which carries no
 `SameSite=Strict` session cookie. A single-use `state`, issued to an
 authenticated Settings page and forgotten after ten minutes, is what ties the
-request to a sign-in. The client registration, the access token, and any
-refresh token are saved with the server and never leave the host. A server is
-mounted with the access token as a bearer header while it is valid.
+request to a sign-in. The client registration or client identifier, the
+access token, and any refresh token are saved with the server; the browser
+never receives the tokens. A server is mounted with the access token as a
+bearer header while it is valid.
 
 The control plane renews tokens itself, on a one-minute tick that starts
 after boot: when an access token with a refresh token is within ten minutes
@@ -169,9 +182,9 @@ lasts minutes remounts every few minutes. A failed renewal is retried with a
 delay that doubles from one minute to thirty. A refused refresh token
 (`invalid_grant`) ends the renewals, and the access token is used until it
 expires. A refused client (`invalid_client`) removes the sign-in, so the next
-one registers a new client; a renewal never registers one itself. Each tick
-then reconciles the mounts: an expired token unmounts the server and its card
-asks for a sign-in again. A server that issues no refresh token, or no
+sign-in gets a new client identity; a renewal never creates one itself. Each
+tick then reconciles the mounts: an expired token unmounts the server and its
+card asks for a sign-in again. A server that issues no refresh token, or no
 `expires_in`, is never renewed. Changing the URL signs out,
 because the sign-in authorizes the old server. The redirect URI
 must be one the authorization server accepts, which for most servers means

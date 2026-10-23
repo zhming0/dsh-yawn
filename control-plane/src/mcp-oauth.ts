@@ -21,6 +21,15 @@ import type { McpServerStore } from "./mcp-store.js";
  */
 export const MCP_OAUTH_CALLBACK_PATH = "/dsh-yawn/mcp/oauth/callback";
 
+/**
+ * Where an authorization server fetches this client's metadata, when it
+ * supports Client ID Metadata Documents. The document names the origin's own
+ * callback as its redirect URI, so each origin serves its own copy. CIMD
+ * requires a path component, and the client identifier is this URL verbatim.
+ */
+export const MCP_OAUTH_CLIENT_METADATA_PATH =
+  "/dsh-yawn/mcp/oauth/client-metadata.json";
+
 /** A sign-in that is not finished by then is forgotten. */
 const pendingLifetimeMs = 10 * 60_000;
 
@@ -44,6 +53,8 @@ interface PendingSignIn {
   url: string;
   redirectUri: string;
   createdAt: number;
+  /** The CIMD document for this origin; absent on a plain-HTTP origin. */
+  clientMetadataUrl?: string;
   client?: StoredOAuthClientInformation;
   codeVerifier?: string;
   discovery?: OAuthDiscoveryState;
@@ -67,9 +78,15 @@ interface RenewalFailure {
 
 /**
  * The OAuth authorization code flow (with PKCE) for remote MCP servers, run
- * by the control plane: discovery, dynamic client registration, and the code
- * exchange go through the MCP SDK's `auth()`. Only the authorization URL ever
- * reaches the browser. When the server issues a refresh token,
+ * by the control plane: discovery, client registration, and the code exchange
+ * go through the MCP SDK's `auth()`. A client identity saved for the same
+ * redirect URI is reused first. Otherwise, when the authorization server
+ * advertises CIMD and the Settings origin is HTTPS, the identifier is this
+ * control plane's own metadata document; the server fetches it, so an origin
+ * it can reach is a precondition, and an unreachable document fails the
+ * sign-in instead of falling back. Without CIMD the SDK registers a client
+ * dynamically (RFC 7591). Only the authorization URL ever reaches the
+ * browser. When the server issues a refresh token,
  * {@link renewDue} uses it to replace the access token shortly before it
  * expires; without one, the server waits for the operator to sign in again.
  */
@@ -107,15 +124,17 @@ export class McpOAuth {
     }
     this.forgetExpired();
     const redirectUri = callbackUrl(origin);
+    const clientMetadataUrl = httpsMetadataDocumentUrl(redirectUri);
     const saved = this.store.oauthFor(serverName);
     const signIn: PendingSignIn = {
       serverName,
       url: entry.url,
       redirectUri,
       createdAt: this.now(),
+      ...(clientMetadataUrl === undefined ? {} : { clientMetadataUrl }),
     };
-    // A registration is bound to its redirect URI; reach the control plane on
-    // another address and the client registers again.
+    // A client identity is bound to its redirect URI; reach the control plane
+    // on another address and a different one is created.
     if (saved?.redirectUri === redirectUri) {
       signIn.client = saved.client;
     }
@@ -218,6 +237,37 @@ export class McpOAuth {
   }
 
   /**
+   * The webserver handler for {@link MCP_OAUTH_CLIENT_METADATA_PATH}. The
+   * authorization server fetches this document itself, so the route is public
+   * and has no session. The document's `client_id` must equal the URL the
+   * server fetched, so the served URL is rebuilt from the request's Host.
+   * That matches the Settings origin only when a proxy preserves Host, which
+   * dsh's browser authentication already requires; CIMD identifiers are only
+   * advertised for HTTPS origins.
+   */
+  handleClientMetadata(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): void {
+    if (request.method !== "GET") {
+      response.writeHead(405, { allow: "GET" });
+      response.end();
+      return;
+    }
+    const origin = originFromHost(request.headers.host);
+    if (origin === undefined) {
+      response.writeHead(400);
+      response.end();
+      return;
+    }
+    response.writeHead(200, {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+    });
+    response.end(JSON.stringify(clientMetadataDocument(origin)));
+  }
+
+  /**
    * Renew every saved sign-in whose access token is about to expire. Never
    * rejects; a failure is logged and retried later with a growing delay. The
    * caller remounts afterwards, since a renewed token is a new header.
@@ -287,7 +337,7 @@ export class McpOAuth {
    * authorization server is still the one the sign-in used. A refused
    * refresh token ends the renewals: the access token is kept until it
    * expires, and then the server waits for a sign-in. A refused client
-   * removes the sign-in, so the next one registers a new client.
+   * removes the sign-in, so the next one gets a new client identity.
    */
   private async renew(serverName: string): Promise<void> {
     const entry = this.store.get(serverName);
@@ -395,7 +445,7 @@ export class McpOAuth {
     state: string,
     redirect: (url: URL) => void,
   ): OAuthClientProvider {
-    return {
+    const provider: OAuthClientProvider = {
       redirectUrl: signIn.redirectUri,
       clientMetadata: clientMetadata(signIn.redirectUri),
       state: () => state,
@@ -423,6 +473,10 @@ export class McpOAuth {
       },
       discoveryState: () => signIn.discovery,
     };
+    if (signIn.clientMetadataUrl !== undefined) {
+      provider.clientMetadataUrl = signIn.clientMetadataUrl;
+    }
+    return provider;
   }
 
   private forgetExpired(): void {
@@ -434,7 +488,7 @@ export class McpOAuth {
   }
 }
 
-/** What dynamic client registration asks for. */
+/** The metadata a dynamic registration submits; the CIMD document repeats it. */
 function clientMetadata(redirectUri: string): OAuthClientMetadata {
   return {
     client_name: "DeepSeek Harness",
@@ -442,6 +496,53 @@ function clientMetadata(redirectUri: string): OAuthClientMetadata {
     grant_types: ["authorization_code", "refresh_token"],
     response_types: ["code"],
   };
+}
+
+/**
+ * The Client ID Metadata Document an origin serves. Its `client_id` is the
+ * document's own URL, its only redirect URI is that origin's callback, and it
+ * repeats the metadata dynamic registration would submit. CIMD cannot carry a
+ * shared secret, so the token endpoint method is explicitly `none` rather
+ * than left to RFC 7591's `client_secret_basic` default.
+ */
+function clientMetadataDocument(
+  origin: string,
+): OAuthClientMetadata & { client_id: string } {
+  const redirectUri = callbackUrl(origin);
+  return {
+    client_id: metadataDocumentUrl(redirectUri),
+    ...clientMetadata(redirectUri),
+    token_endpoint_auth_method: "none",
+  };
+}
+
+/** The absolute URL of an origin's CIMD document. */
+function metadataDocumentUrl(redirectUri: string): string {
+  return new URL(MCP_OAUTH_CLIENT_METADATA_PATH, redirectUri).href;
+}
+
+/**
+ * The CIMD document URL for a sign-in, or `undefined` when the Settings origin
+ * is plain HTTP. The authorization server fetches the document itself, so the
+ * identifier has to be an HTTPS URL it can reach; without one the SDK falls
+ * back to dynamic registration.
+ */
+function httpsMetadataDocumentUrl(redirectUri: string): string | undefined {
+  return redirectUri.startsWith("https:")
+    ? metadataDocumentUrl(redirectUri)
+    : undefined;
+}
+
+/** The HTTPS origin a metadata request was addressed to, from its Host header. */
+function originFromHost(host: string | undefined): string | undefined {
+  if (host === undefined || host === "") {
+    return undefined;
+  }
+  try {
+    return new URL(`https://${host}`).origin;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The callback URL on the origin the browser used for Settings. */

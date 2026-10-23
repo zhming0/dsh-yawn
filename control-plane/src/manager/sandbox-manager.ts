@@ -42,7 +42,11 @@ import {
 import { InstructionStore } from "../instruction-store.js";
 import type { InstructionSettingsView } from "../instructions-remote.js";
 import { ManagedInstructions } from "../managed-instructions.js";
-import { MCP_OAUTH_CALLBACK_PATH, McpOAuth } from "../mcp-oauth.js";
+import {
+  MCP_OAUTH_CALLBACK_PATH,
+  MCP_OAUTH_CLIENT_METADATA_PATH,
+  McpOAuth,
+} from "../mcp-oauth.js";
 import { McpPool } from "../mcp-pool.js";
 import type { McpServerView, McpTestResult } from "../mcp-remote.js";
 import { McpServerStore, type McpServerEntry } from "../mcp-store.js";
@@ -447,6 +451,18 @@ export class SandboxManager extends TypertRemoteService {
               this.mcpOAuth.handleCallback(request, response),
           }),
         `sandbox-manager: ${MCP_OAUTH_CALLBACK_PATH} route`,
+      );
+      // The authorization server fetches this document itself, without a
+      // browser session, so it is public like the callback route.
+      webCtx.effect(
+        () =>
+          webCtx.webServer.register({
+            kind: "exact",
+            path: MCP_OAUTH_CLIENT_METADATA_PATH,
+            handler: (request, response) =>
+              this.mcpOAuth.handleClientMetadata(request, response),
+          }),
+        `sandbox-manager: ${MCP_OAUTH_CLIENT_METADATA_PATH} route`,
       );
     });
 
