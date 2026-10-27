@@ -150,6 +150,16 @@
     - id: sandbox-shell
       name: '@zhming0/dsh-yawn/shell'
 
+    # The stock persistent bash tool caches its PTY id for the agent's whole
+    # life. A wake on a new machine kills that PTY while the control plane
+    # keeps the id, so the tool's first command after wake reports the shell
+    # as exited instead of running. The tool resets the stale id on that path;
+    # this wrapper retries the same dispatch once, which then starts a fresh
+    # PTY. Clearing a terminal pool on wake cannot do this because the tool's
+    # registry is its own.
+    - id: persistent-bash-recovery
+      name: '@zhming0/dsh-yawn/persistent-bash-recovery'
+
     - id: sandbox-subprocess
       name: '@zhming0/dsh-yawn/subprocess'
 
