@@ -32,8 +32,8 @@ it("pins every @deepseek-ai/dsh-* dependency to one version", () => {
 /**
  * The runner image ships the PTC Node backend's bootstrap, and the bundle patch
  * points the provider at that copy. A bootstrap from another dsh release fails
- * the control handshake at the first frame, so it is pinned to the release the
- * control plane runs. The runner image builds from its own context and cannot
+ * at its first control message, so it is pinned to the release the control
+ * plane runs. The runner image builds from its own context and cannot
  * read this manifest, which is why a test guards the pair.
  */
 it("pins the runner image's PTC bootstrap to the same dsh version", () => {

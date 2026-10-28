@@ -56,7 +56,7 @@ async function dispatch(
   let initiator: unknown = undefined;
   await listener(
     { method: "GET", headers: {}, ...request } as IncomingMessage,
-    {} as ServerResponse,
+    { writeHead() {} } as unknown as ServerResponse,
     async () => {
       initiator = storage.getStore()?.id ?? null;
     },
@@ -124,6 +124,41 @@ describe("mediaSessionRoute", () => {
       expect(await dispatch(listener, world.storage, { url })).toBeNull();
     }
     expect(world.resolved).toEqual(["session-gone"]);
+  });
+
+  it("adds the session back to dsh's versioned redirect", async () => {
+    const world = makeWorld();
+    const listener = mediaSessionRoute(world.agents, world.sessionController);
+    const written: {
+      status?: number;
+      headers: Record<string, string> | undefined;
+    } = { headers: undefined };
+    const response = {
+      writeHead(status: number, headers?: Record<string, string>) {
+        written.status = status;
+        written.headers = headers;
+        return this;
+      },
+    } as unknown as ServerResponse;
+
+    await listener(
+      {
+        method: "GET",
+        headers: {},
+        url: imageFor("session-one"),
+      } as IncomingMessage,
+      response,
+      async () => {
+        response.writeHead(302, {
+          Location: "?path=%2Fworkspace%2Frepository%2Flogo.png&v=7",
+        });
+      },
+    );
+
+    expect(written.status).toBe(302);
+    expect(written.headers?.Location).toBe(
+      "?path=%2Fworkspace%2Frepository%2Flogo.png&v=7&dsh-yawn-session=session-one",
+    );
   });
 });
 

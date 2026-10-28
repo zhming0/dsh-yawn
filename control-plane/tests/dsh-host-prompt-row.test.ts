@@ -10,14 +10,20 @@ import { parse } from "yaml";
 const run = promisify(execFile);
 
 /**
- * The bundle patch disables `harness-dev-context`, the dsh row that tells the
- * model the host's checkout path and Web GUI URL. A patch entry for a row id
- * that no longer exists is skipped with a warning, and the host-only text
- * would come back without any test failing. This downloads the pinned
- * dsh-web-app and checks that it still mounts that row under that module.
+ * The bundle patch disables stock rows and asserts the module names of the
+ * rows it overrides. A patch entry for a row id that no longer exists is
+ * skipped with a warning, and the stock row — or the host-only text it
+ * suppresses — would come back without any test failing. This downloads the
+ * pinned dsh-base and dsh-web-app and checks every patch entry against them.
  * Requires registry access; that is the point — the tripwire fires in the
  * change that bumps the pin.
  */
+
+interface Row {
+  id?: string;
+  name?: string;
+  insert?: Row[];
+}
 
 async function pinnedDshVersion(): Promise<string> {
   const manifest = JSON.parse(
@@ -30,58 +36,80 @@ async function pinnedDshVersion(): Promise<string> {
   return version;
 }
 
-interface Row {
-  id?: string;
-  name?: string;
-  insert?: Row[];
-}
-
-function findRow(rows: Row[], id: string): Row | undefined {
-  for (const row of rows) {
-    if (row.id === id) {
-      return row;
-    }
-    const inner =
-      row.insert === undefined ? undefined : findRow(row.insert, id);
-    if (inner !== undefined) {
-      return inner;
-    }
-  }
-  return undefined;
-}
-
-it("the pinned dsh-web-app still mounts the harness-dev-context row this bundle disables", async () => {
-  const version = await pinnedDshVersion();
-  const dir = await mkdtemp(join(tmpdir(), "dsh-host-prompt-row-"));
+/** Rows contributed by one pinned package's bundle patch, keyed by id. */
+async function packageRows(
+  specifier: string,
+  version: string,
+): Promise<Map<string, string | undefined>> {
+  const dir = await mkdtemp(join(tmpdir(), "dsh-patch-rows-"));
   try {
-    await run(
+    const { stdout } = await run(
       "npm",
-      [
-        "pack",
-        `@deepseek-ai/dsh-web-app@${version}`,
-        "--pack-destination",
-        dir,
-      ],
+      ["pack", `${specifier}@${version}`, "--pack-destination", dir],
       { cwd: dir },
     );
-    await run("tar", [
-      "-xzf",
-      join(dir, `deepseek-ai-dsh-web-app-${version}.tgz`),
-      "-C",
-      dir,
-    ]);
+    const tarball = stdout.trim();
+    await run("tar", ["-xzf", join(dir, tarball), "-C", dir]);
     // `!!js` expressions are dsh's own tag; only ids and names matter here.
     const rows = parse(
       await readFile(join(dir, "package", "cordis.patch.yml"), "utf8"),
       { logLevel: "error" },
     ) as Row[];
-    expect(
-      findRow(rows, "harness-dev-context")?.name,
-      `dsh-web-app ${version} no longer mounts harness-dev-context; find where ` +
-        "it now composes the checkout and Web GUI prompt text, and update the " +
-        "row this bundle disables in cordis.patch.yml",
-    ).toBe("@deepseek-ai/dsh-harness-dev-context");
+    const byId = new Map<string, string | undefined>();
+    const walk = (entries: Row[] | undefined): void => {
+      for (const row of entries ?? []) {
+        if (row.id !== undefined) {
+          byId.set(row.id, row.name);
+        }
+        walk(row.insert);
+      }
+    };
+    walk(rows);
+    return byId;
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
-}, 120_000);
+}
+
+it("every row this bundle patches still exists under its asserted module", async () => {
+  const version = await pinnedDshVersion();
+  const stock = new Map<string, string | undefined>();
+  for (const specifier of [
+    "@deepseek-ai/dsh-base",
+    "@deepseek-ai/dsh-web-app",
+  ]) {
+    for (const [id, name] of await packageRows(specifier, version)) {
+      stock.set(id, name);
+    }
+  }
+
+  expect(
+    stock.get("harness-dev-context"),
+    `dsh ${version} no longer mounts harness-dev-context; find where it now ` +
+      "composes the checkout and Web GUI prompt text, and update the row this " +
+      "bundle disables in cordis.patch.yml",
+  ).toBe("@deepseek-ai/dsh-harness-dev-context");
+
+  const patch = parse(
+    await readFile(new URL("../cordis.patch.yml", import.meta.url), "utf8"),
+    { logLevel: "error" },
+  ) as Row[];
+  for (const entry of patch) {
+    // `insert` rows belong to this bundle; the top-level entries target stock
+    // rows and must match one or the stock behavior silently returns.
+    if (entry.id === undefined || entry.insert !== undefined) {
+      continue;
+    }
+    expect(
+      stock.has(entry.id),
+      `dsh ${version} no longer has a row with id "${entry.id}"; update ` +
+        "cordis.patch.yml or remove the stale entry",
+    ).toBe(true);
+    if (entry.name !== undefined) {
+      expect(
+        stock.get(entry.id),
+        `dsh ${version} row "${entry.id}" no longer loads ${entry.name}`,
+      ).toBe(entry.name);
+    }
+  }
+}, 180_000);
