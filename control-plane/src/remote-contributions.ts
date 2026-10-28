@@ -15,6 +15,8 @@ import type { SandboxSecretsRemote } from "./secrets-remote.js";
 import { sandboxSecretsDescriptors } from "./secrets-remote.js";
 import type { SessionMcpRemote } from "./session-mcp-remote.js";
 import { sessionMcpDescriptors } from "./session-mcp-remote.js";
+import type { ReviewRemote } from "./review-remote.js";
+import { reviewDescriptors } from "./review-remote.js";
 import type { SessionProfileRemote } from "./session-profile-remote.js";
 import { sessionProfileDescriptors } from "./session-profile-remote.js";
 
@@ -26,7 +28,8 @@ type SandboxManagerRemote = RepositoryWorkspaceRemote &
   SessionProfileRemote &
   SessionMcpRemote &
   SandboxStatusRemote &
-  SandboxSettingsRemote;
+  SandboxSettingsRemote &
+  ReviewRemote;
 
 declare module "@deepseek-ai/dsh-typert-protocol" {
   interface TypertRemoteNamespaceMap {
@@ -57,6 +60,8 @@ declare module "@deepseek-ai/dsh-typert-protocol" {
     "sandboxManager/setSessionMcp": SandboxManagerRemote["setSessionMcp"];
     "sandboxManager/getSandboxStatus": SandboxManagerRemote["getSandboxStatus"];
     "sandboxManager/getSandboxSettings": SandboxManagerRemote["getSandboxSettings"];
+    "sandboxManager/getReview": SandboxManagerRemote["getReview"];
+    "sandboxManager/getReviewDiff": SandboxManagerRemote["getReviewDiff"];
   }
 }
 
@@ -72,6 +77,7 @@ const descriptors = [
   ...sessionMcpDescriptors,
   ...sandboxStatusDescriptors,
   ...sandboxSettingsDescriptors,
+  ...reviewDescriptors,
 ];
 
 export const yawnHost: TypertContribution = {

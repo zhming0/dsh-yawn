@@ -20,6 +20,7 @@ import {
 } from "./notifications.js";
 import { SandboxProfileChip } from "./profile.js";
 import { RepositoryDirectoryFlow } from "./repository-directory-flow.js";
+import { ReviewTab } from "./review.js";
 import { SandboxStatusTab } from "./sandbox.js";
 import { SessionMcpChip } from "./session-mcp.js";
 import { GitCredentialsSettings } from "./git-credentials.js";
@@ -254,6 +255,30 @@ export async function apply(ctx: Context) {
         );
       },
     );
+    const injectedReview = () => ({
+      getReview: async (sessionId: string) =>
+        unwrap(await remoteCtx.remote.sandboxManager.getReview(sessionId)),
+      getReviewDiff: async (sessionId: string, scope: string) =>
+        unwrap(
+          await remoteCtx.remote.sandboxManager.getReviewDiff(sessionId, scope),
+        ),
+    });
+    remoteCtx.slots.inject("conversation.view", function* registerReviewView() {
+      yield remoteCtx.slots.register(
+        {
+          name: "conversation.view",
+          id: "dsh-yawn.review",
+          // Between Trajectory (10) and Sandbox (20).
+          order: 15,
+          label: () => "Review",
+          inject: (sessionId) => ({
+            sessionId,
+            ...injectedReview(),
+          }),
+        },
+        ReviewTab,
+      );
+    });
   });
 
   ctx.inject(["remote.sandboxManager"], (remoteCtx) => {

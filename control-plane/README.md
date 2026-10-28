@@ -27,9 +27,9 @@ For dsh plugin internals and implementation notes, see
   agent-sandbox, or a Buildkite pipeline. A **sandbox profile** names one
   backend and its settings; a session picks a profile on its first prompt.
 - The Web UI gains pages for secrets, sandbox profiles, instructions,
-  notifications, MCP servers, plugins, a Sandbox tab, a right sidebar for
-  files and terminal access, repository URL Workspaces, and a Scratch
-  Workspace without a repository.
+  notifications, MCP servers, plugins, a Sandbox tab, a Review tab, a right
+  sidebar for files and terminal access, repository URL Workspaces, and a
+  Scratch Workspace without a repository.
 - The Web UI does not offer DeepSeek account sign-in. Model access uses API
   keys; the account provider, its `deepseek-account` model route, and the
   account settings and Remote rows are disabled.
@@ -480,6 +480,31 @@ so their caps are that package's settings, set where the plugin is mounted. In
 the Web UI that is the agent preset, not this profile layer: shipped presets
 restate the plugin by its stock name, and a preset copied from one carries the
 same settings to edit.
+
+### Review
+
+The **Review** tab (`dsh-yawn.review`) shows a read-only diff of the session's
+workspace. It has two kinds of scope:
+
+- **Working tree** compares the current files — including untracked files — with
+  the merge base of `HEAD` and `origin/HEAD`.
+- **Branches** lists local branches with commits ahead of that same base, one
+  scope per branch, so a session that produced several PRs can review each one.
+
+`origin/HEAD` is the base branch the clone records; without it the tab falls
+back to `HEAD`, so branch scopes are compared with the current commit. The
+comparison is computed when a scope is selected, not when the list is built,
+and only expanded files render their hunks. A patch is capped at 8 MiB, and at
+most 20 branch scopes are listed; the tab says when either limit was hit.
+
+Git runs in the sandbox as the session's agent, so opening the tab wakes a
+hibernated sandbox and counts as activity. The tab reads the current state, not
+a turn-by-turn history: a later commit or edit changes what it shows. Ignored
+files do not appear, binary files are listed without hunks, and a Scratch
+Workspace has no repository to compare. A branch stacked on another branch is
+compared with the default branch, so it shows both branches' commits; there is
+no per-PR base override yet. There is also no syntax highlighting, side-by-side
+view, comment, accept/reject, or remote-branch listing yet.
 
 ### AGENTS.md instructions
 

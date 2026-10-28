@@ -216,6 +216,22 @@ example `standard` and `large`, both with `image: dsh-yawn-runner:dev`.
    with no entry left in `pendingProfiles`.
 4. Confirm the chip is now disabled and keeps showing the picked profile.
 
+### Review tab
+
+For changes to the review Remote or the Review tab. Start a repository session
+and send one prompt that edits a tracked file, creates an untracked file,
+deletes one file, adds a binary file, and commits a change on a second branch.
+
+1. Open **Review**. The working-tree scope must list all four working-tree
+   changes; the binary file must have no hunks, and the hunk lines and line
+   numbers must match `git diff` run inside the sandbox.
+2. The scope selector must list the second branch. Selecting it must show only
+   that branch's committed changes.
+3. Before the first prompt the tab must say the session has no sandbox; a
+   Scratch Workspace session must say the workspace is not a git repository.
+4. Edit a file again and press **Refresh**; the scope counts and the selected
+   comparison must update.
+
 ### PTC mode
 
 For changes to the PTC channel, the `ptc-runtime` row, or the bootstrap the
