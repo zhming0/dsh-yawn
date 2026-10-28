@@ -4,6 +4,8 @@ import { promisify } from "node:util";
 
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
+import type {} from "@deepseek-ai/dsh-api-session-controller";
+import type {} from "@deepseek-ai/dsh-shell";
 import type {} from "@deepseek-ai/dsh-storage-domain";
 import { SessionId, type Session } from "@deepseek-ai/dsh-session";
 // Type-only: puts the optional `webServer` service on the Context below.
@@ -59,6 +61,8 @@ import {
 } from "../preview.js";
 import { PreviewServer } from "../preview-server.js";
 import { loadRegistrationToken } from "../registration-token.js";
+import { runReviewDiff, runReviewView } from "../review.js";
+import type { ReviewDiff, ReviewView } from "../review-remote.js";
 import type { RunnerClient } from "../runner-client.js";
 import type { SandboxSettingsView } from "../sandbox-settings-remote.js";
 import type { SecretSettingsView } from "../secrets-remote.js";
@@ -1047,6 +1051,81 @@ export class SandboxManager extends TypertRemoteService {
   async getSandboxStatus(sessionId: string): Promise<SandboxStatusView> {
     await this.ready;
     return this.status.view(sessionId);
+  }
+
+  /**
+   * The scopes the session's workspace can review: its working tree and every
+   * branch with commits ahead of the default branch's merge base. The work runs
+   * in the sandbox as the session's agent, so a hibernated sandbox wakes and the
+   * read counts as activity, exactly like opening the Files tab.
+   */
+  async getReview(sessionId: string): Promise<ReviewView> {
+    await this.ready;
+    if (!this.canReview(sessionId)) {
+      return {
+        kind: "no-sandbox",
+        baseLabel: "",
+        scopes: [],
+        defaultScope: "",
+        truncated: false,
+      };
+    }
+    const { shell, sessionController } = this.reviewServices();
+    const agent = await this.reviewAgent(sessionController, sessionId);
+    return runReviewView({ agents: this.ctx.agents, shell, agent });
+  }
+
+  /** Compare one scope the view listed against its base, still inside the sandbox. */
+  async getReviewDiff(sessionId: string, scope: string): Promise<ReviewDiff> {
+    await this.ready;
+    if (!this.canReview(sessionId)) {
+      throw new Error("review: the session has no sandbox yet");
+    }
+    const { shell, sessionController } = this.reviewServices();
+    const agent = await this.reviewAgent(sessionController, sessionId);
+    return runReviewDiff({ agents: this.ctx.agents, shell, agent }, scope);
+  }
+
+  /**
+   * A review reads git inside the sandbox, so it must not provision one just
+   * because the tab was opened. A hibernated sandbox is fine (the read wakes it,
+   * like the Files tab); one that was never created or was checkpointed is not.
+   */
+  private canReview(sessionId: string): boolean {
+    const record = this.engine.record(sessionId);
+    return record !== undefined && record.state !== "checkpointed";
+  }
+
+  /**
+   * The two services the review reads need that the session lifecycle itself
+   * does not: the Web session controller resumes a stored session, and the shell
+   * executor owns the sandbox boundary. Both are Web-surface services, so a
+   * headless profile never reaches these methods; the row still boots.
+   */
+  private reviewServices(): {
+    shell: Context["shell"];
+    sessionController: Context["sessionController"];
+  } {
+    const shell: Context["shell"] | undefined = this.ctx.get("shell");
+    const sessionController: Context["sessionController"] | undefined =
+      this.ctx.get("sessionController");
+    if (shell === undefined || sessionController === undefined) {
+      throw new Error("review is available on the Web surface only");
+    }
+    return { shell, sessionController };
+  }
+
+  private async reviewAgent(
+    sessionController: Context["sessionController"],
+    sessionId: string,
+  ): Promise<Agent> {
+    const resolved = await sessionController.resolveAgent(
+      sessionId as SessionId,
+    );
+    if ("error" in resolved) {
+      throw resolved.error;
+    }
+    return resolved.agent;
   }
 
   /**
