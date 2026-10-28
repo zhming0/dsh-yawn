@@ -4,7 +4,7 @@
   "license": "MIT",
   "packageManager": "pnpm@11.7.0",
   "engines": {
-    "node": "^22.19.0 || >=24"
+    "node": ">=24.9.0"
   },
   "scripts": {
     "build": "pnpm --filter @zhming0/dsh-yawn build",

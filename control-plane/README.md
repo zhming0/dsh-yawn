@@ -737,3 +737,7 @@ kubectl -n dsh-yawn delete sandbox -l agents.x-k8s.io/warm-pool-sandbox
   notification until the browser wakes it. On iOS, only Safari exposes the API
   (16.4+, and to a page added to the Home Screen); Firefox and Chrome there
   cannot show notifications on any page.
+- dsh 0.2.2's `web_fetch` backend no longer blocks loopback, private-network,
+  or cloud metadata addresses, and it runs in the control-plane process rather
+  than in a sandbox. The deployment has no URL allowlist for it; restrict the
+  control plane's egress if the model must not reach those hosts.
