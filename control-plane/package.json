@@ -31,6 +31,10 @@
       "types": "./dist/subprocess.d.ts",
       "default": "./dist/subprocess.js"
     },
+    "./persistent-bash-recovery": {
+      "types": "./dist/persistent-bash-recovery.d.ts",
+      "default": "./dist/persistent-bash-recovery.js"
+    },
     "./file-reference": {
       "types": "./dist/file-reference.d.ts",
       "default": "./dist/file-reference.js"
