@@ -119,6 +119,12 @@ On Kubernetes the `docker` tool uses a rootless `dockerd` sidecar; see
 [Docker inside a sandbox](../docs/runners/kubernetes.md#docker-inside-a-sandbox) for
 the security trade it makes and how to remove it.
 
+dsh 0.2.2 adds an `apply_patch` tool and disables the file observation policy
+by default. The stock presets leave `apply_patch` off; enabling it uses this
+bundle's remote `patchText`, `deleteFile`, and `moveFile` implementations.
+Read-before-write and external-change checks stay off unless the profile
+re-enables `fs-observation-policy`.
+
 ## Plugins
 
 The Web sidebar's **Plugins** page manages the profile's plugins (dsh calls an
@@ -737,3 +743,7 @@ kubectl -n dsh-yawn delete sandbox -l agents.x-k8s.io/warm-pool-sandbox
   notification until the browser wakes it. On iOS, only Safari exposes the API
   (16.4+, and to a page added to the Home Screen); Firefox and Chrome there
   cannot show notifications on any page.
+- dsh 0.2.2's `web_fetch` backend no longer blocks loopback, private-network,
+  or cloud metadata addresses, and it runs in the control-plane process rather
+  than in a sandbox. The deployment has no URL allowlist for it; restrict the
+  control plane's egress if the model must not reach those hosts.

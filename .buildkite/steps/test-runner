@@ -2,7 +2,7 @@
 set -euo pipefail
 
 source "$(dirname "$0")/lib/mise.bash"
-ensure_tools
+ensure_tools go "aqua:golangci/golangci-lint"
 
 cd runner
 

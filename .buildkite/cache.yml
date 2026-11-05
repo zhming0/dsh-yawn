@@ -1,7 +1,8 @@
 # Checkout-root caches. Cache paths resolve against the working directory;
 # runner/ has its own cache.yml.
 caches:
-  # Toolchains from mise.toml, incl. the go: protobuf plugins.
+  # Toolchains from mise.toml. A step installs only the tools it uses, so an
+  # entry can hold a subset; a restore is still a safe head start.
   - name: mise
     cache_key:
       - "v1"

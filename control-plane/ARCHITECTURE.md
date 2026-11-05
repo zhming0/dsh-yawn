@@ -382,7 +382,7 @@ sandbox has — and its Node executable defaults to the control plane's own
 `process.execPath`, which a sandbox has only by coincidence. The runner image
 ships the compatible bootstrap (see `runner/Dockerfile`; a control-plane test
 keeps its version equal to the dsh pin, because a copy from another release
-fails the handshake at the first frame), and the `ptc-runtime` row's `launch`
+fails at its first control message), and the `ptc-runtime` row's `launch`
 names that copy as `bootstrapPath` and asks for the bare `node` on the
 sandbox's own `PATH`. Since dsh 0.2.1 those fields sit under `launch`; the
 provider ignores unknown top-level keys, so a stale row would silently fall

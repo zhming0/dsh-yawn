@@ -47,7 +47,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type {
   AssembledSection,
-  PromptAssembly,
+  PromptPresentation,
 } from "@deepseek-ai/dsh-system-prompt";
 import type {} from "@deepseek-ai/dsh-tools";
 import z from "@deepseek-ai/schemastery";
@@ -485,7 +485,7 @@ export function apply(ctx: Context, config: Config): void {
     // excluded preset is skipped: its complete persona replaces every section.
     scope.on(
       "system-prompt/assemble",
-      async (_assembly, context, next): Promise<PromptAssembly> => {
+      async (_assembly, context, next): Promise<PromptPresentation> => {
         const assembly = await next();
         const hidden =
           context.agent === undefined

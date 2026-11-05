@@ -55,6 +55,9 @@ const (
 	RunnerServiceWriteFileProcedure = "/dsh.yawn.v1.RunnerService/WriteFile"
 	// RunnerServiceEditFileProcedure is the fully-qualified name of the RunnerService's EditFile RPC.
 	RunnerServiceEditFileProcedure = "/dsh.yawn.v1.RunnerService/EditFile"
+	// RunnerServiceDeleteFileProcedure is the fully-qualified name of the RunnerService's DeleteFile
+	// RPC.
+	RunnerServiceDeleteFileProcedure = "/dsh.yawn.v1.RunnerService/DeleteFile"
 	// RunnerServiceStatProcedure is the fully-qualified name of the RunnerService's Stat RPC.
 	RunnerServiceStatProcedure = "/dsh.yawn.v1.RunnerService/Stat"
 	// RunnerServiceListProcedure is the fully-qualified name of the RunnerService's List RPC.
@@ -84,6 +87,7 @@ type RunnerServiceClient interface {
 	ReadFileRange(context.Context, *connect.Request[v1.ReadFileRangeRequest]) (*connect.Response[v1.ReadFileRangeResponse], error)
 	WriteFile(context.Context, *connect.Request[v1.WriteFileRequest]) (*connect.Response[v1.WriteFileResponse], error)
 	EditFile(context.Context, *connect.Request[v1.EditFileRequest]) (*connect.Response[v1.EditFileResponse], error)
+	DeleteFile(context.Context, *connect.Request[v1.DeleteFileRequest]) (*connect.Response[v1.DeleteFileResponse], error)
 	Stat(context.Context, *connect.Request[v1.StatRequest]) (*connect.Response[v1.StatResponse], error)
 	List(context.Context, *connect.Request[v1.ListRequest]) (*connect.Response[v1.ListResponse], error)
 	Tree(context.Context, *connect.Request[v1.TreeRequest]) (*connect.Response[v1.TreeResponse], error)
@@ -160,6 +164,12 @@ func NewRunnerServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(runnerServiceMethods.ByName("EditFile")),
 			connect.WithClientOptions(opts...),
 		),
+		deleteFile: connect.NewClient[v1.DeleteFileRequest, v1.DeleteFileResponse](
+			httpClient,
+			baseURL+RunnerServiceDeleteFileProcedure,
+			connect.WithSchema(runnerServiceMethods.ByName("DeleteFile")),
+			connect.WithClientOptions(opts...),
+		),
 		stat: connect.NewClient[v1.StatRequest, v1.StatResponse](
 			httpClient,
 			baseURL+RunnerServiceStatProcedure,
@@ -216,6 +226,7 @@ type runnerServiceClient struct {
 	readFileRange     *connect.Client[v1.ReadFileRangeRequest, v1.ReadFileRangeResponse]
 	writeFile         *connect.Client[v1.WriteFileRequest, v1.WriteFileResponse]
 	editFile          *connect.Client[v1.EditFileRequest, v1.EditFileResponse]
+	deleteFile        *connect.Client[v1.DeleteFileRequest, v1.DeleteFileResponse]
 	stat              *connect.Client[v1.StatRequest, v1.StatResponse]
 	list              *connect.Client[v1.ListRequest, v1.ListResponse]
 	tree              *connect.Client[v1.TreeRequest, v1.TreeResponse]
@@ -270,6 +281,11 @@ func (c *runnerServiceClient) EditFile(ctx context.Context, req *connect.Request
 	return c.editFile.CallUnary(ctx, req)
 }
 
+// DeleteFile calls dsh.yawn.v1.RunnerService.DeleteFile.
+func (c *runnerServiceClient) DeleteFile(ctx context.Context, req *connect.Request[v1.DeleteFileRequest]) (*connect.Response[v1.DeleteFileResponse], error) {
+	return c.deleteFile.CallUnary(ctx, req)
+}
+
 // Stat calls dsh.yawn.v1.RunnerService.Stat.
 func (c *runnerServiceClient) Stat(ctx context.Context, req *connect.Request[v1.StatRequest]) (*connect.Response[v1.StatResponse], error) {
 	return c.stat.CallUnary(ctx, req)
@@ -316,6 +332,7 @@ type RunnerServiceHandler interface {
 	ReadFileRange(context.Context, *connect.Request[v1.ReadFileRangeRequest]) (*connect.Response[v1.ReadFileRangeResponse], error)
 	WriteFile(context.Context, *connect.Request[v1.WriteFileRequest]) (*connect.Response[v1.WriteFileResponse], error)
 	EditFile(context.Context, *connect.Request[v1.EditFileRequest]) (*connect.Response[v1.EditFileResponse], error)
+	DeleteFile(context.Context, *connect.Request[v1.DeleteFileRequest]) (*connect.Response[v1.DeleteFileResponse], error)
 	Stat(context.Context, *connect.Request[v1.StatRequest]) (*connect.Response[v1.StatResponse], error)
 	List(context.Context, *connect.Request[v1.ListRequest]) (*connect.Response[v1.ListResponse], error)
 	Tree(context.Context, *connect.Request[v1.TreeRequest]) (*connect.Response[v1.TreeResponse], error)
@@ -388,6 +405,12 @@ func NewRunnerServiceHandler(svc RunnerServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(runnerServiceMethods.ByName("EditFile")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runnerServiceDeleteFileHandler := connect.NewUnaryHandler(
+		RunnerServiceDeleteFileProcedure,
+		svc.DeleteFile,
+		connect.WithSchema(runnerServiceMethods.ByName("DeleteFile")),
+		connect.WithHandlerOptions(opts...),
+	)
 	runnerServiceStatHandler := connect.NewUnaryHandler(
 		RunnerServiceStatProcedure,
 		svc.Stat,
@@ -450,6 +473,8 @@ func NewRunnerServiceHandler(svc RunnerServiceHandler, opts ...connect.HandlerOp
 			runnerServiceWriteFileHandler.ServeHTTP(w, r)
 		case RunnerServiceEditFileProcedure:
 			runnerServiceEditFileHandler.ServeHTTP(w, r)
+		case RunnerServiceDeleteFileProcedure:
+			runnerServiceDeleteFileHandler.ServeHTTP(w, r)
 		case RunnerServiceStatProcedure:
 			runnerServiceStatHandler.ServeHTTP(w, r)
 		case RunnerServiceListProcedure:
@@ -507,6 +532,10 @@ func (UnimplementedRunnerServiceHandler) WriteFile(context.Context, *connect.Req
 
 func (UnimplementedRunnerServiceHandler) EditFile(context.Context, *connect.Request[v1.EditFileRequest]) (*connect.Response[v1.EditFileResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("dsh.yawn.v1.RunnerService.EditFile is not implemented"))
+}
+
+func (UnimplementedRunnerServiceHandler) DeleteFile(context.Context, *connect.Request[v1.DeleteFileRequest]) (*connect.Response[v1.DeleteFileResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("dsh.yawn.v1.RunnerService.DeleteFile is not implemented"))
 }
 
 func (UnimplementedRunnerServiceHandler) Stat(context.Context, *connect.Request[v1.StatRequest]) (*connect.Response[v1.StatResponse], error) {

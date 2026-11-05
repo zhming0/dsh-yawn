@@ -61,7 +61,7 @@ describe("runner tunnel", () => {
       );
       expect(read.content.length).toBe(bigFile.length);
       await client.writeFile(
-        { path: "/big", content: bigFile, guard: { case: undefined } },
+        { path: "/big", content: bigFile, guard: { case: undefined }, mode: 0 },
         { timeoutMs: 5_000 },
       );
       expect(written).toBe(bigFile.length);

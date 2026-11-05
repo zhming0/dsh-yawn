@@ -29,7 +29,14 @@ install_mise() {
   PATH="$HOME/.local/bin:$PATH"
 }
 
-# Put every tool that mise.toml pins on PATH, plus pnpm.
+# Put the tools this step uses on PATH, plus pnpm. Name them with the same keys
+# mise.toml uses. With no names, install every pinned tool, which is what the
+# sandbox setup hook wants.
+#
+# Naming tools matters in CI: several backends ask the GitHub API for release
+# metadata, and unauthenticated requests share a 60-per-hour limit per address.
+# A step that installs only what it runs spends fewer of them, so a cold
+# toolchain cache cannot exhaust the quota for the steps after it.
 ensure_tools() {
   command -v mise >/dev/null 2>&1 || install_mise
 
@@ -49,7 +56,11 @@ ensure_tools() {
 
   echo "--- :toolbox: Installing tools from mise.toml"
   mise trust "${root}/mise.toml"
-  mise install --cd "$root"
+  if (( $# == 0 )); then
+    mise install --cd "$root"
+  else
+    mise install --cd "$root" "$@"
+  fi
 
   if [[ -n "${BUILDKITE_AGENT_ACCESS_TOKEN:-}" ]]; then
     buildkite-agent cache save --name mise

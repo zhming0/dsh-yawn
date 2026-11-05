@@ -449,6 +449,9 @@ func (s *Service) WriteFile(_ context.Context, request *connect.Request[v1.Write
 	if info != nil {
 		mode = info.Mode().Perm()
 	}
+	if requested := os.FileMode(request.Msg.Mode) & os.ModePerm; requested != 0 {
+		mode = requested
+	}
 	if err := os.MkdirAll(filepath.Dir(request.Msg.Path), 0755); err != nil {
 		return nil, cerr(connect.CodeInternal, err)
 	}
@@ -499,6 +502,35 @@ func (s *Service) EditFile(_ context.Context, request *connect.Request[v1.EditFi
 	}
 	return connect.NewResponse(&v1.EditFileResponse{Before: before, After: after, Version: version(newInfo)}), nil
 }
+
+// DeleteFile removes one regular file after its version guard, if any, is
+// checked under the same path lock as a write. The caller reads the removed
+// text itself when it needs a diff basis.
+func (s *Service) DeleteFile(_ context.Context, request *connect.Request[v1.DeleteFileRequest]) (*connect.Response[v1.DeleteFileResponse], error) {
+	unlock := s.lock(request.Msg.Path)
+	defer unlock()
+	info, err := os.Stat(request.Msg.Path)
+	if os.IsNotExist(err) {
+		return nil, cerr(connect.CodeNotFound, err)
+	}
+	if err != nil {
+		return nil, cerr(connect.CodePermissionDenied, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, cerr(connect.CodeInvalidArgument, errors.New("not a regular file"))
+	}
+	if request.Msg.ExpectedVersion != "" && request.Msg.ExpectedVersion != version(info) {
+		return nil, cerr(connect.CodeFailedPrecondition, errors.New("version mismatch"))
+	}
+	if err := os.Remove(request.Msg.Path); err != nil {
+		if os.IsPermission(err) {
+			return nil, cerr(connect.CodePermissionDenied, err)
+		}
+		return nil, cerr(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&v1.DeleteFileResponse{}), nil
+}
+
 func (s *Service) Stat(_ context.Context, request *connect.Request[v1.StatRequest]) (*connect.Response[v1.StatResponse], error) {
 	info, err := stat(request.Msg.Path, request.Msg.FollowSymlinks)
 	if os.IsNotExist(err) {
@@ -507,7 +539,7 @@ func (s *Service) Stat(_ context.Context, request *connect.Request[v1.StatReques
 	if err != nil {
 		return nil, cerr(connect.CodePermissionDenied, err)
 	}
-	return connect.NewResponse(&v1.StatResponse{Exists: true, Type: fileType(info), Size: info.Size(), Version: version(info)}), nil
+	return connect.NewResponse(&v1.StatResponse{Exists: true, Type: fileType(info), Size: info.Size(), Version: version(info), Mode: uint32(info.Mode().Perm())}), nil
 }
 func (s *Service) List(_ context.Context, request *connect.Request[v1.ListRequest]) (*connect.Response[v1.ListResponse], error) {
 	entries, err := os.ReadDir(request.Msg.Path)

@@ -7,6 +7,7 @@ import { PtcService } from "./gen/dsh/yawn/v1/ptc_pb.js";
 import { TerminalService } from "./gen/dsh/yawn/v1/terminal_pb.js";
 import {
   RunnerService,
+  type DeleteFileRequest,
   type EditFileRequest,
   type ExecRequest,
   type GitCredential,
@@ -96,6 +97,13 @@ export class RunnerClient {
 
   editFile(request: Omit<EditFileRequest, "$typeName">, options?: CallOptions) {
     return this.client.editFile(request, options);
+  }
+
+  deleteFile(
+    request: Omit<DeleteFileRequest, "$typeName">,
+    options?: CallOptions,
+  ) {
+    return this.client.deleteFile(request, options);
   }
 
   stat(request: Omit<StatRequest, "$typeName">, options?: CallOptions) {
