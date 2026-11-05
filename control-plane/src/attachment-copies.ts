@@ -229,6 +229,7 @@ export class AttachmentCopies {
           path: target,
           content: bytes,
           guard: { case: "createIfAbsent", value: true },
+          mode: 0,
         },
         signal === undefined ? {} : { signal },
       );

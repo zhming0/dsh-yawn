@@ -183,6 +183,10 @@ keeps everything else in the profile, including plugins installed from the Web
 UI. If that refresh fails, the seed logs a warning, keeps the previous
 `package.json` as `package.json.before-reseed`, and retries on the next boot.
 
+dsh 0.2.2 folds the Git worktree entry into change requests and worktrees. If
+the profile enabled the standalone `@deepseek-ai/dsh-experimental-tool-worktree`
+plugin, remove it from `dsh.profile.bundles` before upgrading.
+
 ## VM or other Docker host
 
 The same control-plane image runs as one Docker container on any machine you

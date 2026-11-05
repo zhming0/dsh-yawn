@@ -4,7 +4,9 @@ set -euo pipefail
 # `buf generate` drives three plugins: two Go binaries and one Node binary. The
 # Go plugins come from mise.toml; protoc-gen-es comes from pnpm below.
 source "$(dirname "$0")/lib/mise.bash"
-ensure_tools
+ensure_tools node go \
+  "go:google.golang.org/protobuf/cmd/protoc-gen-go" \
+  "go:connectrpc.com/connect/cmd/protoc-gen-connect-go"
 
 echo "--- :pnpm: Installing dependencies"
 buildkite-agent cache restore --name pnpm

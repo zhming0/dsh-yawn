@@ -77,7 +77,7 @@ export function mediaSessionRoute(
   response: ServerResponse,
   next: () => Promise<void>,
 ) => Promise<void> {
-  return (request, _response, next) => {
+  return (request, response, next) => {
     if (
       (request.method !== "GET" && request.method !== "HEAD") ||
       pathname(request.url) !== MEDIA_ROUTE
@@ -90,12 +90,60 @@ export function mediaSessionRoute(
     }
     return sessionController
       .resolveAgent(SessionId(sessionId))
-      .then((resolved) =>
-        "error" in resolved
-          ? next()
-          : agents.withInitiator(resolved.agent, next),
-      );
+      .then((resolved) => {
+        if ("error" in resolved) {
+          return next();
+        }
+        return agents.withInitiator(resolved.agent, () => {
+          keepSessionOnRedirect(response, sessionId);
+          return next();
+        });
+      });
   };
+}
+
+/**
+ * dsh 0.2.2 redirects an unversioned `/api/file` request to a URL carrying
+ * only `path` and the file's `v` version, dropping every other query
+ * parameter. The browser then follows that URL without this bundle's session
+ * parameter, and the sandbox filesystem has no agent to read through. Add the
+ * session back to that redirect, so the versioned request still names its
+ * sandbox.
+ */
+function keepSessionOnRedirect(
+  response: ServerResponse,
+  sessionId: string,
+): void {
+  const writeHead = response.writeHead.bind(response);
+  Object.defineProperty(response, "writeHead", {
+    configurable: true,
+    value: (statusCode: number, ...args: unknown[]) => {
+      if (statusCode === 302) {
+        const headers = typeof args[0] === "string" ? args[1] : args[0];
+        if (headers !== null && typeof headers === "object") {
+          const record = headers as Record<string, unknown>;
+          const key = Object.keys(record).find(
+            (name) => name.toLowerCase() === "location",
+          );
+          const location = key === undefined ? undefined : record[key];
+          if (
+            key !== undefined &&
+            typeof location === "string" &&
+            location.startsWith("?")
+          ) {
+            const params = new URLSearchParams(location.slice(1));
+            params.set(MEDIA_SESSION_PARAM, sessionId);
+            record[key] = `?${params.toString()}`;
+          }
+        }
+      }
+      const result: unknown = Reflect.apply(writeHead, response, [
+        statusCode,
+        ...args,
+      ]);
+      return result;
+    },
+  });
 }
 
 /** The request's pathname, without its query or fragment. */

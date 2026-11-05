@@ -12,14 +12,14 @@ READMEs are unusually detailed and precise. Read them directly:
 
 ```sh
 cd "$(mktemp -d)"
-npm pack @deepseek-ai/dsh-base@0.2.1-rc.5
+npm pack @deepseek-ai/dsh-base@0.2.2-rc.1
 tar xzf *.tgz
 # package/README.md is the spec. package/lib/*.js is the built source, which is
 # readable and worth grepping when a README leaves a detail open. A bundle also
 # carries package/cordis.patch.yml, the rows it contributes.
 ```
 
-This repository pins `0.2.1-rc.5`. Match it, because the surface moves between
+This repository pins `0.2.2-rc.1`. Match it, because the surface moves between
 releases.
 
 ### The model
@@ -77,7 +77,15 @@ likely to mislead you.
   working directory" line, and the `working_directory` tool changes it. It
   starts from the session header's `cwd`, the host anchor, so the
   `sandbox-working-directory` row wraps the live service to answer in sandbox
-  paths.
+  paths. Since 0.2.2 it registers its session projection in async
+  `Service.init` and reads through that handle, so a test that constructs the
+  service directly must call `[Service.init]()` before using it.
+- Since 0.2.2 `dsh-fs` makes `patchText`, `deleteFile`, and `moveFile`
+  abstract. This bundle's provider applies hunks over the existing read/write
+  RPCs with a version guard, and composes a move from a mode-carrying write
+  plus the runner's `DeleteFile` RPC. The stock presets ship `apply_patch` and
+  the observation policy disabled, so enabling `apply_patch` is what exercises
+  these methods.
 - `tool-fs-search` (`glob`, `grep`) injects `subprocess`, not `fs`, and spawns a
   ripgrep binary resolved from the dsh host's `node_modules`, with the session
   cwd and the model's search root in host coordinates. On its own it cannot
@@ -130,7 +138,11 @@ likely to mislead you.
   so it takes the session of the thumbnail just clicked, matched by exact
   URL. A cookie would race across tabs, and a path
   alone never names a sandbox, so there is deliberately no path-based
-  fallback.
+  fallback. Since 0.2.2 an unversioned `/api/file` request gets a
+  `private, no-store` 302 to the same route carrying only `path` and the
+  file's `v`; that lost the session parameter, so `sandbox-media-route`
+  rewrites the redirect's `Location` to add `dsh-yawn-session` back. The
+  versioned response is immutable, so later loads do not redirect.
 
 ## Write code people can maintain
 
@@ -172,6 +184,11 @@ likely to mislead you.
   is operator access.
 - One control plane is one trust domain. Its sessions, credentials, and
   sandboxes are not isolated from other users admitted to that control plane.
+- The stock `web_fetch` backend runs in the control-plane process. Since dsh
+  0.2.2 it does not block loopback, private-network, or cloud metadata
+  addresses. This deployment relies on network policy rather than a URL
+  allowlist; restrict the control plane's egress if the model must not reach
+  those hosts.
 - Secrets live in the control plane's broker store and are pushed to a runner
   before commands, in two scopes: global secrets reach every sandbox, and a
   workspace secret reaches that workspace's sandboxes and overrides a global

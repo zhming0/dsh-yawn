@@ -2,7 +2,7 @@
 set -euo pipefail
 
 source "$(dirname "$0")/lib/mise.bash"
-ensure_tools
+ensure_tools helm
 
 VERSION="$(buildkite-agent meta-data get release-version)"
 CHART="deploy/helm/dsh-yawn"

@@ -179,6 +179,44 @@ func TestWriteGuardsAndEditAmbiguity(t *testing.T) {
 	}
 }
 
+func TestDeleteFileGuardsAndMode(t *testing.T) {
+	s := New("box")
+	p := filepath.Join(t.TempDir(), "script")
+	w, err := s.WriteFile(context.Background(), connect.NewRequest(&v1.WriteFileRequest{
+		Path: p, Content: []byte("#!/bin/sh\n"), Mode: 0o755,
+		Guard: &v1.WriteFileRequest_CreateIfAbsent{CreateIfAbsent: true},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := s.Stat(context.Background(), connect.NewRequest(&v1.StatRequest{Path: p, FollowSymlinks: true}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Msg.Mode != 0o755 {
+		t.Fatalf("mode = %o", info.Msg.Mode)
+	}
+	_, err = s.DeleteFile(context.Background(), connect.NewRequest(&v1.DeleteFileRequest{Path: p, ExpectedVersion: "stale"}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("stale code = %v", connect.CodeOf(err))
+	}
+	if _, err := s.DeleteFile(context.Background(), connect.NewRequest(&v1.DeleteFileRequest{Path: p, ExpectedVersion: w.Msg.Version})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatalf("file still exists: %v", err)
+	}
+	_, err = s.DeleteFile(context.Background(), connect.NewRequest(&v1.DeleteFileRequest{Path: p}))
+	if connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("missing code = %v", connect.CodeOf(err))
+	}
+	directory := t.TempDir()
+	_, err = s.DeleteFile(context.Background(), connect.NewRequest(&v1.DeleteFileRequest{Path: directory}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("directory code = %v", connect.CodeOf(err))
+	}
+}
+
 func TestReadFileRangeWindows(t *testing.T) {
 	s := New("box")
 	p := filepath.Join(t.TempDir(), "file")

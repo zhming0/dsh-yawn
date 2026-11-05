@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import { Context } from "@deepseek-ai/cordis";
 import type { ConnectionIndexResponse } from "@deepseek-ai/dsh-client-connection";
 import type { IndexInjection } from "@deepseek-ai/dsh-host-webserver";
+import type { PeerScope } from "@deepseek-ai/dsh-typert-protocol";
 import { afterEach, describe, expect, it } from "vitest";
 
 import * as passcodeAuth from "../src/passcode-auth.js";
@@ -386,7 +387,7 @@ describe("passcode auth", () => {
   it("advertises the logout route to the web client", async () => {
     mounted = await mount();
     const table: IndexInjection[] = [];
-    mounted.ctx.emit("webserver/index-inject", table);
+    mounted.ctx.emit("webserver/index-inject", table, {} as PeerScope);
     expect(table).toContainEqual({
       kind: "global",
       name: "__DSH_YAWN_AUTH__",
@@ -400,7 +401,7 @@ describe("passcode auth", () => {
     await ctx.fiber.dispose();
     mounted = undefined;
     const table: IndexInjection[] = [];
-    ctx.emit("webserver/index-inject", table);
+    ctx.emit("webserver/index-inject", table, {} as PeerScope);
     expect(table).toEqual([]);
   });
 

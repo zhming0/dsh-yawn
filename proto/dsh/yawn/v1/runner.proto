@@ -14,6 +14,7 @@ service RunnerService {
   rpc ReadFileRange(ReadFileRangeRequest) returns (ReadFileRangeResponse);
   rpc WriteFile(WriteFileRequest) returns (WriteFileResponse);
   rpc EditFile(EditFileRequest) returns (EditFileResponse);
+  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
   rpc Stat(StatRequest) returns (StatResponse);
   rpc List(ListRequest) returns (ListResponse);
   rpc Tree(TreeRequest) returns (TreeResponse);
@@ -138,6 +139,9 @@ message WriteFileRequest {
     bool create_if_absent = 3;
     string expected_version = 4;
   }
+  // Permission bits for the published file. Zero keeps the existing file's
+  // mode, or the backend's default when creating.
+  uint32 mode = 5;
 }
 
 message WriteFileResponse {
@@ -161,6 +165,13 @@ message EditFileResponse {
   string version = 3;
 }
 
+message DeleteFileRequest {
+  string path = 1;
+  string expected_version = 2;
+}
+
+message DeleteFileResponse {}
+
 message StatRequest {
   string path = 1;
   bool follow_symlinks = 2;
@@ -179,6 +190,8 @@ message StatResponse {
   FileType type = 2;
   int64 size = 3;
   string version = 4;
+  // Permission bits, so a move can carry the source's mode to its destination.
+  uint32 mode = 5;
 }
 
 message ListRequest {

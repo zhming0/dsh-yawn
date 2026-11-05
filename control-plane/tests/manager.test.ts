@@ -640,6 +640,7 @@ describe("sandbox lifecycle", () => {
           turn: 1,
           step: 1,
           signal: new AbortController().signal,
+          modelSelection: { provider: "test", model: "test" },
         },
         () => Promise.resolve({ kind: "enter" as const, messages: [prompt] }),
       );
@@ -720,6 +721,7 @@ describe("sandbox lifecycle", () => {
           turn: 1,
           step: 1,
           signal: new AbortController().signal,
+          modelSelection: { provider: "test", model: "test" },
         },
         () => Promise.resolve({ kind: "enter" as const, messages: [prompt] }),
       );
@@ -786,6 +788,7 @@ describe("sandbox lifecycle", () => {
           turn: 1,
           step: 1,
           signal: new AbortController().signal,
+          modelSelection: { provider: "test", model: "test" },
         },
         () => Promise.resolve({ kind: "enter" as const, messages: [prompt] }),
       );
@@ -852,6 +855,7 @@ describe("sandbox lifecycle", () => {
           turn: 1,
           step: 1,
           signal: new AbortController().signal,
+          modelSelection: { provider: "test", model: "test" },
         },
         () => Promise.resolve({ kind: "enter" as const, messages: [prompt] }),
       );
@@ -1087,6 +1091,7 @@ describe("repository workspaces and instructions", () => {
         turn: 1,
         step: 1,
         signal: new AbortController().signal,
+        modelSelection: { provider: "test", model: "test" },
       },
       () => Promise.resolve({ kind: "enter", messages: [] }),
     );
@@ -1101,6 +1106,7 @@ describe("repository workspaces and instructions", () => {
         turn: 1,
         step: 1,
         signal: new AbortController().signal,
+        modelSelection: { provider: "test", model: "test" },
       },
       () => Promise.resolve({ kind: "enter", messages: [prompt] }),
     );
@@ -1459,6 +1465,7 @@ describe("Scratch workspace", () => {
         turn: 1,
         step: 1,
         signal: new AbortController().signal,
+        modelSelection: { provider: "test", model: "test" },
       },
       () => Promise.resolve({ kind: "enter" as const, messages: [prompt] }),
     );

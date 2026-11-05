@@ -10,15 +10,18 @@ import {
   FsError,
   FsTargetKey,
   FsVersion,
+  type FsDeleteOutcome,
   type FsDirEntry,
   type FsEditOutcome,
   type FsEditRequest,
   type FsInfo,
+  type FsMoveOutcome,
   type FsPathInfo,
   type FsTarget,
   type FsWriteIntent,
   type FsWriteOutcome,
 } from "@deepseek-ai/dsh-fs";
+import { applyHunks, type PatchHunk } from "@deepseek-ai/dsh-fs-patch";
 
 import {
   AttachmentCopies,
@@ -256,6 +259,16 @@ export class SandboxFileSystem extends FileSystem {
     expected?: FsWriteIntent,
     signal?: AbortSignal,
   ): Promise<FsWriteOutcome> {
+    return this.writeTextWithMode(target, content, expected, signal);
+  }
+
+  private async writeTextWithMode(
+    target: FsTarget,
+    content: string,
+    expected?: FsWriteIntent,
+    signal?: AbortSignal,
+    mode?: number,
+  ): Promise<FsWriteOutcome> {
     try {
       const client = await this.ctx.sandboxManager.clientForCurrentAgent();
       const result = await client.writeFile(
@@ -268,6 +281,7 @@ export class SandboxFileSystem extends FileSystem {
               : expected?.kind === "replaceIfVersion"
                 ? { case: "expectedVersion", value: String(expected.version) }
                 : { case: undefined },
+          mode: mode ?? 0,
         },
         signalOptions(signal),
       );
@@ -317,6 +331,173 @@ export class SandboxFileSystem extends FileSystem {
       };
     } catch (error) {
       throw mapFileError(error, "edit", target.displayPath, signal);
+    }
+  }
+
+  async patchText(
+    target: FsTarget,
+    hunks: readonly PatchHunk[],
+    expected?: { version: ReturnType<typeof FsVersion> },
+    signal?: AbortSignal,
+  ): Promise<FsEditOutcome> {
+    const original = await this.readText(target, signal);
+    const before = normalizeLineEndings(original);
+    const after = applyPatchHunks(target, before, hunks);
+    const content = restoreLineEndings(after, detectLineEndings(original));
+    const written = await this.writeText(
+      target,
+      content,
+      expected === undefined
+        ? undefined
+        : { kind: "replaceIfVersion", version: expected.version },
+      signal,
+    );
+    return {
+      version: written.version,
+      before,
+      after,
+    };
+  }
+
+  async deleteFile(
+    target: FsTarget,
+    expected?: { version: ReturnType<typeof FsVersion> },
+    signal?: AbortSignal,
+  ): Promise<FsDeleteOutcome> {
+    const before = await this.readTextForDiff(target, signal);
+    try {
+      const client = await this.ctx.sandboxManager.clientForCurrentAgent();
+      await client.deleteFile(
+        {
+          path: this.processPath(target),
+          expectedVersion:
+            expected === undefined ? "" : String(expected.version),
+        },
+        signalOptions(signal),
+      );
+      return { before };
+    } catch (error) {
+      throw mapFileError(error, "delete", target.displayPath, signal);
+    }
+  }
+
+  async moveFile(
+    source: FsTarget,
+    destination: FsTarget,
+    options: {
+      hunks?: readonly PatchHunk[];
+      expectedSource?: { version: ReturnType<typeof FsVersion> };
+      expectedDestination?: FsWriteIntent;
+    },
+    signal?: AbortSignal,
+  ): Promise<FsMoveOutcome> {
+    if (this.processPath(source) === this.processPath(destination)) {
+      throw new FsError(
+        `cannot move "${source.displayPath}" to itself`,
+        "FS_SAME_TARGET",
+      );
+    }
+    const sourceInfo = await this.runnerStat(source, signal);
+    if (sourceInfo === undefined) {
+      throw new FsError(
+        `cannot move "${source.displayPath}": file changed since it was read`,
+        "FS_STALE_VERSION",
+      );
+    }
+    if (
+      options.expectedSource !== undefined &&
+      sourceInfo.version !== String(options.expectedSource.version)
+    ) {
+      throw new FsError(
+        `cannot move "${source.displayPath}": file changed since it was read`,
+        "FS_STALE_VERSION",
+      );
+    }
+    const original = await this.readText(source, signal);
+    const sourceBefore = normalizeLineEndings(original);
+    const after =
+      options.hunks === undefined
+        ? sourceBefore
+        : applyPatchHunks(source, sourceBefore, options.hunks);
+    const content =
+      options.hunks === undefined
+        ? original
+        : restoreLineEndings(after, detectLineEndings(original));
+    const destinationOutcome = await this.writeTextWithMode(
+      destination,
+      content,
+      options.expectedDestination,
+      signal,
+      sourceInfo.mode,
+    );
+    try {
+      await this.deleteFile(
+        source,
+        options.expectedSource ?? { version: FsVersion(sourceInfo.version) },
+        signal,
+      );
+    } catch (error) {
+      if (signal?.aborted === true) {
+        throw error;
+      }
+      const failure =
+        error instanceof FsError
+          ? error
+          : mapFileError(error, "move", source.displayPath, signal);
+      return {
+        sourceBefore,
+        destination: destinationOutcome,
+        sourceDeleted: false,
+        sourceFailure: { code: failure.code, message: failure.message },
+      };
+    }
+    return {
+      sourceBefore,
+      destination: destinationOutcome,
+      sourceDeleted: true,
+    };
+  }
+
+  /** Stat a target directly, including the permission bits a move carries. */
+  private async runnerStat(
+    target: FsTarget,
+    signal?: AbortSignal,
+  ): Promise<{ version: string; mode: number } | undefined> {
+    try {
+      const client = await this.ctx.sandboxManager.clientForCurrentAgent();
+      const result = await client.stat(
+        { path: this.processPath(target), followSymlinks: true },
+        signalOptions(signal),
+      );
+      return result.exists
+        ? { version: result.version, mode: result.mode }
+        : undefined;
+    } catch (error) {
+      throw mapFileError(error, "stat", target.displayPath, signal);
+    }
+  }
+
+  /**
+   * Read a text basis for a removal diff. Binary, oversized, or unreadable
+   * content has no basis, matching the local provider; cancellation still
+   * propagates.
+   */
+  private async readTextForDiff(
+    target: FsTarget,
+    signal?: AbortSignal,
+  ): Promise<string | null> {
+    try {
+      return normalizeLineEndings(await this.readText(target, signal));
+    } catch (error) {
+      if (
+        error instanceof FsError &&
+        (error.code === "FS_NOT_TEXT" ||
+          error.code === "FS_TOO_LARGE" ||
+          error.code === "FS_PERMISSION_DENIED")
+      ) {
+        return null;
+      }
+      throw error;
     }
   }
 
@@ -384,6 +565,35 @@ function mapFileError(
     code,
     { cause: error },
   );
+}
+
+function applyPatchHunks(
+  target: FsTarget,
+  before: string,
+  hunks: readonly PatchHunk[],
+): string {
+  const result = applyHunks(before, hunks);
+  if (!result.ok) {
+    throw new FsError(
+      `cannot patch "${target.displayPath}": hunk at patch line ` +
+        `${result.failure.hunkLineNumber} (${result.failure.stage}) does not match`,
+      "FS_PATCH_MISMATCH",
+    );
+  }
+  return result.after;
+}
+
+function detectLineEndings(value: string): "LF" | "CRLF" {
+  const sample = value.slice(0, 4096);
+  const crlf = sample.split("\r\n").length - 1;
+  const lf = sample.split("\n").length - 1 - crlf;
+  return crlf > lf ? "CRLF" : "LF";
+}
+
+function restoreLineEndings(value: string, lineEndings: "LF" | "CRLF"): string {
+  return lineEndings === "LF"
+    ? value
+    : normalizeLineEndings(value).split("\n").join("\r\n");
 }
 
 function decodeText(bytes: Uint8Array, path: string): string {

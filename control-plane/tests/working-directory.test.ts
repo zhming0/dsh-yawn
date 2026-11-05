@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { posix } from "node:path";
 
-import { Context } from "@deepseek-ai/cordis";
+import { Context, Service } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { WorkingDirectoryService } from "@deepseek-ai/dsh-working-directory";
 import { describe, expect, it } from "vitest";
@@ -27,7 +27,7 @@ interface FakeSession {
  * initiating agent, and the session's host anchor maps onto the sandbox
  * workspace.
  */
-function drive() {
+async function drive() {
   const ctx = new Context();
   const storage = new AsyncLocalStorage<Agent>();
   const agents = {
@@ -57,16 +57,21 @@ function drive() {
     processPath: (target: Target) => target.path,
   });
   ctx.provide("sessionProjections", {
-    register: () => {},
-    // The stock projection starts from the header's cwd.
-    stateOf: (session: FakeSession) =>
-      session.events.at(-1)?.data.cwd ?? session.header.cwd,
+    // The stock projection starts from the header's cwd, and the service keeps
+    // the returned handle for every read.
+    register: async () => ({
+      stateOf: (session: FakeSession) =>
+        session.events.at(-1)?.data.cwd ?? session.header.cwd,
+    }),
   });
   ctx.provide("systemPrompt", {
     context: () => {},
     getContextOrder: () => 100,
   });
   const service = new WorkingDirectoryService(ctx, {});
+  await (service as unknown as { [Service.init](): Promise<void> })[
+    Service.init
+  ]();
   const undo = useSandboxFrame(service, agents, () => SANDBOX_ROOT);
 
   const session: FakeSession = {
@@ -86,14 +91,14 @@ function drive() {
 }
 
 describe("working directory in sandbox paths", () => {
-  it("reports the sandbox workspace for a session that starts at the host anchor", () => {
-    const { service, agent } = drive();
+  it("reports the sandbox workspace for a session that starts at the host anchor", async () => {
+    const { service, agent } = await drive();
 
     expect(service.get(agent.session)).toBe(SANDBOX_ROOT);
   });
 
   it("validates the sandbox path inside an agent turn", async () => {
-    const { agents, service, agent, session, initiators } = drive();
+    const { agents, service, agent, session, initiators } = await drive();
 
     const cwd = await agents.withInitiator(agent, () => service.ensure(agent));
 
@@ -104,7 +109,7 @@ describe("working directory in sandbox paths", () => {
   });
 
   it("answers outside a turn without reaching the sandbox", async () => {
-    const { service, agent, session, initiators } = drive();
+    const { service, agent, session, initiators } = await drive();
 
     await expect(service.ensure(agent)).resolves.toBe(SANDBOX_ROOT);
     expect(initiators).toEqual([]);
@@ -112,7 +117,7 @@ describe("working directory in sandbox paths", () => {
   });
 
   it("changes directory as the agent it serves, relative to the sandbox path", async () => {
-    const { service, agent, initiators, notices } = drive();
+    const { service, agent, initiators, notices } = await drive();
 
     await expect(service.set(agent, "src")).resolves.toBe(
       `${SANDBOX_ROOT}/src`,
@@ -122,8 +127,8 @@ describe("working directory in sandbox paths", () => {
     expect(JSON.stringify(notices)).not.toContain(HOST_ANCHOR);
   });
 
-  it("restores the stock methods when the row is disposed", () => {
-    const { service, undo, agent } = drive();
+  it("restores the stock methods when the row is disposed", async () => {
+    const { service, undo, agent } = await drive();
 
     undo();
 
