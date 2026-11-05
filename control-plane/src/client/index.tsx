@@ -29,6 +29,7 @@ import { SandboxesSettings } from "./settings.js";
 import { registerSettingsIcons } from "./settings-icons.js";
 import { SecretsSettings } from "./secrets.js";
 import { installMediaSession } from "./media-session.js";
+import { installVideoPreview } from "./video-preview.js";
 
 /**
  * The client bundle entry: mounts the Remote endpoints and registers the
@@ -370,6 +371,10 @@ export async function apply(ctx: Context) {
   // enclosing conversation's session so `sandbox-media-route` can read the
   // right sandbox on the host.
   ctx.effect(() => installMediaSession());
+
+  // The right sidebar's document preview has no video renderer; this registers
+  // one that streams through `sandbox-video-route`.
+  installVideoPreview(ctx);
 
   ctx.slots.inject(
     "settings.section",

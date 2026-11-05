@@ -28,8 +28,8 @@ For dsh plugin internals and implementation notes, see
   backend and its settings; a session picks a profile on its first prompt.
 - The Web UI gains pages for secrets, sandbox profiles, instructions,
   notifications, MCP servers, plugins, a Sandbox tab, a right sidebar for
-  files and terminal access, repository URL Workspaces, and a Scratch
-  Workspace without a repository.
+  files, video previews, and terminal access, repository URL Workspaces, and a
+  Scratch Workspace without a repository.
 - The Web UI does not offer DeepSeek account sign-in. Model access uses API
   keys; the account provider, its `deepseek-account` model route, and the
   account settings and Remote rows are disabled.
@@ -38,6 +38,15 @@ For dsh plugin internals and implementation notes, see
 - Sessions can install plugins from the Web Plugins page, but those run in the
   control-plane process with the control plane's access to sessions and
   credentials.
+
+The right sidebar's document preview plays video files from the session
+workspace. MP4, M4V, MOV, WebM, and Ogg files open with the browser's own
+player; the player streams byte ranges from the sandbox instead of loading the
+complete file, so seeking works and a recording larger than the workspace
+files limit does not have to fit in the control plane's memory. Playback still
+depends on the browser supporting the file's container and codec. Chat's
+inline Markdown images remain images only; open a video from a file link or the
+Files tab to play it.
 
 MCP servers are shared by every session that can use tools, with one
 exception: the stock `minimal` preset is a persona and a persistent shell, so
