@@ -35,6 +35,10 @@
       "types": "./dist/file-reference.d.ts",
       "default": "./dist/file-reference.js"
     },
+    "./forge-credentials": {
+      "types": "./dist/forge-credentials.d.ts",
+      "default": "./dist/forge-credentials.js"
+    },
     "./skills": {
       "types": "./dist/skills.d.ts",
       "default": "./dist/skills.js"
