@@ -12,6 +12,8 @@ import type { PropsRuntime } from "@deepseek-ai/dsh-client-ui-slots";
 
 import type { SessionProfileView } from "../session-profile-remote.js";
 
+import { SandboxIcon } from "./icons.js";
+
 export interface SessionProfileActions {
   getSessionProfile: (sessionId: string) => Promise<SessionProfileView>;
   setSessionProfile: (
@@ -167,24 +169,3 @@ export function SandboxProfileChip({
 
 const labelColor = "var(--dsw-alias-label-secondary)";
 const hoverBackground = "var(--dsw-alias-interactive-bg-hover)";
-
-/** A box glyph in the 16px outline style of dsh's own chip icons; the
- * primitives package ships nothing that reads as a sandbox. */
-function SandboxIcon() {
-  return (
-    <svg
-      aria-hidden
-      width={16}
-      height={16}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.3}
-      strokeLinejoin="round"
-      style={{ flex: "none" }}
-    >
-      <path d="M8 1.75 14 4.75v6.5L8 14.25 2 11.25v-6.5L8 1.75Z" />
-      <path d="M2 4.75 8 7.75l6-3M8 7.75v6.5" />
-    </svg>
-  );
-}
