@@ -329,6 +329,24 @@ markup, which are implementation details of the pinned dsh release, not a
 promised interface. The clean long-term fix is the session id in the route's own URL,
 which is an upstream change.
 
+The right sidebar's document preview has no video renderer in the pinned dsh
+release: MP4 and its neighbours are on the stock list of known binary files
+that the preview cannot show. The bundle adds one from its browser half. It
+registers a definition with `ctx.documentPreviews.register` and a body under
+the same id in the keyed `sidebar.right.tab.document` slot, then renders the
+browser's own `<video>` controls. The source is a separate authenticated
+`/api/yawn-video` Fetch route, `sandbox-video-route`, rather than `/api/file`:
+that route reads a complete file under the image limit and has no byte-range
+support, so it can neither seek nor play a recording larger than the
+workspace-files complete-file cap. The browser sends the session in
+`dsh-yawn-session` and the absolute sandbox path; the route resolves that
+session to its agent, then runs `ctx.fs.stat` and bounded
+`ctx.fs.readByteRange` calls under `agents.withInitiator`. It answers single
+byte ranges with 206 and streams one chunk at a time, so the control plane
+never holds the whole recording. The renderer is part of the same browser
+bundle as the image rewrite; disabling either half leaves the stock
+unsupported-file message.
+
 The right sidebar's **Terminal** tab (`terminal-controller`,
 `ui-sidebar-terminal`) opens an interactive shell in the session workspace. The
 stock controller allocates it through `ctx.subprocess.spawnTerminal`, and this

@@ -198,6 +198,16 @@
     - id: sandbox-media-route
       name: '@zhming0/dsh-yawn/media-route'
 
+    # Serves video bytes to the right sidebar's document preview. dsh's
+    # `/api/file` route reads complete files under the image limit and has no
+    # byte-range support, so a `<video>` cannot stream or seek through it. This
+    # route is separate and authenticated like any other `/api` route; the
+    # browser preview names the session in its query, and the row runs each
+    # read as that session's agent, the same boundary the image route uses.
+    # Web-only, like the rows above.
+    - id: sandbox-video-route
+      name: '@zhming0/dsh-yawn/video-route'
+
     # Skills authored in this package as TypeScript modules, for the reason the
     # stock skill rows cannot serve a sandbox: `dsh-skill-filesystem` reads its
     # user roots through the sandbox filesystem, so `$DSH_HOME/skills` on the

@@ -143,6 +143,14 @@ likely to mislead you.
   file's `v`; that lost the session parameter, so `sandbox-media-route`
   rewrites the redirect's `Location` to add `dsh-yawn-session` back. The
   versioned response is immutable, so later loads do not redirect.
+- The right sidebar's document preview is extensible by a client plugin:
+  register a definition with `ctx.documentPreviews.register` and a body under
+  the same id in the keyed `sidebar.right.tab.document` slot. A video cannot
+  use `/api/file`, which reads a complete file under the image limit and has
+  no byte ranges. This bundle's `video-route` serves an authenticated
+  `/api/yawn-video` with single-range 206 responses, reading
+  `ctx.fs.readByteRange` as the session named by `dsh-yawn-session`; the
+  client's `video-preview` registers MP4, M4V, MOV, WebM, and Ogg.
 
 ## Write code people can maintain
 
