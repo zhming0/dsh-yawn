@@ -17,6 +17,8 @@
   </picture>
 </p>
 
+https://github.com/user-attachments/assets/a3153712-b86d-4bc5-aacd-d93ce32a0627
+
 ## Why
 
 [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh) is a great
