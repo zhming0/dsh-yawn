@@ -26,6 +26,7 @@ import { GitCredentialsSettings } from "./git-credentials.js";
 import { logoutPath } from "./logout-route.js";
 import { MoreMenu, MORE_MENU_STYLE } from "./more-menu.js";
 import { SandboxesSettings } from "./settings.js";
+import { registerSettingsIcons } from "./settings-icons.js";
 import { SecretsSettings } from "./secrets.js";
 import { installMediaSession } from "./media-session.js";
 
@@ -50,6 +51,8 @@ export async function apply(ctx: Context) {
     }
     return result.value;
   };
+
+  registerSettingsIcons(ctx);
 
   ctx.inject(["remote.sandboxManager"], (remoteCtx) => {
     const injectedSecrets = () => ({

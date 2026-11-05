@@ -15,6 +15,8 @@ import type {
   SessionMcpView,
 } from "../session-mcp-remote.js";
 
+import { PlugIcon } from "./icons.js";
+
 export interface SessionMcpActions {
   getSessionMcp: (sessionId: string) => Promise<SessionMcpView>;
   setSessionMcp: (
@@ -196,25 +198,3 @@ function caption(server: SessionMcpServer): string {
 
 const labelColor = "var(--dsw-alias-label-secondary)";
 const hoverBackground = "var(--dsw-alias-interactive-bg-hover)";
-
-/** A plug glyph in the 16px outline style of dsh's own chip icons. */
-function PlugIcon() {
-  return (
-    <svg
-      aria-hidden
-      width={16}
-      height={16}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.3}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      style={{ flex: "none" }}
-    >
-      <path d="M5.75 1.75v3M10.25 1.75v3" />
-      <path d="M3.75 4.75h8.5v2.5a4.25 4.25 0 0 1-8.5 0v-2.5Z" />
-      <path d="M8 11.5v2.75" />
-    </svg>
-  );
-}
