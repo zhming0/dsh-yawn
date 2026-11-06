@@ -146,11 +146,13 @@ export class McpPool {
         entry.auth === "oauth"
           ? this.store.oauthStatus(entry.serverName)
           : undefined;
-      const toolCount =
+      const tools =
         live === undefined
-          ? 0
-          : names.filter((name) => isToolOfServer(name, entry.serverName))
-              .length;
+          ? []
+          : names
+              .filter((name) => isToolOfServer(name, entry.serverName))
+              .sort();
+      const toolCount = tools.length;
       // Tools in the registry outrank a recorded failure: a reconnect that
       // succeeded after the first handshake failed publishes its tools
       // without settling anything, and the row must stop reporting the old
@@ -180,6 +182,7 @@ export class McpPool {
         ...(authorization === undefined ? {} : { authorization }),
         status,
         toolCount: status === "connected" ? toolCount : 0,
+        tools: status === "connected" ? tools : [],
         ...(error === undefined ? {} : { error }),
       };
     });

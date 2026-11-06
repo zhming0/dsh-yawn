@@ -33,12 +33,12 @@
  * either, and hiding the tool schemas is the whole policy there.
  *
  * The row also hides the servers one session turned off in the New Session
- * row's MCP menu, read from the sandbox manager. Those agents run a full persona,
- * so hiding schemas is not enough: each server's `mcp:<server>` instructions
- * section is dropped from the assembled prompt, and the shared
- * `mcp-resource-servers` section either loses the hidden names or, once the
- * resource tools are hidden too, goes entirely. The sandbox manager emits
- * `sandbox-manager/session-mcp-change` when a choice changes.
+ * row's MCP menu or the MCP view, read from the sandbox manager. Those agents
+ * run a full persona, so hiding schemas is not enough: each server's
+ * `mcp:<server>` instructions section is dropped from the assembled prompt,
+ * and the shared `mcp-resource-servers` section either loses the hidden names
+ * or, once the resource tools are hidden too, goes entirely. The sandbox
+ * manager emits `sandbox-manager/session-mcp-change` when a choice changes.
  *
  * @module @zhming0/dsh-yawn/mcp-tool-exclusion
  */
@@ -110,6 +110,18 @@ export interface HiddenSessionServers {
 
 /** Which MCP servers one agent must not see; "all" for an excluded preset. */
 export type HiddenServers = "all" | HiddenSessionServers;
+
+/** What other rows may ask about this row's policy. */
+export interface McpToolExclusionService {
+  /** Whether the agent's live preset hides every MCP tool. */
+  excludes(agent: Agent): boolean;
+}
+
+declare module "@deepseek-ai/cordis" {
+  interface Context {
+    mcpToolExclusion: McpToolExclusionService;
+  }
+}
 
 /**
  * The tool names one agent must not see, sorted: every MCP name for an
@@ -288,16 +300,22 @@ export class McpToolExclusion {
    * otherwise its session's choice; undefined when it sees every server.
    */
   hiddenServers(agent: Agent): HiddenServers | undefined {
-    if (this.excluded.size > 0) {
-      const preset = this.options.presetFor(agent);
-      if (preset !== undefined && this.excluded.has(preset)) {
-        return "all";
-      }
+    if (this.excludedPreset(agent)) {
+      return "all";
     }
     const { servers, everyServer } = this.options.sessionHiddenFor(agent);
     return servers.length === 0
       ? undefined
       : { servers: new Set(servers), everyServer };
+  }
+
+  /** Whether one agent's live preset is on this row's exclude list. */
+  excludedPreset(agent: Agent): boolean {
+    if (this.excluded.size === 0) {
+      return false;
+    }
+    const preset = this.options.presetFor(agent);
+    return preset !== undefined && this.excluded.has(preset);
   }
 
   private hiddenNames(agent: Agent, names: readonly string[]): string[] {
@@ -447,6 +465,13 @@ export const name = "mcp-tool-exclusion";
 export function apply(ctx: Context, config: Config): void {
   const warn = (message: string) =>
     ctx.logger("mcp-tool-exclusion").warn(message);
+  // The manager renders the session's MCP view but cannot see this row's
+  // config. Publish the one fact it needs; the policy itself is created below,
+  // once the services this row injects are live.
+  let policy: McpToolExclusion | undefined;
+  ctx.provide("mcpToolExclusion", {
+    excludes: (agent) => policy?.excludedPreset(agent) === true,
+  });
   ctx.inject(["agents", "tools"], (scope) => {
     const exclusion = new McpToolExclusion({
       excludedPresets: config.excludedPresets,
@@ -471,6 +496,7 @@ export function apply(ctx: Context, config: Config): void {
       toolNames: () => scope.tools.schemas().map((schema) => schema.name),
       warn,
     });
+    policy = exclusion;
     // Covers agents that already exist when the row mounts; a later
     // `tools/change` covers a preset rebound on a blank session.
     exclusion.reconcile();

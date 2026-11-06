@@ -31,8 +31,8 @@ type SessionMcpChipProps = PropsRuntime<"conversation.hero.options"> &
 /**
  * New Session row control that turns MCP servers off for one session before
  * its first prompt, so their tool schemas and instructions stay out of every
- * request. The row only renders for a blank session, which is exactly when
- * the choice can change. Hidden when no server is enabled.
+ * request. The row only renders for a blank session; the MCP view reads and
+ * edits the same choice later. Hidden when no server is enabled.
  */
 export function SessionMcpChip({
   sessionId: id,
@@ -74,10 +74,13 @@ export function SessionMcpChip({
   const enabled = view.servers.filter(
     (server) => !disabledSet.has(server.serverName),
   );
+  // A preset that hides every MCP tool overrides the choice, so there is
+  // nothing to turn off here; the MCP view shows the same fact with the list.
+  const presetHides = view.presetHidesMcp;
 
   // The menu stays open so several servers can be toggled in one visit.
   const toggle = (serverName: string) => {
-    if (busy || view.locked) {
+    if (busy || presetHides) {
       return;
     }
     const next = disabledSet.has(serverName)
@@ -94,7 +97,6 @@ export function SessionMcpChip({
       .finally(() => setBusy(false));
   };
 
-  const disabled = view.locked;
   const label =
     enabled.length === view.servers.length
       ? "MCP"
@@ -139,11 +141,11 @@ export function SessionMcpChip({
           data-testid="dsh-yawn-session-mcp"
           aria-label={`MCP servers: ${enabled.length} of ${view.servers.length} on`}
           title={
-            view.locked
-              ? "MCP servers cannot change after the first prompt"
+            presetHides
+              ? "This session's preset hides every MCP tool"
               : "Turn MCP servers off for this session"
           }
-          disabled={disabled}
+          disabled={presetHides}
           onClick={() => setOpen(!open)}
           style={{
             display: "inline-flex",
@@ -151,11 +153,11 @@ export function SessionMcpChip({
             gap: 4,
             height: 28,
             padding: "0 4px 0 8px",
-            background: hovered && !disabled ? hoverBackground : "none",
+            background: hovered && !presetHides ? hoverBackground : "none",
             border: "none",
             borderRadius: 24,
-            color: disabled ? "var(--dsw-alias-label-dimmed)" : labelColor,
-            cursor: disabled ? "default" : "pointer",
+            color: presetHides ? "var(--dsw-alias-label-dimmed)" : labelColor,
+            cursor: presetHides ? "default" : "pointer",
             font: "inherit",
             fontSize: 13,
             fontWeight: 500,

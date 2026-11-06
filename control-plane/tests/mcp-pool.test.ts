@@ -156,6 +156,7 @@ describe("MCP pool", () => {
         hasToken: true,
         status: "starting",
         toolCount: 0,
+        tools: [],
       },
       {
         serverName: "beta",
@@ -166,6 +167,7 @@ describe("MCP pool", () => {
         hasToken: false,
         status: "disabled",
         toolCount: 0,
+        tools: [],
       },
     ]);
 

@@ -312,7 +312,7 @@ export class SandboxManager extends TypertRemoteService {
       store,
       servers: () => this.mcpStore.list(),
       views: () => this.mcpPool.views(),
-      started: (sessionId) => this.sessionStarted(sessionId),
+      turnLive: (sessionId) => this.idle.isTurnLive(sessionId),
       changed: () => this.ctx.emit("sandbox-manager/session-mcp-change"),
       warn: (message) => this.ctx.logger("sandbox").warn(message),
     });
@@ -483,10 +483,17 @@ export class SandboxManager extends TypertRemoteService {
       if (event.type === "turn/start") {
         this.idle.beginTurn(sessionId);
         // The turn decides which servers this session runs with; freeze that,
-        // so a later default change cannot rewrite a running session.
+        // so a later default change cannot rewrite a running session. The
+        // snapshot follows the freeze, which may have written the defaults.
         this.mcpChoice.freeze(sessionId, event.data.turn);
+        this.mcpChoice.beginTurn(sessionId);
       } else if (event.type === "turn/end") {
         this.idle.endTurn(sessionId);
+        // A switch thrown while the turn ran becomes effective here, before
+        // the next request is assembled.
+        if (this.mcpChoice.endTurn(sessionId)) {
+          this.ctx.emit("sandbox-manager/session-mcp-change");
+        }
         // An archive that landed mid-turn waits for the turn to finish.
         this.archiveRelease.reconcile();
       }
@@ -909,10 +916,11 @@ export class SandboxManager extends TypertRemoteService {
     return this.profileChoice.set(sessionId, profile);
   }
 
-  /** MCP server choices for the New Session row; `locked` after the first prompt. */
+  /** MCP server choices for this session, and whether its preset overrides them. */
   async getSessionMcp(sessionId: string): Promise<SessionMcpView> {
     await this.ready;
-    return this.mcpChoice.view(sessionId);
+    const view = this.mcpChoice.view(this.choiceSessionId(sessionId));
+    return { ...view, presetHidesMcp: this.presetHidesMcp(sessionId) };
   }
 
   async setSessionMcp(
@@ -920,7 +928,35 @@ export class SandboxManager extends TypertRemoteService {
     disabled: string[],
   ): Promise<SessionMcpView> {
     await this.ready;
-    return this.mcpChoice.set(sessionId, disabled);
+    const view = await this.mcpChoice.set(
+      this.choiceSessionId(sessionId),
+      disabled,
+    );
+    return { ...view, presetHidesMcp: this.presetHidesMcp(sessionId) };
+  }
+
+  /**
+   * The session whose stored choice this one edits. A subagent shares its
+   * root's sandbox and tool mask, so it must read and write the root's choice:
+   * its own id would name a record nothing consults.
+   */
+  private choiceSessionId(sessionId: string): string {
+    const agent = this.agentLookup(sessionId);
+    return agent === undefined ? sessionId : this.rootSessionId(agent);
+  }
+
+  /**
+   * Whether the session's preset hides every MCP tool, whatever its choice
+   * says. The mcp-tool-exclusion row owns that policy; asking it keeps this
+   * row from guessing the cause from the tool list. A session with no live
+   * agent cannot be asked, so its switches stay enabled until it wakes.
+   */
+  private presetHidesMcp(sessionId: string): boolean {
+    const agent = this.agentLookup(sessionId);
+    if (agent === undefined) {
+      return false;
+    }
+    return this.ctx.get("mcpToolExclusion")?.excludes(agent) === true;
   }
 
   /**
@@ -929,22 +965,6 @@ export class SandboxManager extends TypertRemoteService {
    */
   hiddenMcpServers(agent: Agent): SessionHiddenServers {
     return this.mcpChoice.hidden(this.rootSessionId(agent));
-  }
-
-  /**
-   * Whether a session has sent a prompt. A session with a sandbox has; one
-   * with no live agent cannot be checked, and a blank Web session always has
-   * one, so it counts as started.
-   */
-  private sessionStarted(sessionId: string): boolean {
-    if (this.engine.record(sessionId) !== undefined) {
-      return true;
-    }
-    const agent = this.agentLookup(sessionId);
-    return (
-      agent === undefined ||
-      agent.session.deriveMessages().some((message) => message.role === "user")
-    );
   }
 
   /**

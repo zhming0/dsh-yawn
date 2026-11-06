@@ -39,6 +39,8 @@ export interface McpServerView {
   authorization?: McpAuthorizationView;
   status: McpServerStatus;
   toolCount: number;
+  /** Registered tool names, sorted; empty unless the server is connected. */
+  tools: string[];
   error?: string;
 }
 
@@ -167,6 +169,8 @@ const viewSchema: TypertSchema<McpServerView> = {
         !isAuthorizationView(record.authorization)) ||
       !statuses.includes(record.status as McpServerStatus) ||
       typeof record.toolCount !== "number" ||
+      !Array.isArray(record.tools) ||
+      record.tools.some((name: unknown) => typeof name !== "string") ||
       (record.error !== undefined && typeof record.error !== "string")
     ) {
       throw new TypeError("expected an MCP server view");
@@ -205,6 +209,8 @@ const testResultSchema: TypertSchema<McpTestResult> = {
     if (
       typeof record.ok !== "boolean" ||
       typeof record.toolCount !== "number" ||
+      !Array.isArray(record.tools) ||
+      record.tools.some((name: unknown) => typeof name !== "string") ||
       (record.error !== undefined && typeof record.error !== "string")
     ) {
       throw new TypeError("expected an MCP test result");
