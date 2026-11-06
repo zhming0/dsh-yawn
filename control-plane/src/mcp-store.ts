@@ -26,8 +26,8 @@ export interface McpServerEntry {
   enabled: boolean;
   /**
    * Start new sessions with this server turned off. A session still decides
-   * for itself before its first prompt, and this only supplies the default,
-   * for a server that is rarely worth its tool schemas.
+   * for itself, and this only supplies the default, for a server that is
+   * rarely worth its tool schemas.
    */
   offByDefault: boolean;
 }

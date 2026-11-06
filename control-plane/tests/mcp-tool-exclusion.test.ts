@@ -340,6 +340,19 @@ describe("apply", () => {
   });
 });
 
+describe("mcpToolExclusion service", () => {
+  it("reports the preset that hides every MCP tool", async () => {
+    const harness = makeHarness({ preset: "minimal" });
+    apply(harness.ctx, { excludedPresets: ["minimal"] });
+    await flush();
+
+    const service = harness.ctx.get("mcpToolExclusion");
+    expect(service?.excludes(harness.agent)).toBe(true);
+    harness.selectPreset("standard");
+    expect(service?.excludes(harness.agent)).toBe(false);
+  });
+});
+
 describe("McpToolExclusion.dispose", () => {
   it("ignores registry changes and syncs after disposal", () => {
     const harness = makeHarness();

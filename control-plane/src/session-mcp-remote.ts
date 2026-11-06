@@ -11,6 +11,8 @@ export interface SessionMcpServer {
   serverName: string;
   status: McpServerStatus;
   toolCount: number;
+  /** Registered tool names of this server, sorted. */
+  tools: string[];
 }
 
 export interface SessionMcpView {
@@ -18,8 +20,11 @@ export interface SessionMcpView {
   servers: SessionMcpServer[];
   /** The listed servers this session turned off. */
   disabled: string[];
-  /** True once the session has sent a prompt; the choice can no longer change. */
-  locked: boolean;
+  /**
+   * The session's agent hides the MCP tools its choice leaves on, so the
+   * switches cannot affect it. Only known for a live session.
+   */
+  presetHidesMcp: boolean;
 }
 
 /** The namespace map declaration lives in remote-contributions.ts. */
@@ -76,13 +81,16 @@ const viewSchema: TypertSchema<SessionMcpView> = {
           !("status" in entry) ||
           !statuses.includes(entry.status as McpServerStatus) ||
           !("toolCount" in entry) ||
-          typeof entry.toolCount !== "number",
+          typeof entry.toolCount !== "number" ||
+          !("tools" in entry) ||
+          !Array.isArray(entry.tools) ||
+          entry.tools.some((name: unknown) => typeof name !== "string"),
       ) ||
       !("disabled" in value) ||
       !Array.isArray(value.disabled) ||
       value.disabled.some((entry: unknown) => typeof entry !== "string") ||
-      !("locked" in value) ||
-      typeof value.locked !== "boolean"
+      !("presetHidesMcp" in value) ||
+      typeof value.presetHidesMcp !== "boolean"
     ) {
       throw new TypeError("expected a session MCP view");
     }

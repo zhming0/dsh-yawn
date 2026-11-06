@@ -22,6 +22,7 @@ import { SandboxProfileChip } from "./profile.js";
 import { RepositoryDirectoryFlow } from "./repository-directory-flow.js";
 import { SandboxStatusTab } from "./sandbox.js";
 import { SessionMcpChip } from "./session-mcp.js";
+import { McpServersView } from "./session-mcp-view.js";
 import { GitCredentialsSettings } from "./git-credentials.js";
 import { logoutPath } from "./logout-route.js";
 import { MoreMenu, MORE_MENU_STYLE } from "./more-menu.js";
@@ -218,8 +219,9 @@ export async function apply(ctx: Context) {
           ),
         ),
     });
-    // The New Session row, not the composer: the choice only changes before
-    // the first prompt, which is exactly when that row is on screen.
+    // The New Session row: it is on screen exactly while the session is blank,
+    // which is the cheapest moment to turn a server off. The MCP view edits the
+    // same choice later.
     remoteCtx.slots.inject(
       "conversation.hero.options",
       function* registerSessionMcpChip() {
@@ -258,6 +260,22 @@ export async function apply(ctx: Context) {
         );
       },
     );
+    remoteCtx.slots.inject("conversation.view", function* registerMcpView() {
+      yield remoteCtx.slots.register(
+        {
+          name: "conversation.view",
+          id: "dsh-yawn.mcp",
+          // After Chat (0), Trajectory (10), and Sandbox (20).
+          order: 30,
+          label: () => "MCP",
+          inject: (sessionId) => ({
+            sessionId,
+            ...injectedSessionMcp(),
+          }),
+        },
+        McpServersView,
+      );
+    });
   });
 
   ctx.inject(["remote.sandboxManager"], (remoteCtx) => {
