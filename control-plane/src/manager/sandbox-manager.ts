@@ -14,7 +14,11 @@ import type {} from "@deepseek-ai/dsh-typert-registry";
 import { TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
 import { artifactsDirectory } from "../artifacts.js";
-import { CredentialBroker, GLOBAL_SECRET_SCOPE } from "../broker.js";
+import {
+  CredentialBroker,
+  GLOBAL_SECRET_SCOPE,
+  type GitCredential,
+} from "../broker.js";
 import {
   resolveBuildkiteToken,
   type CredentialResolver,
@@ -747,6 +751,20 @@ export class SandboxManager extends TypertRemoteService {
     await this.ready;
     await this.broker.refresh();
     return this.secretSettings();
+  }
+
+  /**
+   * Resolve one host's Git credential for an in-process plugin. A repository
+   * URL adds that Workspace's overrides; without one only the global scope
+   * applies. Values never reach a browser.
+   */
+  async gitCredential(
+    host: string,
+    repositoryUrl?: string,
+  ): Promise<GitCredential | undefined> {
+    await this.ready;
+    await this.broker.refresh();
+    return this.broker.gitCredential(host, repositoryUrl);
   }
 
   /** Store one global secret; values never flow back. */

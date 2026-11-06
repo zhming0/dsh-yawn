@@ -144,6 +144,13 @@
     - id: sandbox-manager
       name: '@zhming0/dsh-yawn'
 
+    # The credential source for in-process plugins that need to call a Git
+    # host. It resolves from the same broker and scopes as sandbox Git; a
+    # plugin without this service falls back to dsh credentials or its own
+    # environment.
+    - id: sandbox-forge-credentials
+      name: '@zhming0/dsh-yawn/forge-credentials'
+
     - id: sandbox-fs
       name: '@zhming0/dsh-yawn/fs'
 

@@ -76,6 +76,75 @@ describe("credential broker", () => {
     ]);
   });
 
+  it("serves the global credential without a repository and the workspace one with it", async () => {
+    const broker = new CredentialBroker({
+      path: join(directory, "broker.json"),
+    });
+    await broker.initialize();
+    await broker.setSecret(GLOBAL_SECRET_SCOPE, "GITHUB_TOKEN", "global-pat");
+    await broker.setSecret(
+      workspace("https://github.com/example/repo.git"),
+      "GITHUB_TOKEN",
+      "workspace-pat",
+    );
+
+    expect(broker.globalGitCredentials()).toEqual([
+      {
+        host: "github.com",
+        username: "x-access-token",
+        password: "global-pat",
+      },
+    ]);
+    expect(
+      await broker.gitCredential(
+        "github.com",
+        "https://github.com/example/repo.git/",
+      ),
+    ).toEqual({
+      host: "github.com",
+      username: "x-access-token",
+      password: "workspace-pat",
+    });
+    expect(await broker.gitCredential("GitHub.com:443")).toEqual({
+      host: "github.com",
+      username: "x-access-token",
+      password: "global-pat",
+    });
+    await expect(broker.gitCredential("gitlab.com")).resolves.toBeUndefined();
+  });
+
+  it("case-folds an SCP host when matching a workspace override", async () => {
+    const broker = new CredentialBroker({
+      path: join(directory, "broker.json"),
+    });
+    await broker.initialize();
+    await broker.setSecret(
+      workspace("git@gitlab.com:example/repo"),
+      "FORGE_TOKEN",
+      "workspace-pat",
+    );
+    await broker.setGitHost("gitlab.com", "oauth2", "FORGE_TOKEN");
+
+    await expect(
+      broker.gitCredential("gitlab.com", "git@GitLab.com:example/repo.git/"),
+    ).resolves.toEqual({
+      host: "gitlab.com",
+      username: "oauth2",
+      password: "workspace-pat",
+    });
+  });
+
+  it("distinguishes an unset Git host row by returning no credential", async () => {
+    const broker = new CredentialBroker({
+      path: join(directory, "broker.json"),
+    });
+    await broker.initialize();
+    await broker.setSecret(GLOBAL_SECRET_SCOPE, "GITHUB_TOKEN", "global-pat");
+    await broker.setGitHost("github.com", "x-access-token", "MISSING_TOKEN");
+
+    await expect(broker.gitCredential("github.com")).resolves.toBeUndefined();
+  });
+
   it("scopes secrets per workspace with same-name override", async () => {
     const broker = new CredentialBroker({
       path: join(directory, "broker.json"),

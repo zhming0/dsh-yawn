@@ -65,6 +65,32 @@ recreate it from the HTTPS URL to use this table. The old Workspace and its
 workspace-scoped secrets stay with the SSH URL, so add those secrets again for
 the HTTPS Workspace.
 
+## In-process plugins
+
+A plugin that runs in the control plane and needs a Git host credential can
+consume the optional `forgeCredentials` service instead of reading the store or
+importing this package. `resolve({ host, repositoryUrl? })` returns the
+username and credential the broker resolves for that host and scope: a
+repository URL applies that Workspace's overrides, and no URL reads the global
+scope. A host with no matching row, or a row whose secret is unset, answers
+`undefined`; the service cannot distinguish those cases. An unset row still
+suppresses the built-in `GITHUB_TOKEN`, so a consumer that falls back to its
+environment can supply a token there instead; remove that environment value as
+well when intentionally disabling the host.
+
+The service is provided by this host's bundle, but a generic plugin must not
+put it in a required `inject`: Cordis has no optional inject, and a host without
+this bundle must still load the plugin. Look it up per call:
+
+```ts
+const source = ctx.get("forgeCredentials") as ForgeCredentials | undefined;
+const credential = await source?.resolve({ host, repositoryUrl });
+```
+
+The plugin then falls back to dsh's own credential service or its environment.
+Installed bundles run in the control-plane process and can call this service,
+so install only bundles you trust.
+
 ## Set a secret
 
 Secrets go in through the Web UI: **Settings → Secrets**. It is the only way

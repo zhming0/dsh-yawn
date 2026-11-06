@@ -41,6 +41,13 @@ export type SecretScope =
 /** The global scope, for callers that are not addressing one workspace. */
 export const GLOBAL_SECRET_SCOPE: SecretScope = { kind: "global" };
 
+/** One host's Git credential, already resolved from the store. */
+export interface GitCredential {
+  host: string;
+  username: string;
+  password: string;
+}
+
 /** Durable authority stays on the host; only current values are pushed to a runner. */
 export class CredentialBroker {
   private state: BrokerFile = {
@@ -173,9 +180,7 @@ export class CredentialBroker {
    * workspace's clones, and the workspace's own host does not matter: a
    * session in any workspace may clone from any configured host.
    */
-  async gitCredentials(
-    repositoryUrl: string,
-  ): Promise<Array<{ host: string; username: string; password: string }>> {
+  async gitCredentials(repositoryUrl: string): Promise<GitCredential[]> {
     // Read through the merge, so scope precedence has one definition.
     return this.resolvedGitCredentials({
       kind: "workspace",
@@ -183,15 +188,39 @@ export class CredentialBroker {
     });
   }
 
-  private resolvedGitCredentials(
-    scope: SecretScope,
-  ): Array<{ host: string; username: string; password: string }> {
+  /** The credentials that apply outside any Workspace scope. */
+  globalGitCredentials(): GitCredential[] {
+    return this.resolvedGitCredentials(GLOBAL_SECRET_SCOPE);
+  }
+
+  /**
+   * One host's credential, optionally with a Workspace's overrides. An empty
+   * repository URL reads the global scope; an invalid host has no credential.
+   */
+  async gitCredential(
+    host: string,
+    repositoryUrl?: string,
+  ): Promise<GitCredential | undefined> {
+    let normalized: string;
+    try {
+      normalized = normalizeGitHost(host);
+    } catch {
+      return undefined;
+    }
+    const url =
+      repositoryUrl === undefined || repositoryUrl.length === 0
+        ? undefined
+        : repositoryUrl;
+    const credentials =
+      url === undefined
+        ? this.globalGitCredentials()
+        : await this.gitCredentials(url);
+    return credentials.find((credential) => credential.host === normalized);
+  }
+
+  private resolvedGitCredentials(scope: SecretScope): GitCredential[] {
     const secrets = this.secrets(scope);
-    const credentials: Array<{
-      host: string;
-      username: string;
-      password: string;
-    }> = [];
+    const credentials: GitCredential[] = [];
     const hosts = new Set<string>();
     for (const entry of this.state.gitHosts) {
       if (hosts.has(entry.host)) {
@@ -269,15 +298,33 @@ export function normalizeRepositoryUrl(url: string): string {
  * receives nothing.
  */
 function workspaceKey(repositoryUrl: string): string {
-  const normalized = normalizeRepositoryUrl(repositoryUrl.trim())
-    .replace(/\.git$/i, "")
-    .replace(/\/+$/, "");
+  const normalized = normalizeRepositoryUrl(repositoryUrl.trim());
   try {
     const parsed = new URL(normalized);
-    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+    const pathname = parsed.pathname
+      .replace(/\/+$/, "")
+      .replace(/\.git$/i, "")
+      .replace(/\/+$/, "");
+    return `${parsed.protocol}//${parsed.host}${pathname}`;
   } catch {
-    // scp-style and local forms stay as they are.
-    return normalized;
+    // SCP-style URLs keep their user but case-fold the host, like the
+    // workspace anchor's normalized form. Local paths stay as they are.
+    const scp = /^(?:([^@/:]+)@)?([^/:]+):(.+)$/.exec(normalized);
+    if (scp !== null) {
+      const [, user, host, path] = scp;
+      if (host === undefined || path === undefined) {
+        return normalized;
+      }
+      const suffix = path
+        .replace(/\/+$/, "")
+        .replace(/\.git$/i, "")
+        .replace(/\/+$/, "");
+      return `${user === undefined ? "" : `${user}@`}${host.toLowerCase()}:${suffix}`;
+    }
+    return normalized
+      .replace(/\/+$/, "")
+      .replace(/\.git$/i, "")
+      .replace(/\/+$/, "");
   }
 }
 

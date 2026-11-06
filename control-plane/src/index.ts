@@ -10,6 +10,11 @@ export { BuildkiteBackend } from "./backends/buildkite.js";
 export { DockerBackend } from "./backends/docker.js";
 export { KasBackend } from "./backends/kas.js";
 export { CredentialBroker, normalizeRepositoryUrl } from "./broker.js";
+export type {
+  ForgeCredential,
+  ForgeCredentialRequest,
+  ForgeCredentials,
+} from "./forge-credentials.js";
 export type { Config, ProfileConfig } from "./config.js";
 export type { ManagerDependencies } from "./manager/index.js";
 export { SandboxManager };

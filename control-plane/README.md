@@ -576,6 +576,16 @@ On the Kubernetes distribution the same store lives on the control-plane pod's d
 volume; [`docs/credentials.md`](../docs/credentials.md) is the install-facing
 page, including the credentials that deliberately never enter this store.
 
+An in-process plugin that calls a Git host can read one host's credential
+through the optional `forgeCredentials` service. It resolves a host and
+optional repository URL against this store and its scopes, so a plugin does not
+need a second copy of `GITHUB_TOKEN` in the control-plane environment. The
+service is optional for the plugin; because Cordis has no optional inject, a
+generic consumer looks it up per call with `ctx.get("forgeCredentials")` and
+falls back to dsh credentials or its own environment when this host does not
+provide it. This is a capability for in-process plugins, which already run with
+the control plane's authority; install only bundles you trust.
+
 ## Credentials at rest
 
 Provider state belongs on the dsh host, not in a sandbox. Files in `stateDir`

@@ -1241,6 +1241,33 @@ describe("repository workspaces and instructions", () => {
         password: "workspace-pat",
       },
     ]);
+
+    // The in-process read refreshes the broker first, then applies the
+    // repository scope and the host normalization.
+    const cliBroker = new CredentialBroker({
+      path: join(directory, "broker.json"),
+    });
+    await cliBroker.initialize();
+    await cliBroker.setSecret(
+      GLOBAL_SECRET_SCOPE,
+      "GITHUB_TOKEN",
+      "cli-global",
+    );
+    await expect(manager.gitCredential("GitHub.com:443")).resolves.toEqual({
+      host: "github.com",
+      username: "x-access-token",
+      password: "cli-global",
+    });
+    await expect(
+      manager.gitCredential(
+        "github.com",
+        "https://github.com/example/public.git/",
+      ),
+    ).resolves.toEqual({
+      host: "github.com",
+      username: "x-access-token",
+      password: "workspace-pat",
+    });
   });
 
   it("stores a new SSH workspace as HTTPS and serves its host", async () => {
