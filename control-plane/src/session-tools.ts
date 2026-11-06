@@ -7,7 +7,7 @@
  * survives the turn that created it. A session can list workspaces and
  * sessions, create a child session, send it a message, wait for it to become
  * idle, and cancel its active turn. The child reports a result back with
- * `send_message`; these tools deliberately never return another session's
+ * `message_session`; these tools deliberately never return another session's
  * transcript, because that would merge untrusted context into the caller.
  *
  * The tools are registered per agent rather than globally, so subagents and
@@ -17,8 +17,8 @@
  * rebinds a blank session.
  *
  * The calling agent is taken from the tool execution, not from an argument:
- * `send_message` and `create_session` prepend `[from session <id>]` so the
- * target can answer, and `send_message`, `wait_session`, and
+ * `message_session` and `create_session` prepend `[from session <id>]` so the
+ * target can answer, and `message_session`, `wait_session`, and
  * `interrupt_session` reject the calling session itself.
  *
  * @module @zhming0/dsh-yawn/session-tools
@@ -163,7 +163,7 @@ export function createSessionTools(deps: SessionToolDeps): ToolDefinition[] {
   const createSession = defineTool({
     name: "create_session",
     description:
-      "Create a new top-level DSH session in a workspace (Scratch by default). The session runs in its own sandbox and appears in the Web UI. Optionally send a first message; without one the session stays idle until send_message. Returns the new session_id.",
+      "Create a new top-level DSH session in a workspace (Scratch by default). The session runs in its own sandbox and appears in the Web UI. Optionally send a first message; without one the session stays idle until message_session. Returns the new session_id.",
     parameters: {
       workspace_id: {
         type: "string",
@@ -356,8 +356,8 @@ export function createSessionTools(deps: SessionToolDeps): ToolDefinition[] {
     },
   });
 
-  const sendMessageTool = defineTool({
-    name: "send_message",
+  const messageSessionTool = defineTool({
+    name: "message_session",
     description:
       "Send a message to another top-level session. mode=queue adds it to the target's inbox for its next turn; mode=steer interrupts its current turn. The message carries the calling session id so the target can reply.",
     parameters: {
@@ -488,7 +488,7 @@ export function createSessionTools(deps: SessionToolDeps): ToolDefinition[] {
     listModels,
     listSandboxProfiles,
     createSession,
-    sendMessageTool,
+    messageSessionTool,
     waitSession,
     interruptSession,
   ];

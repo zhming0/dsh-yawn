@@ -441,7 +441,7 @@ describe("create_session", () => {
   });
 });
 
-describe("send_message", () => {
+describe("message_session", () => {
   it("prefixes the caller id and forwards the mode", async () => {
     const prompts: unknown[] = [];
     const deps = makeDeps();
@@ -451,7 +451,7 @@ describe("send_message", () => {
     }) as never;
 
     expect(
-      await run(deps, "send_message", {
+      await run(deps, "message_session", {
         session_id: "child",
         text: "status?",
         mode: "steer",
@@ -468,7 +468,7 @@ describe("send_message", () => {
 
   it("refuses to message itself", async () => {
     await expect(
-      run(makeDeps(), "send_message", {
+      run(makeDeps(), "message_session", {
         session_id: "caller",
         text: "hello",
       }),
@@ -477,7 +477,7 @@ describe("send_message", () => {
 
   it("refuses empty text", async () => {
     await expect(
-      run(makeDeps(), "send_message", {
+      run(makeDeps(), "message_session", {
         session_id: "child",
         text: "   ",
       }),
