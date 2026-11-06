@@ -262,7 +262,7 @@
     # the active turn.
     # create_session can optionally set a sandbox profile and model before the
     # first prompt; omitted settings use the deployment defaults. A child
-    # reports its result back with send_message; the tools deliberately do not
+    # reports its result back with message_session; the tools deliberately do not
     # return a transcript. They are registered per agent, not globally, so
     # subagents and excluded presets never see them; the calling agent comes
     # from the tool execution, so the model never passes a session id to
