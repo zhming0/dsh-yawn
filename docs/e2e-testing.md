@@ -287,6 +287,20 @@ image.
    After the restart the plugin must still be installed and switched on.
 4. Uninstall the test plugin from its page. The dependency and the bundle
    entry must be gone, and a restart must come up without it.
+5. In a Creator session, ask the agent to create a small bundle in its
+   workspace and install it with `plugin_manager install_bundle` by absolute
+   path. The install must succeed (not `the path does not exist`), the
+   Plugins page must list it, and
+   `/data/.dsh/creator-plugins/<package>/versions/<hash>` must hold its
+   files.
+6. Open a second Creator session in a different workspace. Ask it to edit the
+   same plugin. `plugin_source list` must show the stored plugin and
+   `plugin_source checkout` must copy it into that session; after the edit and
+   install, the profile must link the new version and the store must keep both.
+   Restart the control plane and confirm the plugin is still installed. The
+   first session's sandbox may already be deleted.
+7. In a standard session, `plugin_source` must not be in the tool list; the
+   stock `plugin_manager` tool must still be there.
 
 ## Troubleshooting
 

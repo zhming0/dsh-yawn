@@ -279,3 +279,23 @@
       name: '@zhming0/dsh-yawn/session-tools'
       config:
         excludedPresets: [minimal]
+
+    # Snapshots a plugin package authored in the session workspace into
+    # `$DSH_HOME/creator-plugins` (an immutable version directory linked from
+    # the profile), then installs that stored version. The stock
+    # `plugin_manager` tool and the Web Plugins page keep their behavior for
+    # host paths, npm names, and Git URLs; only an absolute path inside the
+    # session's sandbox workspace is staged. The source store survives a
+    # restart and an image upgrade, so a later Creator session can check out
+    # and edit the plugin after the authoring sandbox is gone.
+    - id: creator-bundle-staging
+      name: '@zhming0/dsh-yawn/creator-bundles'
+
+    # `plugin_source` lists and checks out those stored versions. Creator-only
+    # by default: standard keeps its stock tool surface. A user who wants to
+    # edit a plugin can switch to Creator; the store is control-plane-wide, so
+    # nothing is lost. Register a preset here to give it the tool too.
+    - id: plugin-source-tools
+      name: '@zhming0/dsh-yawn/plugin-source'
+      config:
+        presets: [cordis]
