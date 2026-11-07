@@ -1,22 +1,22 @@
 import type { TypertContribution } from "@deepseek-ai/dsh-typert-registry/types";
 import type { TypertRemoteContribution } from "@deepseek-ai/dsh-typert-protocol";
 
-import type { SandboxInstructionsRemote } from "./instructions-remote.js";
-import { sandboxInstructionsDescriptors } from "./instructions-remote.js";
-import type { SandboxMcpRemote } from "./mcp-remote.js";
-import { sandboxMcpDescriptors } from "./mcp-remote.js";
-import type { RepositoryWorkspaceRemote } from "./repository-workspace-remote.js";
-import { repositoryWorkspaceDescriptors } from "./repository-workspace-remote.js";
-import type { SandboxSettingsRemote } from "./sandbox-settings-remote.js";
-import { sandboxSettingsDescriptors } from "./sandbox-settings-remote.js";
-import type { SandboxStatusRemote } from "./sandbox-status-remote.js";
-import { sandboxStatusDescriptors } from "./sandbox-status-remote.js";
-import type { SandboxSecretsRemote } from "./secrets-remote.js";
-import { sandboxSecretsDescriptors } from "./secrets-remote.js";
-import type { SessionMcpRemote } from "./session-mcp-remote.js";
-import { sessionMcpDescriptors } from "./session-mcp-remote.js";
-import type { SessionProfileRemote } from "./session-profile-remote.js";
-import { sessionProfileDescriptors } from "./session-profile-remote.js";
+import type { SandboxInstructionsRemote } from "./instructions/instructions-remote.js";
+import { sandboxInstructionsDescriptors } from "./instructions/instructions-remote.js";
+import type { SandboxMcpRemote } from "./mcp/mcp-remote.js";
+import { sandboxMcpDescriptors } from "./mcp/mcp-remote.js";
+import type { RepositoryWorkspaceRemote } from "./workspaces/repository-workspace-remote.js";
+import { repositoryWorkspaceDescriptors } from "./workspaces/repository-workspace-remote.js";
+import type { SandboxSettingsRemote } from "./sandbox/sandbox-settings-remote.js";
+import { sandboxSettingsDescriptors } from "./sandbox/sandbox-settings-remote.js";
+import type { SandboxStatusRemote } from "./sandbox/sandbox-status-remote.js";
+import { sandboxStatusDescriptors } from "./sandbox/sandbox-status-remote.js";
+import type { SandboxSecretsRemote } from "./credentials/secrets-remote.js";
+import { sandboxSecretsDescriptors } from "./credentials/secrets-remote.js";
+import type { SessionMcpRemote } from "./mcp/session-mcp-remote.js";
+import { sessionMcpDescriptors } from "./mcp/session-mcp-remote.js";
+import type { SessionProfileRemote } from "./sandbox/session-profile-remote.js";
+import { sessionProfileDescriptors } from "./sandbox/session-profile-remote.js";
 
 /** Everything the sandboxManager service exposes to the browser. */
 type SandboxManagerRemote = RepositoryWorkspaceRemote &

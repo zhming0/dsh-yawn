@@ -3,7 +3,7 @@ import type { SubprocessTerminalSpawnSpec } from "@deepseek-ai/dsh-subprocess";
 import { BashTerminalBackend } from "@deepseek-ai/dsh-terminal-bash";
 import { describe, expect, it } from "vitest";
 
-import { SandboxPolicy } from "../../src/sandbox-policy.js";
+import { SandboxPolicy } from "../../src/sandbox/sandbox-policy.js";
 
 const SANDBOX_WORKSPACE = "/workspace/repository";
 const HOST_ANCHOR = "/data/.dsh-yawn/workspace-anchors/owner-repo";

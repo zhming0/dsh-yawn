@@ -13,10 +13,10 @@ const yawnRoot = dirname(
   require.resolve("@zhming0/dsh-yawn/package.json"),
 );
 const { KasBackend } = await import(
-  pathToFileURL(join(yawnRoot, "dist/backends/kas.js")).href
+  pathToFileURL(join(yawnRoot, "dist/sandbox/backends/kas.js")).href
 );
 const { TunnelServer } = await import(
-  pathToFileURL(join(yawnRoot, "dist/tunnel.js")).href
+  pathToFileURL(join(yawnRoot, "dist/core/tunnel.js")).href
 );
 const { CustomObjectsApi, KubeConfig } = await import(
   pathToFileURL(require.resolve("@kubernetes/client-node")).href

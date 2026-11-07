@@ -235,7 +235,7 @@
     # which would land in a Documents folder the image does not have; the
     # Scratch Workspace registered by the row above takes its place.
     # The client treats the `undefined` answer as plain ineligibility — no
-    # error. See src/workspace-first-use.ts.
+    # error. See src/workspaces/workspace-first-use.ts.
     - id: workspace-first-use
       name: '@zhming0/dsh-yawn/workspace-first-use'
 

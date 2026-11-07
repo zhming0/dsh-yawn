@@ -26,9 +26,9 @@ import {
   TerminalQueryKind,
   TerminalService,
 } from "../gen/dsh/yawn/v1/terminal_pb.js";
-import { MessageQueue } from "../message-queue.js";
-import type { RunnerClient } from "../runner-client.js";
-import { pathInSandbox, type PathFrames } from "../sandbox-path.js";
+import { MessageQueue } from "../core/message-queue.js";
+import type { RunnerClient } from "../core/runner-client.js";
+import { pathInSandbox, type PathFrames } from "../sandbox/sandbox-path.js";
 
 type TerminalClient = Client<typeof TerminalService>;
 
