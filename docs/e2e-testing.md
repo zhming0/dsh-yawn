@@ -214,7 +214,11 @@ example `standard` and `large`, both with `image: dsh-yawn-runner:dev`.
    sandbox for the session (`docker ps`); after it there must be exactly one,
    and `stateDir/sessions.json` must record the picked profile on the session,
    with no entry left in `pendingProfiles`.
-4. Confirm the chip is now disabled and keeps showing the picked profile.
+4. While that first prompt runs, the conversation must show "Starting
+   sandbox…" before the session has a record and "Running .agents/setup…" while
+   the record exists but the runner is not ready. Both must disappear once the
+   sandbox answers.
+5. Confirm the chip is now disabled and keeps showing the picked profile.
 
 ### PTC mode
 

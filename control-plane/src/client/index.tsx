@@ -21,6 +21,7 @@ import {
 import { SandboxProfileChip } from "./profile.js";
 import { RepositoryDirectoryFlow } from "./repository-directory-flow.js";
 import { SandboxStatusTab } from "./sandbox.js";
+import { SandboxWait } from "./sandbox-wait.js";
 import { SessionMcpChip } from "./session-mcp.js";
 import { McpServersView } from "./session-mcp-view.js";
 import { GitCredentialsSettings } from "./git-credentials.js";
@@ -241,6 +242,23 @@ export async function apply(ctx: Context) {
           await remoteCtx.remote.sandboxManager.getSandboxStatus(sessionId),
         ),
     });
+    // The first prompt waits for the sandbox; show what it is waiting for
+    // while the host says a turn is provisioning.
+    remoteCtx.slots.inject(
+      "conversation.input.dock",
+      function* registerSandboxWait() {
+        yield remoteCtx.slots.register(
+          {
+            name: "conversation.input.dock",
+            id: "dsh-yawn.sandbox-wait",
+            // After the Todo dock (0), before the queue dock (20).
+            order: 10,
+            inject: injectedStatus,
+          },
+          SandboxWait,
+        );
+      },
+    );
     remoteCtx.slots.inject(
       "conversation.view",
       function* registerSandboxView() {

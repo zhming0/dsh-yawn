@@ -2,6 +2,7 @@ import type { RunnerClient } from "../runner-client.js";
 import type {
   SandboxHostFacts,
   SandboxLiveFacts,
+  SandboxPhase,
   SandboxStatusView,
 } from "../sandbox-status-remote.js";
 import type { SessionStore } from "../state-store.js";
@@ -23,6 +24,11 @@ export interface SandboxStatusDependencies {
    * a read: the caller supplies a lookup that cannot provision or wake.
    */
   runnerFor: (sessionId: string) => RunnerClient | undefined;
+  /**
+   * Whether the session has an open turn. A provisioning wait is only visible
+   * while one is live, so a parked sandbox never claims to be starting.
+   */
+  turnLive: (sessionId: string) => boolean;
   /** The configured preview domain; undefined when previews are disabled. */
   previewDomain?: string;
   /**
@@ -31,6 +37,26 @@ export interface SandboxStatusDependencies {
    * server's real port.
    */
   previewHost?: (sandboxId: string) => string | undefined;
+}
+
+/**
+ * The wait a first turn spends before its runner can serve it: no record yet
+ * means the sandbox is being created, a record without an attached runner
+ * means it is being connected and set up. Outside a live turn nothing is
+ * starting, so there is no phase to show.
+ */
+export function sandboxPhase(
+  record: SessionRecord | undefined,
+  turnLive: boolean,
+  runnerReady: boolean,
+): SandboxPhase | undefined {
+  if (!turnLive) {
+    return undefined;
+  }
+  if (record === undefined) {
+    return "starting";
+  }
+  return runnerReady ? undefined : "setup";
 }
 
 /**
@@ -54,17 +80,25 @@ export class SandboxStatus {
         ? {}
         : { previewDomain: this.deps.previewDomain };
     const record = this.deps.store.get(sessionId);
-    if (record === undefined) {
-      return previewDomain;
-    }
+    // Only a running sandbox can have an attached runner, and asking for one
+    // never wakes anything.
+    const client =
+      record?.state === "running" ? this.deps.runnerFor(sessionId) : undefined;
+    const phase = sandboxPhase(
+      record,
+      this.deps.turnLive(sessionId),
+      client !== undefined,
+    );
     const view: SandboxStatusView = {
       ...previewDomain,
-      sandbox: this.hostFacts(record),
+      ...(phase === undefined ? {} : { phase }),
     };
-    // Only a running sandbox has a runner attached, and only an attached
-    // runner can answer for the machine. The attachment is keyed by session.
-    if (record.state === "running") {
-      const live = await this.liveFacts(sessionId);
+    if (record === undefined) {
+      return view;
+    }
+    view.sandbox = this.hostFacts(record);
+    if (client !== undefined) {
+      const live = await this.liveFacts(client);
       if (live !== undefined) {
         view.live = live;
       }
@@ -108,12 +142,8 @@ export class SandboxStatus {
 
   /** The attached runner's own account of the machine, if it has one. */
   private async liveFacts(
-    sessionId: string,
+    client: RunnerClient,
   ): Promise<SandboxLiveFacts | undefined> {
-    const client = this.deps.runnerFor(sessionId);
-    if (client === undefined) {
-      return undefined;
-    }
     try {
       const status = await client.sandboxStatus({
         timeoutMs: LIVE_FACTS_TIMEOUT_MS,

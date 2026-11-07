@@ -16,6 +16,8 @@ import type {
   SandboxStatusView,
 } from "../sandbox-status-remote.js";
 
+import { sandboxPhaseText } from "./sandbox-phase.js";
+
 export interface SandboxStatusActions {
   getSandboxStatus: (sessionId: string) => Promise<SandboxStatusView>;
 }
@@ -107,11 +109,19 @@ export function SandboxStatusTab({
           </p>
         )}
 
-        {view?.sandbox === undefined ? (
-          <p style={{ margin: 0, color: captionColor }}>
-            This session has no sandbox yet. It is provisioned when you send the
-            first prompt.
+        {view?.phase !== undefined && (
+          <p role="status" style={{ margin: "0 0 12px", color: captionColor }}>
+            {sandboxPhaseText(view.phase)}
           </p>
+        )}
+
+        {view?.sandbox === undefined ? (
+          view?.phase === undefined ? (
+            <p style={{ margin: 0, color: captionColor }}>
+              This session has no sandbox yet. It is provisioned when you send
+              the first prompt.
+            </p>
+          ) : null
         ) : (
           <SandboxFacts
             sandbox={view.sandbox}
