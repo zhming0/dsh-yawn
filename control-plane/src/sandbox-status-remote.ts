@@ -49,10 +49,24 @@ export interface SandboxLiveFacts {
   listeningPorts: number[];
 }
 
+/**
+ * The wait a live turn spends before its runner can serve it. "starting"
+ * means the session has no sandbox record yet; "setup" means the record
+ * exists but no runner is attached, so the sandbox is being connected and the
+ * repository's `.agents/setup` is running.
+ */
+export type SandboxPhase = "starting" | "setup";
+
 export interface SandboxStatusView {
   /** Absent until the sandbox has been provisioned. */
   sandbox?: SandboxHostFacts;
   live?: SandboxLiveFacts;
+  /**
+   * The current provisioning wait, only while a turn is live and the runner
+   * cannot serve it yet. Absent once the sandbox is ready, and outside a turn
+   * so a hibernated session never claims to be starting.
+   */
+  phase?: SandboxPhase;
   /**
    * The configured preview domain. Present — with or without a sandbox —
    * whenever previews are enabled, so the Preview tab can explain what is
@@ -142,6 +156,13 @@ const viewSchema: TypertSchema<SandboxStatusView> = {
   parse(value: unknown): SandboxStatusView {
     const view = value as SandboxStatusView | null;
     if (typeof view !== "object" || view === null) {
+      throw new TypeError("expected a sandbox status view");
+    }
+    if (
+      view.phase !== undefined &&
+      view.phase !== "starting" &&
+      view.phase !== "setup"
+    ) {
       throw new TypeError("expected a sandbox status view");
     }
     if (

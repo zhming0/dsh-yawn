@@ -4,10 +4,11 @@ import { join } from "node:path";
 
 import { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
+import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { SandboxManager } from "../src/manager/index.js";
-import { SandboxStatus } from "../src/manager/sandbox-status.js";
+import { SandboxStatus, sandboxPhase } from "../src/manager/sandbox-status.js";
 import { SessionStore } from "../src/state-store.js";
 import type {
   CheckpointedRecord,
@@ -133,6 +134,30 @@ describe("sandbox status", () => {
     expect(backend.provisions).toBe(0);
   });
 
+  it("reports the live turn's phase through the manager", async () => {
+    const backend = new FakeBackend();
+    const ctx = new Context();
+    const manager = newManager(directory, backend, ctx);
+    ctx.emit(
+      "session/event",
+      { id: "session-one" } as unknown as Session,
+      {
+        type: "turn/start",
+        data: { turn: 1 },
+      } as unknown as SessionEvent,
+    );
+
+    // No record yet: the first prompt is still provisioning.
+    expect(await manager.getSandboxStatus("session-one")).toEqual({
+      phase: "starting",
+    });
+
+    await manager.ensureRunning(agent("session-one"));
+    const ready = await manager.getSandboxStatus("session-one");
+    expect(ready.phase).toBeUndefined();
+    expect(ready.sandbox?.state).toBe("running");
+  });
+
   it("answers for a record written before createdAt existed", async () => {
     // A sessions.json from a release that predates the createdAt field.
     const legacy = {
@@ -163,9 +188,13 @@ describe("sandbox status", () => {
   });
 });
 
-function newManager(stateDir: string, backend: FakeBackend): SandboxManager {
+function newManager(
+  stateDir: string,
+  backend: FakeBackend,
+  ctx = new Context(),
+): SandboxManager {
   return new SandboxManager(
-    new Context(),
+    ctx,
     {
       stateDir,
       repository: REPOSITORY,
@@ -258,6 +287,7 @@ describe("SandboxStatus reads", () => {
         asked.push(sessionId);
         return undefined;
       },
+      turnLive: () => false,
     });
 
     const hibernated = await status.view("session-one");
@@ -289,6 +319,7 @@ describe("SandboxStatus reads", () => {
       store: stubStore([hibernatedRecord()]),
       profiles: () => ({ standard: KAS_PROFILE }),
       runnerFor: () => undefined,
+      turnLive: () => false,
     });
 
     const view = await status.view("session-one");
@@ -300,6 +331,7 @@ describe("SandboxStatus reads", () => {
       store: stubStore([hibernatedRecord(), checkpointedRecord()]),
       profiles: () => PROFILES,
       runnerFor: () => undefined,
+      turnLive: () => false,
       previewDomain: "sandbox.example.com",
       previewHost: (sandboxId) => `${sandboxId}-p3000.sandbox.example.com`,
     });
@@ -325,10 +357,46 @@ describe("SandboxStatus reads", () => {
       store: stubStore([hibernatedRecord()]),
       profiles: () => PROFILES,
       runnerFor: () => undefined,
+      turnLive: () => false,
     });
     const view = await status.view("session-one");
     expect(view.previewDomain).toBeUndefined();
     expect(view.sandbox?.previewHost).toBeUndefined();
     expect(await status.view("never-provisioned")).toEqual({});
+  });
+});
+
+describe("sandbox phase", () => {
+  it("exposes setup during a live turn and hides it outside one", async () => {
+    let live = true;
+    const status = new SandboxStatus({
+      store: stubStore([hibernatedRecord()]),
+      profiles: () => PROFILES,
+      runnerFor: () => undefined,
+      turnLive: () => live,
+    });
+
+    expect((await status.view("session-one")).phase).toBe("setup");
+    live = false;
+    expect((await status.view("session-one")).phase).toBeUndefined();
+  });
+
+  it("shows nothing outside a live turn", () => {
+    expect(sandboxPhase(undefined, false, false)).toBeUndefined();
+    expect(sandboxPhase(runningRecord(), false, false)).toBeUndefined();
+  });
+
+  it("starts before a record exists", () => {
+    expect(sandboxPhase(undefined, true, false)).toBe("starting");
+  });
+
+  it("reports setup once a record exists without a ready runner", () => {
+    expect(sandboxPhase(runningRecord(), true, false)).toBe("setup");
+    expect(sandboxPhase(hibernatedRecord(), true, false)).toBe("setup");
+    expect(sandboxPhase(checkpointedRecord(), true, false)).toBe("setup");
+  });
+
+  it("is done once the runner is ready", () => {
+    expect(sandboxPhase(runningRecord(), true, true)).toBeUndefined();
   });
 });

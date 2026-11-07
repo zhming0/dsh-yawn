@@ -395,6 +395,15 @@ fails, and its error names the missing setting. Add a profile — in the
 `sandbox-manager` settings layer or through the Web Sandboxes page — then
 send the prompt again.
 
+A session's first sandbox is provisioned by its first prompt. Until then, a
+browser-side file or command read is refused with "This session has no sandbox
+yet. Send a prompt to start one." instead of provisioning one, so a UI plugin
+cannot start a sandbox by inspecting the checkout. Once a record exists, a read
+reuses a running sandbox or wakes a hibernated one. While the first prompt
+waits, the conversation shows "Starting sandbox…" until the record exists and
+"Running .agents/setup…" while the runner is not ready; both come from the
+host's status, not from a separate pre-warm state.
+
 ### Idle and hibernation
 
 After `idleMs` without a turn (the profile's own, else the top-level one) the

@@ -583,6 +583,112 @@ describe("sandbox lifecycle", () => {
     expect(store.get("session-one")?.state).toBe("hibernated");
   });
 
+  it("refuses a browser read before the first prompt creates a sandbox", async () => {
+    const backend = new FakeBackend();
+    const ctx = new Context();
+    const agent = {
+      id: "session-one",
+      session: { header: {} },
+    } as unknown as Agent;
+    ctx.provide("agents", {
+      requireInitiator: () => agent,
+      get: () => agent,
+      list: () => [agent],
+    });
+    const manager = new SandboxManager(
+      ctx,
+      {
+        profiles: { standard: { backend: "docker" } },
+        stateDir: directory,
+        repository: "https://github.com/example/public.git",
+        idleMs: 60_000,
+        expiresAfterMs: 60_000,
+      },
+      { backends: { standard: backend }, gateway: gatewayFor(backend) },
+    );
+
+    // The PR panel's eager inspect is the case: a browser read on a blank
+    // session must not provision anything.
+    await expect(manager.clientForCurrentAgent()).rejects.toThrow(
+      "This session has no sandbox yet. Send a prompt to start one.",
+    );
+    expect(backend.provisions).toBe(0);
+    expect(backend.wakes).toBe(0);
+  });
+
+  it("provisions for a browser read while the first turn is live", async () => {
+    const backend = new FakeBackend();
+    const ctx = new Context();
+    const agent = {
+      id: "session-one",
+      session: { header: {} },
+    } as unknown as Agent;
+    ctx.provide("agents", {
+      requireInitiator: () => agent,
+      get: () => agent,
+      list: () => [agent],
+    });
+    const manager = new SandboxManager(
+      ctx,
+      {
+        profiles: { standard: { backend: "docker" } },
+        stateDir: directory,
+        repository: "https://github.com/example/public.git",
+        idleMs: 60_000,
+        expiresAfterMs: 60_000,
+      },
+      { backends: { standard: backend }, gateway: gatewayFor(backend) },
+    );
+    ctx.emit(
+      "session/event",
+      { id: "session-one" } as unknown as Session,
+      {
+        type: "turn/start",
+        data: { turn: 1 },
+      } as unknown as SessionEvent,
+    );
+
+    // The first prompt's pre-step runs inside the turn, so the read that
+    // backs its fs and subprocess calls may provision the sandbox.
+    await expect(manager.clientForCurrentAgent()).resolves.toBeDefined();
+    expect(backend.provisions).toBe(1);
+  });
+
+  it("wakes a hibernated sandbox for a browser read outside a turn", async () => {
+    const backend = new FakeBackend();
+    const ctx = new Context();
+    const agent = {
+      id: "session-one",
+      session: { header: {} },
+    } as unknown as Agent;
+    ctx.provide("agents", {
+      requireInitiator: () => agent,
+      get: () => agent,
+      list: () => [agent],
+    });
+    const manager = new SandboxManager(
+      ctx,
+      {
+        profiles: { standard: { backend: "docker" } },
+        stateDir: directory,
+        repository: "https://github.com/example/public.git",
+        idleMs: 60_000,
+        expiresAfterMs: 60_000,
+      },
+      { backends: { standard: backend }, gateway: gatewayFor(backend) },
+    );
+
+    await manager.ensureRunning(agent);
+    await manager.hibernate("session-one");
+    expect(backend.hibernations).toBe(1);
+
+    // The record exists, so the read reuses or wakes it; only a session with
+    // no sandbox is refused.
+    await expect(manager.clientForCurrentAgent()).resolves.toBeDefined();
+    expect(backend.provisions).toBe(1);
+    expect(backend.wakes).toBe(1);
+  });
+
   it("reports whether a session has a sandbox without provisioning one", async () => {
     const backend = new FakeBackend();
     const ctx = new Context();

@@ -335,6 +335,7 @@ export class SandboxManager extends TypertRemoteService {
       store,
       profiles: () => this.runtime.profiles,
       runnerFor: (sessionId) => attachment.clientFor(sessionId),
+      turnLive: (sessionId) => this.idle.isTurnLive(sessionId),
       ...(previewDomain === undefined
         ? {}
         : {
@@ -649,9 +650,25 @@ export class SandboxManager extends TypertRemoteService {
     void this.prepareBackends();
   }
 
-  /** Resolve the current foreground agent and return its live runner. */
-  clientForCurrentAgent(): Promise<RunnerClient> {
-    return this.ensureRunning(this.ctx.agents.requireInitiator());
+  /**
+   * Resolve the current foreground agent and return its live runner. A
+   * browser read must not provision a session's first sandbox: provisioning
+   * waits for the first prompt, so only a live turn or an existing record may
+   * reach ensureRunning. A hibernated record still wakes here.
+   */
+  async clientForCurrentAgent(): Promise<RunnerClient> {
+    const agent = this.ctx.agents.requireInitiator();
+    await this.ready;
+    const sessionId = this.rootSessionId(agent);
+    if (
+      this.engine.record(sessionId) === undefined &&
+      !this.idle.isTurnLive(sessionId)
+    ) {
+      throw new Error(
+        "This session has no sandbox yet. Send a prompt to start one.",
+      );
+    }
+    return this.ensureRunning(agent);
   }
 
   /**
