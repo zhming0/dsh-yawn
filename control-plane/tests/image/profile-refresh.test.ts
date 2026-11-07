@@ -185,6 +185,31 @@ it("seeds the image profile on first boot", async () => {
   ).toBe("# starter settings\n");
 });
 
+it("carries a creator-staged tarball across an image upgrade", async () => {
+  const link = `file:/data/.dsh/creator-plugins/local-demo-12345678/versions/${"a".repeat(64)}.tgz`;
+  const profile = userManifest("1.0.0", []);
+  const boot = await fakeBoot({
+    imageVersion: "2.0.0",
+    profile: {
+      ...profile,
+      dependencies: { ...profile.dependencies, "@local/demo": link },
+      dsh: {
+        profile: {
+          bundles: [...profile.dsh.profile.bundles, "@local/demo"],
+        },
+      },
+    },
+  });
+
+  expect(await boot.runSeed()).not.toContain("could not refresh");
+  const manifest = (await boot.manifest()) as {
+    dependencies: Record<string, string>;
+    dsh: { profile: { bundles: string[] } };
+  };
+  expect(manifest.dependencies["@local/demo"]).toBe(link);
+  expect(manifest.dsh.profile.bundles).toContain("@local/demo");
+});
+
 it("carries a user-installed plugin across an image upgrade", async () => {
   const boot = await fakeBoot({
     imageVersion: "2.0.0",
