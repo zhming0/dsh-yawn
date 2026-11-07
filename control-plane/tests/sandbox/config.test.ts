@@ -1,0 +1,328 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  configSchema,
+  parseDeploymentSettings,
+  readSetting,
+  resolveBootConfig,
+  resolveConfig,
+} from "../../src/sandbox/config.js";
+import { DEFAULT_RUNNER_IMAGE } from "../../src/sandbox/runner-image.js";
+
+describe("sandbox provider settings", () => {
+  it("resolves each sandbox profile with its own backend settings", () => {
+    const single = resolveConfig({
+      profiles: { standard: { backend: "kas" } },
+    });
+    expect(single.defaultProfile).toBe("standard");
+    expect(single.profiles).toEqual({
+      standard: {
+        name: "standard",
+        backend: "kas",
+        namespace: "dsh-yawn",
+        warmPool: "dsh-yawn-universal",
+        readyTimeoutMs: 180_000,
+      },
+    });
+
+    const explicit = resolveConfig({
+      defaultProfile: "large",
+      tunnel: { port: 9000 },
+      profiles: {
+        standard: { backend: "kas", namespace: "team-a" },
+        large: { backend: "kas", warmPool: "dsh-large" },
+        local: { backend: "docker", image: "runner:dev" },
+        remote: {
+          backend: "docker",
+          controlPlaneUrl: "ws://10.0.0.1:8081/tunnel",
+        },
+      },
+    });
+    expect(explicit.defaultProfile).toBe("large");
+    expect(explicit.profiles).toEqual({
+      standard: {
+        name: "standard",
+        backend: "kas",
+        namespace: "team-a",
+        warmPool: "dsh-yawn-universal",
+        readyTimeoutMs: 180_000,
+      },
+      large: {
+        name: "large",
+        backend: "kas",
+        namespace: "dsh-yawn",
+        warmPool: "dsh-large",
+        readyTimeoutMs: 180_000,
+      },
+      local: {
+        name: "local",
+        backend: "docker",
+        image: "runner:dev",
+        controlPlaneUrl: "ws://host.docker.internal:9000/tunnel",
+      },
+      remote: {
+        name: "remote",
+        backend: "docker",
+        image: DEFAULT_RUNNER_IMAGE,
+        controlPlaneUrl: "ws://10.0.0.1:8081/tunnel",
+      },
+    });
+
+    expect(() =>
+      resolveConfig({
+        defaultProfile: "missing",
+        profiles: { standard: { backend: "docker" } },
+      }),
+    ).toThrow("defaultProfile missing is not a configured profile");
+
+    // A host with no sandbox profile still resolves and boots; the first
+    // prompt explains what to add instead of the process failing at startup.
+    // A leftover defaultProfile does not turn that into a boot error.
+    //
+    // Boot also survives settings-form writes the schema accepts but the host
+    // cannot apply: since dsh 0.1.7 those persist into the profile patch the
+    // Loader reads, so the strict resolver throwing would kill the row on the
+    // next restart. The boot face degrades instead, one warning per piece.
+    const degraded = resolveBootConfig({
+      defaultProfile: "missing",
+      profiles: {
+        standard: { backend: "docker" },
+        broken: {
+          backend: "docker",
+          controlPlaneUrl: "not a WebSocket URL",
+        },
+      },
+      idleMs: -1,
+    });
+    expect(degraded.warnings).toEqual([
+      expect.stringContaining("ignoring sandbox profile broken"),
+      "defaultProfile missing names no configured profile; using standard",
+      "idleMs -1 must be positive; using 600000",
+    ]);
+    expect(Object.keys(degraded.config.profiles)).toEqual(["standard"]);
+    expect(degraded.config.defaultProfile).toBe("standard");
+    expect(degraded.config.idleMs).toBe(600000);
+    for (const config of [
+      { profiles: {} },
+      {},
+      { profiles: {}, defaultProfile: "standard" },
+    ]) {
+      // The schema hands back a volatile reference for the runtime fields;
+      // readSetting is the value the host and the tests both see.
+      expect(readSetting(configSchema(config).profiles)).toEqual({});
+      const empty = resolveConfig(config);
+      expect(empty.profiles).toEqual({});
+      expect(empty.defaultProfile).toBeUndefined();
+    }
+
+    expect(() =>
+      resolveConfig({
+        profiles: {
+          old: { backend: "docker", controlPlaneUrl: "tcp://10.0.0.1:8081" },
+        },
+      }),
+    ).toThrow("profile old: controlPlaneUrl must be a ws:// or wss:// URL");
+  });
+
+  it("falls back from a profile's timers to the top-level ones", () => {
+    const resolved = resolveConfig({
+      readyTimeoutMs: 900_000,
+      profiles: {
+        cluster: { backend: "kas", idleMs: 3_600_000 },
+        pinned: { backend: "kas", readyTimeoutMs: 60_000 },
+        hosted: {
+          backend: "buildkite",
+          organization: "acme",
+          pipeline: "dsh-yawn",
+          controlPlaneUrl: "wss://dsh.example.com/tunnel",
+        },
+      },
+    });
+    expect(resolved.profiles.cluster).toMatchObject({
+      readyTimeoutMs: 900_000,
+      idleMs: 3_600_000,
+    });
+    expect(resolved.profiles.pinned).toMatchObject({ readyTimeoutMs: 60_000 });
+    expect(resolved.profiles.pinned).not.toHaveProperty("idleMs");
+    expect(resolved.profiles.hosted).toMatchObject({ readyTimeoutMs: 900_000 });
+
+    // Unset everywhere, each backend keeps its own default.
+    const defaults = resolveConfig({
+      profiles: {
+        hosted: {
+          backend: "buildkite",
+          organization: "acme",
+          pipeline: "dsh-yawn",
+          controlPlaneUrl: "wss://dsh.example.com/tunnel",
+        },
+      },
+    });
+    expect(defaults.profiles.hosted).toMatchObject({ readyTimeoutMs: 600_000 });
+
+    // A broken profile idle delay drops that profile alone at boot.
+    const { config, warnings } = resolveBootConfig({
+      profiles: {
+        broken: { backend: "docker", idleMs: -1 },
+        standard: { backend: "docker" },
+      },
+    });
+    expect(Object.keys(config.profiles)).toEqual(["standard"]);
+    expect(warnings).toEqual([
+      expect.stringContaining("profile broken: idleMs must be positive"),
+    ]);
+  });
+
+  it("takes a bare preview domain and refuses anything else", () => {
+    const profiles = { standard: { backend: "docker" as const } };
+    // No domain: previews are off and the listener does not start.
+    expect(resolveConfig({ profiles }).preview).toEqual({
+      domain: undefined,
+      port: 8082,
+      bind: "0.0.0.0",
+    });
+    expect(
+      resolveConfig({ preview: { domain: "  " }, profiles }).preview,
+    ).toEqual({ domain: undefined, port: 8082, bind: "0.0.0.0" });
+
+    // A configured domain is normalized once, here: both sides match the
+    // lowercased, trimmed spelling against the Host header.
+    expect(
+      resolveConfig({
+        preview: {
+          domain: " Sandbox.Example.COM ",
+          port: 9000,
+          bind: "127.0.0.1",
+        },
+        profiles,
+      }).preview,
+    ).toEqual({ domain: "sandbox.example.com", port: 9000, bind: "127.0.0.1" });
+
+    // A scheme, a path, a wildcard, or an empty label would build host names
+    // no browser ever sends, so boot fails rather than never matching.
+    for (const domain of [
+      "https://sandbox.example.com",
+      "sandbox.example.com/previews",
+      "*.example.com",
+      "a..b",
+      "sandbox example.com",
+    ]) {
+      expect(() => resolveConfig({ preview: { domain }, profiles })).toThrow(
+        "must be a bare host",
+      );
+    }
+  });
+
+  it("merges the deployment base under the row config", () => {
+    const base = parseDeploymentSettings(
+      `
+sandboxManager:
+  profiles:
+    standard:
+      backend: kas
+      warmPool: dsh-yawn-universal
+    hosted:
+      backend: docker
+      image: runner:base
+  defaultProfile: hosted
+  idleMs: 300000
+`,
+      "the test document",
+    );
+
+    const resolved = resolveConfig(
+      {
+        profiles: {
+          // The deployment owns its profile names, so this same-name entry is
+          // ignored; the other deployment profile stays.
+          standard: { backend: "kas", warmPool: "dsh-team" },
+          local: { backend: "docker" },
+        },
+        idleMs: 60_000,
+      },
+      base,
+    );
+    expect(Object.keys(resolved.profiles).sort()).toEqual([
+      "hosted",
+      "local",
+      "standard",
+    ]);
+    expect(resolved.profiles.standard).toMatchObject({
+      backend: "kas",
+      warmPool: "dsh-yawn-universal",
+    });
+    expect(resolved.profiles.hosted).toMatchObject({
+      backend: "docker",
+      image: "runner:base",
+    });
+    // Scalars the row config sets win; the ones it never mentions come from
+    // the deployment.
+    expect(resolved.defaultProfile).toBe("hosted");
+    expect(resolved.idleMs).toBe(60_000);
+
+    // The sandboxManager section is the runtime slice alone: a startup field
+    // there never reaches boot resolution.
+    const bootFields = parseDeploymentSettings(
+      "sandboxManager:\n  workspace: /workspace/base\n  tunnel:\n    port: 9001\n",
+    );
+    const defaults = resolveConfig({}, bootFields);
+    expect(defaults.workspace).toBe("/workspace/repository");
+    expect(defaults.tunnel.port).toBe(8081);
+
+    // A profile the deployment supplies but that the host cannot apply
+    // degrades with a warning, exactly as a row-config profile does.
+    const degraded = resolveBootConfig(
+      {},
+      {
+        profiles: {
+          broken: {
+            backend: "docker",
+            controlPlaneUrl: "tcp://10.0.0.1:8081",
+          },
+        },
+      },
+    );
+    expect(degraded.warnings).toEqual([
+      expect.stringContaining("ignoring sandbox profile broken"),
+    ]);
+    expect(Object.keys(degraded.config.profiles)).toEqual([]);
+  });
+
+  it("reads the deployment base from its YAML document", () => {
+    expect(parseDeploymentSettings(undefined)).toEqual({});
+    expect(parseDeploymentSettings("  ")).toEqual({});
+    expect(
+      parseDeploymentSettings(
+        "sandboxManager:\n  profiles:\n    standard:\n      backend: docker\n",
+      ).profiles,
+    ).toMatchObject({ standard: { backend: "docker" } });
+    // JSON is YAML, so a document written either way reads the same.
+    expect(
+      parseDeploymentSettings(
+        '{"sandboxManager":{"profiles":{"standard":{"backend":"docker"}}}}',
+      ).profiles,
+    ).toMatchObject({ standard: { backend: "docker" } });
+
+    // The document is a chart-to-image contract and the image tag can lag the
+    // chart, so sections this image does not know are ignored, not fatal.
+    expect(parseDeploymentSettings("someFutureSection:\n  a: 1\n")).toEqual({});
+    expect(
+      parseDeploymentSettings(
+        "someFutureSection:\n  a: 1\nsandboxManager:\n  profiles:\n    standard:\n      backend: docker\n",
+      ).profiles,
+    ).toMatchObject({ standard: { backend: "docker" } });
+
+    // Operator configuration fails loudly: a silent empty base would look
+    // like the sandbox profiles vanished.
+    expect(() => parseDeploymentSettings("sandboxManager: [")).toThrow(
+      "is not valid YAML",
+    );
+    expect(() => parseDeploymentSettings("- one")).toThrow(
+      "must be a YAML mapping",
+    );
+    expect(() =>
+      parseDeploymentSettings(
+        '{"sandboxManager":{"profiles":{"x":{"backend":"nope"}}}}',
+      ),
+    ).toThrow("does not match the sandbox-manager settings");
+  });
+});

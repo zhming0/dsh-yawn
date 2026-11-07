@@ -8,6 +8,34 @@ It assumes familiarity with dsh plugins, patch layers, and row configs. Every
 detail was checked against the pinned dsh release, and some of it depends on
 implementation details that a dsh upgrade can change.
 
+## Source layout
+
+The source is grouped by feature, and the feature tests under `tests/` mirror
+it. `tests/image/` covers the image tooling rather than a source folder, and
+cross-cutting checks stay at the top level:
+
+| Folder                                     | Owns                                                                                      |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `src/sandbox/`                             | sandbox lifecycle, backends, filesystem/shell/subprocess seams, checkpoints, runner image |
+| `src/credentials/`                         | broker, secret remotes, Git hosts, Buildkite and registration tokens                      |
+| `src/mcp/`                                 | MCP server store, pool, OAuth, per-session choice, and tool exclusion                     |
+| `src/media/`                               | image session routing and the video byte-range route                                      |
+| `src/workspaces/`                          | repository anchors, the Scratch Workspace, file index, and `@` references                 |
+| `src/instructions/`                        | UI-managed AGENTS.md layers                                                               |
+| `src/previews/`                            | sandbox preview listener and relay                                                        |
+| `src/auth/`                                | passcode and OIDC sign-in                                                                 |
+| `src/sessions/`                            | native tools for managing other sessions                                                  |
+| `src/core/`                                | shared types, session state, the runner tunnel client, and the message queue              |
+| `src/terminal/`, `src/ptc/`, `src/skills/` | the removable terminal, PTC, and authored-skill features                                  |
+| `src/client/`                              | the browser bundle, grouped the same way                                                  |
+
+The package entry (`src/index.ts`), remote composition
+(`src/remote-contributions.ts`), host global row (`src/owns-host.ts`), and
+authored-skill row (`src/skills.ts`) stay at the top level.
+
+`cordis.patch.yml` and `package.json` name modules by export subpath, not by
+source path, so moving a file inside `src/` does not change the row names.
+
 ## What installing it changes
 
 The package declares a bundle patch. Once the package is installed in a
@@ -52,7 +80,7 @@ two are told apart by `origin`, which only a real subagent child sets. That
 field is doing load-bearing work here even though dsh describes it as
 presentation metadata, so a dsh change to how subagent children are marked
 would silently cost delegation its shared working copy; see the risk note in
-[`src/manager/root-session.ts`](src/manager/root-session.ts).
+[`src/sandbox/manager/root-session.ts`](src/sandbox/manager/root-session.ts).
 
 Uploaded attachments are copied into the sandbox on demand. dsh stores an
 upload on the host and asks the filesystem row to map its host path into the
@@ -143,7 +171,7 @@ value.
 
 **OAuth** is the MCP authorization flow: authorization code with PKCE, with
 discovery (RFC 9728, RFC 8414) and client registration run by the MCP SDK's
-`auth()` in the control plane (`src/mcp-oauth.ts`). A client identity saved by
+`auth()` in the control plane (`src/mcp/mcp-oauth.ts`). A client identity saved by
 an earlier sign-in for the same redirect URI is reused first. Otherwise, when
 the authorization server advertises Client ID Metadata Documents (CIMD,
 `client_id_metadata_document_supported`) and the Settings page was opened on
@@ -300,7 +328,7 @@ route, which also reads through the filesystem service from a plain browser
 request. Unlike the sidebar, its URL carries no session id, only a path, so
 there is no scope to wrap the way `sandbox-workspace-files` does, and the
 exact route cannot be re-registered. The bundle's browser half adds the
-identity to the image URL instead (`src/client/media-session.ts`): it
+identity to the image URL instead (`src/client/media/media-session.ts`): it
 watches the document and, for each `/api/file` image, adds the session of
 the view the image sits in — the stock conversation view and right sidebar
 mark their roots with `data-conversation-session` and
@@ -482,7 +510,7 @@ provides.
 Two authentication modules are not part of the bundle patch.
 
 `@zhming0/dsh-yawn/passcode-auth` and `@zhming0/dsh-yawn/oidc-auth` are the
-product's two sign-in modes; `src/auth-core.ts` holds what they share. Both rows
+product's two sign-in modes; `src/auth/auth-core.ts` holds what they share. Both rows
 serve `/login` and `/logout`, and wrap `ctx.connection.authorizeIndex`: a
 browser without dsh's cookie is sent to `/login`; a successful sign-in makes the
 row call dsh's own `authenticatedUrl()` and `authorizeIndex()` on the server, so
@@ -490,7 +518,7 @@ the launch token never reaches the browser and dsh still mints the cookie. They
 use only dsh's public connection surface — no cookie signing, no private fields
 — and refuse `?token=` on the index while mounted. The dsh seam this rides on (a
 root token request through `authorizeIndex` mints a cookie `admit` accepts) is
-pinned by `tests/passcode-auth-dsh.test.ts`.
+pinned by `tests/auth/passcode-auth-dsh.test.ts`.
 
 A navigation that starts on another site — a link in a pull request, or an
 identity provider on another registrable domain returning to the OIDC callback

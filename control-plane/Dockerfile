@@ -28,7 +28,7 @@ RUN mkdir -p /out/meta \
     && npm --prefix control-plane version "$VERSION" --no-git-tag-version --allow-same-version \
     && pnpm --dir control-plane pack --out /out/dsh-yawn.tgz \
     && node --input-type=module -e " \
-        import { DEFAULT_RUNNER_IMAGE } from './control-plane/dist/runner-image.js'; \
+        import { DEFAULT_RUNNER_IMAGE } from './control-plane/dist/sandbox/runner-image.js'; \
         const expected = ':' + process.env.VERSION; \
         if (!DEFAULT_RUNNER_IMAGE.endsWith(expected)) { \
           throw new Error('default runner image ' + DEFAULT_RUNNER_IMAGE + ' does not end with ' + expected); \

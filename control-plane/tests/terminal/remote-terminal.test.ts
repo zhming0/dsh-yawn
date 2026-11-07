@@ -9,7 +9,7 @@ import {
   TerminalActivityState,
   TerminalQueryKind,
 } from "../../src/gen/dsh/yawn/v1/terminal_pb.js";
-import type { RunnerClient } from "../../src/runner-client.js";
+import type { RunnerClient } from "../../src/core/runner-client.js";
 import { TerminalPool } from "../../src/terminal/remote-terminal.js";
 
 const SESSION_WORKSPACE = "/data/.dsh-yawn/workspace-anchors/owner-repo";

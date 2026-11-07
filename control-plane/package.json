@@ -20,80 +20,80 @@
       "default": "./dist/index.js"
     },
     "./fs": {
-      "types": "./dist/fs.d.ts",
-      "default": "./dist/fs.js"
+      "types": "./dist/sandbox/fs.d.ts",
+      "default": "./dist/sandbox/fs.js"
     },
     "./shell": {
-      "types": "./dist/shell.d.ts",
-      "default": "./dist/shell.js"
+      "types": "./dist/sandbox/shell.d.ts",
+      "default": "./dist/sandbox/shell.js"
     },
     "./subprocess": {
-      "types": "./dist/subprocess.d.ts",
-      "default": "./dist/subprocess.js"
+      "types": "./dist/sandbox/subprocess.d.ts",
+      "default": "./dist/sandbox/subprocess.js"
     },
     "./file-reference": {
-      "types": "./dist/file-reference.d.ts",
-      "default": "./dist/file-reference.js"
+      "types": "./dist/workspaces/file-reference.d.ts",
+      "default": "./dist/workspaces/file-reference.js"
     },
     "./forge-credentials": {
-      "types": "./dist/forge-credentials.d.ts",
-      "default": "./dist/forge-credentials.js"
+      "types": "./dist/credentials/forge-credentials.d.ts",
+      "default": "./dist/credentials/forge-credentials.js"
     },
     "./skills": {
       "types": "./dist/skills.d.ts",
       "default": "./dist/skills.js"
     },
     "./mcp-tool-exclusion": {
-      "types": "./dist/mcp-tool-exclusion.d.ts",
-      "default": "./dist/mcp-tool-exclusion.js"
+      "types": "./dist/mcp/mcp-tool-exclusion.d.ts",
+      "default": "./dist/mcp/mcp-tool-exclusion.js"
     },
     "./session-tools": {
-      "types": "./dist/session-tools.d.ts",
-      "default": "./dist/session-tools.js"
+      "types": "./dist/sessions/session-tools.d.ts",
+      "default": "./dist/sessions/session-tools.js"
     },
     "./sandbox-context": {
-      "types": "./dist/sandbox-context.d.ts",
-      "default": "./dist/sandbox-context.js"
+      "types": "./dist/sandbox/sandbox-context.d.ts",
+      "default": "./dist/sandbox/sandbox-context.js"
     },
     "./sandbox-policy": {
-      "types": "./dist/sandbox-policy.d.ts",
-      "default": "./dist/sandbox-policy.js"
+      "types": "./dist/sandbox/sandbox-policy.d.ts",
+      "default": "./dist/sandbox/sandbox-policy.js"
     },
     "./workspace-files": {
-      "types": "./dist/workspace-files.d.ts",
-      "default": "./dist/workspace-files.js"
+      "types": "./dist/workspaces/workspace-files.d.ts",
+      "default": "./dist/workspaces/workspace-files.js"
     },
     "./working-directory": {
-      "types": "./dist/working-directory.d.ts",
-      "default": "./dist/working-directory.js"
+      "types": "./dist/sandbox/working-directory.d.ts",
+      "default": "./dist/sandbox/working-directory.js"
     },
     "./terminal-controller": {
       "types": "./dist/terminal/terminal-controller.d.ts",
       "default": "./dist/terminal/terminal-controller.js"
     },
     "./media-route": {
-      "types": "./dist/media-route.d.ts",
-      "default": "./dist/media-route.js"
+      "types": "./dist/media/media-route.d.ts",
+      "default": "./dist/media/media-route.js"
     },
     "./video-route": {
-      "types": "./dist/video-route.d.ts",
-      "default": "./dist/video-route.js"
+      "types": "./dist/media/video-route.d.ts",
+      "default": "./dist/media/video-route.js"
     },
     "./passcode-auth": {
-      "types": "./dist/passcode-auth.d.ts",
-      "default": "./dist/passcode-auth.js"
+      "types": "./dist/auth/passcode-auth.d.ts",
+      "default": "./dist/auth/passcode-auth.js"
     },
     "./oidc-auth": {
-      "types": "./dist/oidc-auth.d.ts",
-      "default": "./dist/oidc-auth.js"
+      "types": "./dist/auth/oidc-auth.d.ts",
+      "default": "./dist/auth/oidc-auth.js"
     },
     "./scratch-workspace": {
-      "types": "./dist/scratch-workspace.d.ts",
-      "default": "./dist/scratch-workspace.js"
+      "types": "./dist/workspaces/scratch-workspace.d.ts",
+      "default": "./dist/workspaces/scratch-workspace.js"
     },
     "./workspace-first-use": {
-      "types": "./dist/workspace-first-use.d.ts",
-      "default": "./dist/workspace-first-use.js"
+      "types": "./dist/workspaces/workspace-first-use.d.ts",
+      "default": "./dist/workspaces/workspace-first-use.js"
     },
     "./owns-host": {
       "types": "./dist/owns-host.d.ts",

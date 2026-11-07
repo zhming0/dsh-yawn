@@ -9,29 +9,29 @@ import type {} from "@deepseek-ai/dsh-client-ui-renderer/client";
 import type { RemoteResult } from "@deepseek-ai/dsh-typert-protocol";
 import type { JsonValue } from "@deepseek-ai/dsh-util-values";
 
-import type { McpServerEntry } from "../mcp-store.js";
+import type { McpServerEntry } from "../mcp/mcp-store.js";
 import { yawnRemote } from "../remote-contributions.js";
-import { InstructionsSettings } from "./instructions.js";
-import { McpSettings } from "./mcp.js";
-import { NotificationsSettings } from "./notification-settings.js";
+import { InstructionsSettings } from "./instructions/instructions.js";
+import { McpSettings } from "./mcp/mcp.js";
+import { NotificationsSettings } from "./notifications/notification-settings.js";
 import {
   installTurnNotifications,
   type ClientSessions,
-} from "./notifications.js";
-import { SandboxProfileChip } from "./profile.js";
-import { RepositoryDirectoryFlow } from "./repository-directory-flow.js";
-import { SandboxStatusTab } from "./sandbox.js";
-import { SandboxWait } from "./sandbox-wait.js";
-import { SessionMcpChip } from "./session-mcp.js";
-import { McpServersView } from "./session-mcp-view.js";
-import { GitCredentialsSettings } from "./git-credentials.js";
-import { logoutPath } from "./logout-route.js";
-import { MoreMenu, MORE_MENU_STYLE } from "./more-menu.js";
-import { SandboxesSettings } from "./settings.js";
-import { registerSettingsIcons } from "./settings-icons.js";
-import { SecretsSettings } from "./secrets.js";
-import { installMediaSession } from "./media-session.js";
-import { installVideoPreview } from "./video-preview.js";
+} from "./notifications/notifications.js";
+import { SandboxProfileChip } from "./sandbox/profile.js";
+import { RepositoryDirectoryFlow } from "./workspaces/repository-directory-flow.js";
+import { SandboxStatusTab } from "./sandbox/sandbox.js";
+import { SandboxWait } from "./sandbox/sandbox-wait.js";
+import { SessionMcpChip } from "./mcp/session-mcp.js";
+import { McpServersView } from "./mcp/session-mcp-view.js";
+import { GitCredentialsSettings } from "./credentials/git-credentials.js";
+import { logoutPath } from "./auth/logout-route.js";
+import { MoreMenu, MORE_MENU_STYLE } from "./auth/more-menu.js";
+import { SandboxesSettings } from "./sandbox/settings.js";
+import { registerSettingsIcons } from "./shared/settings-icons.js";
+import { SecretsSettings } from "./credentials/secrets.js";
+import { installMediaSession } from "./media/media-session.js";
+import { installVideoPreview } from "./media/video-preview.js";
 
 /**
  * The client bundle entry: mounts the Remote endpoints and registers the
@@ -456,4 +456,4 @@ export async function apply(ctx: Context) {
 export {
   RepositoryDirectoryFlow,
   type RepositoryDirectoryFlowProps,
-} from "./repository-directory-flow.js";
+} from "./workspaces/repository-directory-flow.js";

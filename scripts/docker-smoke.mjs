@@ -6,10 +6,10 @@ import { readFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { promisify } from "node:util";
 
-import { DockerBackend } from "../control-plane/dist/backends/docker.js";
-import { previewHost } from "../control-plane/dist/preview.js";
-import { PreviewServer } from "../control-plane/dist/preview-server.js";
-import { TunnelServer } from "../control-plane/dist/tunnel.js";
+import { DockerBackend } from "../control-plane/dist/sandbox/backends/docker.js";
+import { previewHost } from "../control-plane/dist/previews/preview.js";
+import { PreviewServer } from "../control-plane/dist/previews/preview-server.js";
+import { TunnelServer } from "../control-plane/dist/core/tunnel.js";
 
 const execFileAsync = promisify(execFile);
 

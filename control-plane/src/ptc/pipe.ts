@@ -12,8 +12,11 @@
 import { Duplex } from "node:stream";
 
 import type { RunResponse, RunStart } from "../gen/dsh/yawn/v1/ptc_pb.js";
-import { MessageQueue } from "../message-queue.js";
-import type { PtcRunRequestMessage, RunnerClient } from "../runner-client.js";
+import { MessageQueue } from "../core/message-queue.js";
+import type {
+  PtcRunRequestMessage,
+  RunnerClient,
+} from "../core/runner-client.js";
 
 /** The start message, in the shape the generated client accepts. */
 export type PtcCommand = Omit<RunStart, "$typeName">;
