@@ -163,6 +163,33 @@ reseeds the profile from the image and logs a warning, but keeps the manifest
 it was working from as `package.json.before-reseed` and leaves the version
 marker alone: the next boot merges that manifest back in and retries.
 
+### Creator-installed plugins
+
+A Creator session authors a bundle in its workspace, and `plugin_manager`
+installs it with `install_bundle`. The stock installer runs on the control
+plane, so it cannot read the sandbox path. The `creator-bundles` row wraps
+`install_bundle`: when the target is an absolute path inside the session's
+sandbox workspace, it snapshots the package under
+`$DSH_HOME/creator-plugins/<package>/versions/<hash>` and installs that
+stored version instead. Every other spec — a host path, npm name, Git URL, or
+the Web Plugins page — passes through unchanged.
+
+The store is outside the profile but on the data volume, so the profile's
+`link:` dependency keeps resolving across a restart and an image upgrade. A
+version is immutable. The Creator-only `plugin_source` tool lists the stored
+plugins and checks one version out into any later Creator session
+(`plugins/<name>` by default); edit it there and run `install_bundle` again to
+store the next version. The original sandbox can be gone. Standard keeps its
+stock tool surface; switch to Creator to edit a stored plugin.
+
+One version is one content hash. If a checkout's
+`.dsh-plugin-source.json` base is older than the store's latest, the install
+result carries a warning so a concurrent edit does not disappear silently.
+Removing the bundle from the profile does not delete the store; the source
+can be checked out or reinstalled later. To share a plugin, push the checked
+out package to a Git host or publish it to npm; the store is local to this
+control plane.
+
 ## Settings
 
 Configuration is YAML in the profile's own layer,

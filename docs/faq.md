@@ -113,3 +113,17 @@ keeps them, refreshing only the control plane's own package. Caveats:
   bundle patch _could_ restate a preset, but this package does not: the stock
   tool rows already run inside the sandbox, and staying off the preset rows
   keeps that true across dsh upgrades.
+
+### Can I edit a plugin I made in another session?
+
+Yes, if it was installed from a Creator session's workspace. The control
+plane snapshots it under `$DSH_HOME/creator-plugins` on install. In a later
+Creator session, `plugin_source list` finds it and `plugin_source checkout`
+copies its installed version into that session's workspace; edit the copy and
+run `plugin_manager install_bundle` on the directory to store and install the
+next version. The original sandbox can be gone, and the source survives a
+control-plane restart and an image upgrade. The `plugin_source` tool is
+Creator-only; standard keeps its stock tool list. A plugin installed from npm
+or Git is not stored this way — get its source from that package or
+repository. To share a stored plugin, push the checked-out directory to a Git
+host or publish it to npm.

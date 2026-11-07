@@ -51,6 +51,14 @@
       "types": "./dist/sessions/session-tools.d.ts",
       "default": "./dist/sessions/session-tools.js"
     },
+    "./creator-bundles": {
+      "types": "./dist/plugins/creator-bundles.d.ts",
+      "default": "./dist/plugins/creator-bundles.js"
+    },
+    "./plugin-source": {
+      "types": "./dist/plugins/plugin-source.d.ts",
+      "default": "./dist/plugins/plugin-source.js"
+    },
     "./sandbox-context": {
       "types": "./dist/sandbox/sandbox-context.d.ts",
       "default": "./dist/sandbox/sandbox-context.js"
