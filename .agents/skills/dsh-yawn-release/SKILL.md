@@ -18,18 +18,45 @@ The release commits nothing, so `main` does not change. Do not tag or create the
 
 ## Write the release note
 
-The pipeline writes the base note: image pulls, the sandbox-pool overlay, and the generated PR list. Keep the generated list and full-changelog link.
+The pipeline writes the base note: the generated change list, images, the sandbox-pool pin, and the full-changelog link. Keep the generated list and full-changelog link.
 
-Decide from the merged PRs whether the release needs a highlight. Write one only for a user-visible change worth calling out, always as a single short sentence that says what changed. Put it first, above `## Images`, as a GitHub alert:
+Add a highlight only when a merged PR changes something a user can see. Skip it for refactors, CI, docs, and dependency bumps. Keep it dry:
+
+- one fact per bullet, with no adjectives or "now you can"
+- an emoji, then the user-visible result (not the PR title)
+- at most three bullets; one is usually enough
+
+Put the highlight at the top of the note, above `## What's Changed`, as a GitHub alert:
 
 > [!NOTE]
-> Adds OIDC sign-in and per-host Git credentials.
+> **✨ Highlights**
+> - 🧩 Creator plugins persist across sandboxes.
+> - ⚡ Sandboxes start when the first prompt is sent.
 
-Use `[!IMPORTANT]` instead for a breaking change. Do not add any other prose above the generated note.
+Use `[!IMPORTANT]` for a breaking change and say what to do in one line:
+
+> [!IMPORTANT]
+> **⚠️ Breaking**
+> - 🔐 `oidc.enabled` is removed; set `auth.mode: oidc` instead.
+
+To prepend it to the pipeline's note:
 
 ```bash
-gh release edit <version> --repo zhming0/dsh-yawn --notes-file notes.md
+VERSION=<version>
+gh release view "$VERSION" --repo zhming0/dsh-yawn --json body --jq .body > base-notes.md
+{
+  cat <<'EOF'
+> [!NOTE]
+> **✨ Highlights**
+> - 🧩 ...
+EOF
+  echo
+  cat base-notes.md
+} > notes.md
+gh release edit "$VERSION" --repo zhming0/dsh-yawn --notes-file notes.md
 ```
+
+Do not add any other prose above the generated note.
 
 ## Verify
 

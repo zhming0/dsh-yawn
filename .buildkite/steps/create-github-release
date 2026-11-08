@@ -12,32 +12,59 @@ RELEASE_COMMIT="$(buildkite-agent meta-data get release-commit)"
 CONTROL_PLANE_IMAGE="ghcr.io/zhming0/dsh-yawn-control-plane"
 RUNNER_IMAGE="ghcr.io/zhming0/dsh-yawn-runner"
 
+# The release skill prepends a short highlight to this note. Keep the template
+# factual and short: images and the pool pin. GitHub's generated change list
+# goes above it, and the full-changelog link stays last.
+NOTES="$(cat <<'EOF'
+## 📦 Images
+
+```sh
+docker pull __CONTROL_PLANE_IMAGE__:__VERSION__
+docker pull __RUNNER_IMAGE__:__VERSION__
+```
+
+## 🧱 Kubernetes sandbox pool
+
+Pin the base and its runner image in `kustomization.yaml`:
+
+```yaml
+resources:
+  - https://github.com/zhming0/dsh-yawn//deploy/kubernetes/runner?ref=__TAG__
+images:
+  - name: __RUNNER_IMAGE__
+    newTag: __VERSION__
+```
+
+Apply from the overlay directory:
+
+```sh
+kubectl apply -k .
+```
+
+Docker and Buildkite use the runner image automatically. [Kubernetes runner
+guide](https://github.com/zhming0/dsh-yawn/blob/__TAG__/docs/runners/kubernetes.md)
+EOF
+)"
+
+NOTES="${NOTES//__CONTROL_PLANE_IMAGE__/$CONTROL_PLANE_IMAGE}"
+NOTES="${NOTES//__RUNNER_IMAGE__/$RUNNER_IMAGE}"
+NOTES="${NOTES//__VERSION__/$VERSION}"
+NOTES="${NOTES//__TAG__/$TAG}"
+
+# `gh release create` appends generated notes after --notes, so fetch the
+# generated body first and place it above the image and pool sections.
+GENERATED="$(gh api --method POST "repos/zhming0/dsh-yawn/releases/generate-notes" \
+  -f tag_name="$TAG" \
+  -f target_commitish="$RELEASE_COMMIT" \
+  --jq .body)"
+CHANGES="$(printf '%s\n' "$GENERATED" | sed '/^\*\*Full Changelog\*\*:/,$d')"
+FULL_CHANGELOG="$(printf '%s\n' "$GENERATED" | sed -n '/^\*\*Full Changelog\*\*:/,$p')"
+
 echo "+++ :github: Creating GitHub release"
 # --target creates the tag at the commit the build started from, which is what
 # the images and the chart were built and published from.
-gh release create "$TAG" --target "$RELEASE_COMMIT" --title "$TAG" --generate-notes --notes "## Images
+gh release create "$TAG" --target "$RELEASE_COMMIT" --title "$TAG" --notes "${CHANGES}
 
-\`\`\`
-docker pull ${CONTROL_PLANE_IMAGE}:${VERSION}
-docker pull ${RUNNER_IMAGE}:${VERSION}
-\`\`\`
+${NOTES}
 
-Both built for \`linux/amd64\` and \`linux/arm64\`. The control-plane image is the dsh
-distribution: dsh with the web profile and this control plane assembled at the same
-version. The control plane inside it defaults to the runner image tag above, so the
-pair always ships together.
-
-## Sandbox pool
-
-The pool base names the runner image without a tag. An overlay pins it to this
-release:
-
-\`\`\`yaml
-images:
-  - name: ${RUNNER_IMAGE}
-    newTag: ${VERSION}
-\`\`\`
-
-Use this version for the \`ref\` of the base too, so the manifests and the image
-are the same release: https://github.com/zhming0/dsh-yawn/blob/${TAG}/docs/runners/kubernetes.md
-"
+${FULL_CHANGELOG}"
