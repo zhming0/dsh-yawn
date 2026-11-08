@@ -39,6 +39,7 @@ import type { SessionId } from "@deepseek-ai/dsh-session";
 import type { JsonValue } from "@deepseek-ai/dsh-util-values";
 
 import type { SessionProfileView } from "../sandbox/session-profile-remote.js";
+import { registerPerAgentTools } from "../tools/per-agent.js";
 import {
   defineTool,
   type ToolDefinition,
@@ -518,8 +519,6 @@ export function apply(ctx: Context, config: Config): void {
         scratchWorkspace: scope.sandboxManager.scratchWorkspace,
       });
       const excluded = new Set(config.excludedPresets);
-      const installed = new Map<Agent, { dispose(): unknown }>();
-      let disposed = false;
 
       const presetFor = (agent: Agent): string | undefined => {
         const presets = scope.get("agentPresets") as
@@ -536,107 +535,7 @@ export function apply(ctx: Context, config: Config): void {
         return preset === undefined || !excluded.has(preset);
       };
 
-      const install = (agent: Agent): void => {
-        if (disposed || installed.has(agent) || !allowed(agent)) {
-          return;
-        }
-        try {
-          const fiber = agent.ctx.inject(["tools"], (agentScope) => {
-            agentScope.effect(() => {
-              const disposers: Array<() => void> = [];
-              try {
-                for (const tool of tools) {
-                  disposers.push(agentScope.tools.register(tool));
-                }
-              } catch (error) {
-                for (const dispose of disposers) {
-                  dispose();
-                }
-                throw error;
-              }
-              return () => {
-                for (const dispose of disposers) {
-                  dispose();
-                }
-              };
-            });
-          });
-          installed.set(agent, fiber);
-        } catch (error) {
-          scope
-            .logger("session-tools")
-            .warn(
-              `could not install on agent ${String(agent.id)}: ${describeError(error)}`,
-            );
-        }
-      };
-
-      const remove = (agent: Agent): void => {
-        const fiber = installed.get(agent);
-        if (fiber === undefined) {
-          return;
-        }
-        installed.delete(agent);
-        try {
-          fiber.dispose();
-        } catch (error) {
-          scope
-            .logger("session-tools")
-            .warn(
-              `could not remove from agent ${String(agent.id)}: ${describeError(error)}`,
-            );
-        }
-      };
-
-      const reconcile = (): void => {
-        if (disposed) {
-          return;
-        }
-        const live = new Set(scope.agents.list());
-        for (const agent of live) {
-          if (allowed(agent)) {
-            install(agent);
-          } else {
-            remove(agent);
-          }
-        }
-        for (const agent of [...installed.keys()]) {
-          if (!live.has(agent)) {
-            remove(agent);
-          }
-        }
-      };
-
-      scope.on("agent/created", ({ agent }) => {
-        install(agent);
-        return undefined;
-      });
-      scope.on("agent/disposed", ({ agent }) => {
-        remove(agent);
-      });
-      // A blank session can be moved to another preset in the Web UI. That
-      // rebinds the composition and emits `tools/change`; re-read the live
-      // preset instead of trusting the creation header.
-      let scheduled = false;
-      scope.on("tools/change", () => {
-        if (scheduled) {
-          return;
-        }
-        scheduled = true;
-        queueMicrotask(() => {
-          scheduled = false;
-          reconcile();
-        });
-      });
-      scope.effect(() => () => {
-        disposed = true;
-        for (const agent of [...installed.keys()]) {
-          remove(agent);
-        }
-      });
-      // Existing agents on a reload or HMR swap; `agent/created` covers new
-      // ones from here on.
-      reconcile();
+      registerPerAgentTools(scope, { label: name, tools, allow: allowed });
     },
   );
 }

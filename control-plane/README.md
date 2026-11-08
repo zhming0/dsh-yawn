@@ -163,6 +163,56 @@ reseeds the profile from the image and logs a warning, but keeps the manifest
 it was working from as `package.json.before-reseed` and leaves the version
 marker alone: the next boot merges that manifest back in and retries.
 
+### Creator-installed plugins
+
+A Creator session authors a bundle in its workspace, and `plugin_manager`
+installs it with `install_bundle`. The stock installer runs on the control
+plane, so it cannot read the sandbox path. The `creator-bundles` row wraps
+`install_bundle`: when the target is an absolute path inside the session's
+sandbox workspace, it snapshots the package under
+`$DSH_HOME/creator-plugins/<package-slug>/versions/<hash>` and installs a
+tarball of that version instead. The slug is a filesystem-safe form of the
+package name plus a short hash, so scoped names and similarly named packages
+cannot collide. Every other spec — a host path, npm name, Git URL, or
+the Web Plugins page — passes through unchanged.
+
+The store is outside the profile but on the data volume, so the profile's
+`file:` dependency on the tarball keeps resolving across a restart and an
+image upgrade. A version is immutable: the source directory is
+`versions/<hash>/` and the tarball the profile depends on is
+`versions/<hash>.tgz`. A snapshot copies regular files and directories under
+the package, excluding `node_modules`, `.git`, and `.dsh-attachments`;
+symlinks are not followed and file modes are not preserved. Installing the
+tarball, rather than linking the source directory, makes pnpm materialize the
+package and its registry dependencies in the profile; dsh packages should
+still be declared as peers. A checkout
+recreates regular files; an empty directory in a stored version is not
+recreated. The caps are 5,000
+entries, 2,000 files, 8 MiB per file, and 64 MiB total. The store keeps every
+attempt while the plugin is installed; uninstalling deletes that package's
+source and tarballs, so uninstall is the only automatic pruning. There is no
+automatic GC of older versions while a plugin stays installed. The Creator-only `plugin_source` tool lists the stored
+plugins and checks one version out into any later Creator session
+(`plugins/<name>` by default); edit it there and run `install_bundle` again to
+store the next version. A new version gets a new tarball path, so the stock installer normally
+replaces the installed version directly. If it answers `already-installed`
+(such as when retrying the same artifact), remove the bundle first and retry,
+as its `nextStep` says. The original sandbox can be gone. Standard keeps its
+stock tool surface; switch to Creator to edit a stored plugin. The staging
+wrapper applies in every preset, so a standard session that installs a
+workspace package creates a source that only Creator can check out.
+
+One version is one content hash. An install attempt stores its snapshot even
+when the stock installer refuses it (for example a failed first install), so
+the source is recoverable; `latest` follows the version the profile selected,
+including a failed attempt that saved the new dependency. If a checkout's `.dsh-plugin-source.json` base is older than the
+last installed version, the install result carries a warning so a concurrent
+edit does not disappear silently. A session that already checked out an older
+version keeps its workspace copy, but uninstalling deletes the store entry and
+that base. To share a
+plugin, push the checked out package to a Git host or publish it to npm; the
+store is local to this control plane.
+
 ## Settings
 
 Configuration is YAML in the profile's own layer,
