@@ -26,8 +26,8 @@ steps:
 
   - wait
 
-  # Creates the tag at the commit the build started from. The tag is what
-  # `?ref=$VERSION` in the pool base names.
+  # Creates the tag and the base release note at the commit the build started
+  # from. The release skill prepends the highlight after this step.
   - label: ":github: Create GitHub release"
     secrets:
       - GITHUB_TOKEN
