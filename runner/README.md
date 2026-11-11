@@ -29,9 +29,14 @@ completion marker is `/var/lib/dsh-yawn/setup-done`, on the machine's own
 filesystem and not on the workspace volume, so a rebuilt machine runs setup
 again while a machine that stayed alive does not. The entry in `Setup`'s
 response means a setup run happened on this call; a machine that already ran it
-answers `false`. A setup hook runs on a checkout that may already carry an
-earlier run's output — possibly with a session's uncommitted work — so it must
-be safe to re-run. Setup creates the apt cache directory
+answers `false`. A setup command that fails after it starts answers with its
+name and the end of its output, capped at 4 KiB per stream, so the caller sees
+the cause rather than only an exit status. A command that cannot start answers
+with its name and the reason; a canceled setup answers with only the
+cancellation. The output still reaches the runner's own stdout and stderr
+while the command runs. A setup hook runs on a checkout that may already carry
+an earlier run's output — possibly with a session's uncommitted work — so it
+must be safe to re-run. Setup creates the apt cache directory
 `/workspace/.dsh-yawn/apt-cache`, which the image's apt configuration names, so
 system packages a setup installs are downloaded once per workspace volume;
 after a successful setup it trims that cache with `apt-get autoclean` and

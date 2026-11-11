@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	v1 "github.com/zhming0/dsh-yawn/runner/gen/dsh/yawn/v1"
@@ -454,15 +455,25 @@ func TestFailedSetupIsNotRemembered(t *testing.T) {
 	}
 	if err := os.WriteFile(
 		filepath.Join(workspace, ".agents", "setup"),
-		[]byte("#!/bin/sh\nprintf 'x' >> .setup-count\nexit 1\n"),
+		[]byte("#!/bin/sh\nprintf 'x' >> .setup-count\necho 'ERR_PNPM_OUTDATED_LOCKFILE: fake'\necho 'install failed' >&2\nexit 1\n"),
 		0755,
 	); err != nil {
 		t.Fatal(err)
 	}
 	service := newSetupService(t)
 
-	if _, err := service.Setup(context.Background(), repositorySetup(workspace)); err == nil {
+	_, err := service.Setup(context.Background(), repositorySetup(workspace))
+	if err == nil {
 		t.Fatal("a failing setup returned no error")
+	}
+	for _, want := range []string{
+		".agents/setup: exit status 1",
+		"ERR_PNPM_OUTDATED_LOCKFILE: fake",
+		"install failed",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("setup error %q does not mention %q", err, want)
+		}
 	}
 	if _, err := os.Stat(service.markerPath()); !os.IsNotExist(err) {
 		t.Fatalf("a failed setup wrote the marker: %v", err)
@@ -473,6 +484,65 @@ func TestFailedSetupIsNotRemembered(t *testing.T) {
 	}
 	if runs := setupRuns(t, filepath.Join(workspace, ".setup-count")); runs != 2 {
 		t.Fatalf("failed setup ran %d times, want 2", runs)
+	}
+}
+
+// A setup hook may leave a process behind that inherited its output, such as a
+// server started in the background. Setup must not wait for that process to
+// release the pipes.
+func TestSetupDoesNotWaitForBackgroundChildren(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workspace, countFile := newSetupWorkspace(t)
+	if err := os.WriteFile(
+		filepath.Join(workspace, ".agents", "setup"),
+		[]byte("#!/bin/sh\nsleep 10 &\nprintf 'x' >> .setup-count\n"),
+		0755,
+	); err != nil {
+		t.Fatal(err)
+	}
+	service := newSetupService(t)
+
+	started := time.Now()
+	response, err := service.Setup(context.Background(), repositorySetup(workspace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !response.Msg.Ran {
+		t.Fatal("setup did not run")
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("setup waited %v for a background child", elapsed)
+	}
+	if runs := setupRuns(t, countFile); runs != 1 {
+		t.Fatalf("setup ran %d times, want 1", runs)
+	}
+}
+
+func TestTailBufferKeepsTheEndOfAStream(t *testing.T) {
+	tests := []struct {
+		name   string
+		limit  int
+		writes []string
+		want   string
+	}{
+		{name: "keeps the last lines", limit: 8, writes: []string{"one\n", "two\n", "three\n"}, want: "three\n"},
+		{name: "keeps a line that begins at the cut", limit: 4, writes: []string{"abc\n", "def\n"}, want: "def\n"},
+		{name: "keeps a line after a mid-line window", limit: 3, writes: []string{"a\n", "a\n", "aa\n"}, want: "aa\n"},
+		{name: "drops the partial first line", limit: 8, writes: []string{"0123456789\ntail"}, want: "tail"},
+		{name: "keeps a single partial line", limit: 4, writes: []string{"abcdefgh"}, want: "efgh"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			buffer := &tailBuffer{limit: test.limit}
+			for _, chunk := range test.writes {
+				if _, err := buffer.Write([]byte(chunk)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := buffer.String(); got != test.want {
+				t.Fatalf("tail buffer kept %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
