@@ -99,6 +99,19 @@ export class SandboxNotFoundError extends Error {
 }
 
 /**
+ * The session has no sandbox yet: only its first prompt starts one. A browser
+ * read must not provision a sandbox, so it answers with this instead. The
+ * filesystem keeps the message, which tells the user what to do, rather than
+ * reporting the sandbox as unavailable.
+ */
+export class SandboxNotStartedError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "SandboxNotStartedError";
+  }
+}
+
+/**
  * A backend owns sandbox acquisition and lifecycle, not transport: runners
  * dial the host tunnel themselves, so there is no connect() here.
  */

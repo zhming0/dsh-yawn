@@ -1,10 +1,16 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { Context } from "@deepseek-ai/cordis";
-import { FsTargetKey, FsVersion, type FsTarget } from "@deepseek-ai/dsh-fs";
+import {
+  FsError,
+  FsTargetKey,
+  FsVersion,
+  type FsTarget,
+} from "@deepseek-ai/dsh-fs";
 import { parsePatch } from "@deepseek-ai/dsh-fs-patch";
 import { describe, expect, it } from "vitest";
 
 import SandboxFileSystem from "../../src/sandbox/fs.js";
+import { SandboxNotStartedError } from "../../src/core/types.js";
 import { FileType } from "../../src/gen/dsh/yawn/v1/runner_pb.js";
 import type { RunnerClient } from "../../src/core/runner-client.js";
 
@@ -103,12 +109,21 @@ function fakeRunner(files: Map<string, FakeFile>) {
   return { client, files, writes, deletes };
 }
 
-function makeFileSystem(files: Map<string, FakeFile>) {
+function makeFileSystem(
+  files: Map<string, FakeFile>,
+  clientFailure?: () => Error | undefined,
+) {
   const runner = fakeRunner(files);
   const ctx = new Context();
   ctx.provide("sandboxManager", {
     workspace: "/workspace/repository",
-    clientForCurrentAgent: async () => runner.client,
+    clientForCurrentAgent: async () => {
+      const failure = clientFailure?.();
+      if (failure !== undefined) {
+        throw failure;
+      }
+      return runner.client;
+    },
     rootSessionIdForCurrentAgent: () => "session-one",
   });
   ctx.provide("agents", {
@@ -229,5 +244,135 @@ describe("SandboxFileSystem mutations", () => {
       code: "FS_PERMISSION_DENIED",
       message: 'cannot delete "/workspace/repository/a.txt": permission denied',
     });
+  });
+});
+
+describe("SandboxFileSystem error reporting", () => {
+  const sandboxFailure = new ConnectError(
+    ".agents/setup: exit status 1",
+    Code.Internal,
+  );
+
+  it("reports a sandbox failure as an unavailable sandbox, not a path error", async () => {
+    const { fs } = makeFileSystem(new Map(), () => sandboxFailure);
+    const file = target("/workspace/repository/notes.txt");
+    const calls: Array<() => Promise<unknown>> = [
+      () => fs.resolve("/workspace/repository"),
+      () => fs.stat(file),
+      () => fs.lstat("notes.txt"),
+      () => fs.readText(file),
+      () => fs.readByteRange(file, { offset: 0, length: 1 }),
+      () => fs.listDir(target("/workspace/repository")),
+      () => fs.writeText(file, "x"),
+      () =>
+        fs.editText(file, {
+          oldString: "a",
+          newString: "b",
+          replaceAll: false,
+        }),
+      () => fs.deleteFile(file),
+      () => fs.moveFile(file, target("/workspace/repository/moved.txt"), {}),
+    ];
+
+    for (const call of calls) {
+      const error = await call().then(
+        () => undefined,
+        (reason: unknown) => reason,
+      );
+
+      expect(error).toBeInstanceOf(FsError);
+      expect((error as FsError).code).toBe("FS_IO_ERROR");
+      expect((error as Error).message).toBe(
+        "the session's sandbox is unavailable",
+      );
+      expect((error as Error).cause).toBe(sandboxFailure);
+    }
+  });
+
+  it("keeps the instruction for a session that has not started a sandbox", async () => {
+    const guard = new SandboxNotStartedError(
+      "This session has no sandbox yet. Send a prompt to start one.",
+    );
+    const { fs } = makeFileSystem(new Map(), () => guard);
+
+    const error = await fs
+      .readBytes(target("/workspace/repository/notes.txt"), undefined, 1)
+      .then(
+        () => undefined,
+        (reason: unknown) => reason,
+      );
+
+    expect(error).toBeInstanceOf(FsError);
+    expect((error as FsError).code).toBe("FS_IO_ERROR");
+    expect((error as Error).message).toBe(
+      "This session has no sandbox yet. Send a prompt to start one.",
+    );
+    expect((error as Error).cause).toBe(guard);
+  });
+
+  it("reports an acquisition aborted by the caller as an aborted read", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { fs } = makeFileSystem(new Map(), () => sandboxFailure);
+
+    const error = await fs
+      .readBytes(
+        target("/workspace/repository/notes.txt"),
+        controller.signal,
+        1,
+      )
+      .then(
+        () => undefined,
+        (reason: unknown) => reason,
+      );
+
+    expect(error).toBeInstanceOf(FsError);
+    expect((error as FsError).code).toBe("FS_ABORTED");
+    expect((error as Error).message).toBe("sandbox access aborted");
+  });
+
+  it("reports a sandbox failure while removing a moved source", async () => {
+    const files = new Map<string, FakeFile>([
+      [
+        "/workspace/repository/a.txt",
+        { content: encoder.encode("one\n"), version: "v1", mode: 0o644 },
+      ],
+    ]);
+    let acquisitions = 0;
+    const { fs } = makeFileSystem(files, () =>
+      ++acquisitions === 5 ? sandboxFailure : undefined,
+    );
+
+    const result = await fs.moveFile(
+      target("/workspace/repository/a.txt"),
+      target("/workspace/repository/b.txt"),
+      {},
+    );
+
+    expect(result.destination.operation).toBe("create");
+    expect(result.sourceDeleted).toBe(false);
+    if (result.sourceDeleted) {
+      throw new Error("source should have been retained");
+    }
+    expect(result.sourceFailure).toEqual({
+      code: "FS_IO_ERROR",
+      message: "the session's sandbox is unavailable",
+    });
+  });
+
+  it("still maps a file RPC failure to a path error", async () => {
+    const { fs } = makeFileSystem(new Map());
+    const missing = target("/workspace/repository/missing.txt");
+
+    const error = await fs.readText(missing).then(
+      () => undefined,
+      (reason: unknown) => reason,
+    );
+
+    expect(error).toBeInstanceOf(FsError);
+    expect((error as FsError).code).toBe("FS_NOT_FOUND");
+    expect((error as Error).message).toBe(
+      'cannot read "/workspace/repository/missing.txt": not found',
+    );
   });
 });
