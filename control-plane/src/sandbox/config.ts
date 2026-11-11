@@ -39,6 +39,7 @@ export type ProfileConfig =
       readyTimeoutMs?: number;
       idleMs?: number;
       secretKey?: string;
+      tokenCredential?: string;
     };
 
 /**
@@ -182,6 +183,7 @@ const runtimeFields = () => ({
           readyTimeoutMs: z.number().min(1),
           idleMs: z.number().min(1),
           secretKey: z.string(),
+          tokenCredential: z.string(),
         }),
       ]),
     )
@@ -604,6 +606,9 @@ function resolveProfile(
       ...(profile.secretKey === undefined
         ? {}
         : { secretKey: profile.secretKey }),
+      ...(profile.tokenCredential === undefined
+        ? {}
+        : { tokenCredential: profile.tokenCredential }),
     };
   }
   return {

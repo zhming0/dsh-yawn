@@ -237,7 +237,9 @@ returns to the value beneath the edit, and a change re-resolves the profiles
 and expiry timers, which take effect for the next armed countdown and the next
 hibernation. Sessions that already have a sandbox keep it; a profile whose
 sessions are still on record can be removed, and those sessions behave exactly
-as they do across a restart with the profile missing.
+as they do across a restart with the profile missing. A profile the page owns
+can also be renamed in place; the rename keeps the profile's credential
+reference, so its stored Buildkite token stays where it is.
 
 A deployment can supply defaults beneath those settings in the top-level
 `sandboxManager` section of `/etc/dsh-yawn/sandbox-settings.yaml`: the same
@@ -305,22 +307,23 @@ and `readyTimeoutMs` fall back to the top-level values of the same name, and
 read when a countdown is armed, from the profile the session's sandbox runs
 on.
 
-| Profile field     | Backend               | Default                       | Meaning                                                                                      |
-| ----------------- | --------------------- | ----------------------------- | -------------------------------------------------------------------------------------------- |
-| `backend`         | all                   | required                      | `docker`, `kas`, or `buildkite`                                                              |
-| `idleMs`          | all                   | top-level `idleMs`            | Idle delay before this profile's sandboxes hibernate                                         |
-| `image`           | `docker`, `buildkite` | matching release tag          | Runner image                                                                                 |
-| `binary`          | `docker`              | `docker`                      | Docker-compatible command                                                                    |
-| `controlPlaneUrl` | `docker`, `buildkite` | `host.docker.internal`        | `DSH_YAWN_CONTROL_PLANE_URL` runners dial, `ws://` or `wss://`                               |
-| `namespace`       | `kas`                 | `dsh-yawn`                    | Namespace containing claims and warm sandboxes                                               |
-| `warmPool`        | `kas`                 | `dsh-yawn-universal`          | Warm pool used for claims                                                                    |
-| `readyTimeoutMs`  | `kas`                 | top-level, or 3 min           | How long to wait for a claimed sandbox                                                       |
-| `kubeconfig`      | `kas`                 | normal client lookup          | Optional kubeconfig path                                                                     |
-| `organization`    | `buildkite`           | required                      | Buildkite organization slug                                                                  |
-| `pipeline`        | `buildkite`           | required                      | Pipeline slug whose job runs the runner                                                      |
-| `controlPlaneUrl` | `buildkite`           | required                      | `DSH_YAWN_CONTROL_PLANE_URL` runners dial; agents are never local                            |
-| `readyTimeoutMs`  | `buildkite`           | top-level, or 10 min          | How long a build may wait for an agent                                                       |
-| `secretKey`       | `buildkite`           | `DSH_YAWN_REGISTRATION_TOKEN` | Cluster secret holding the registration token; see [Registration token](#registration-token) |
+| Profile field     | Backend               | Default                          | Meaning                                                                                      |
+| ----------------- | --------------------- | -------------------------------- | -------------------------------------------------------------------------------------------- |
+| `backend`         | all                   | required                         | `docker`, `kas`, or `buildkite`                                                              |
+| `idleMs`          | all                   | top-level `idleMs`               | Idle delay before this profile's sandboxes hibernate                                         |
+| `image`           | `docker`, `buildkite` | matching release tag             | Runner image                                                                                 |
+| `binary`          | `docker`              | `docker`                         | Docker-compatible command                                                                    |
+| `controlPlaneUrl` | `docker`, `buildkite` | `host.docker.internal`           | `DSH_YAWN_CONTROL_PLANE_URL` runners dial, `ws://` or `wss://`                               |
+| `namespace`       | `kas`                 | `dsh-yawn`                       | Namespace containing claims and warm sandboxes                                               |
+| `warmPool`        | `kas`                 | `dsh-yawn-universal`             | Warm pool used for claims                                                                    |
+| `readyTimeoutMs`  | `kas`                 | top-level, or 3 min              | How long to wait for a claimed sandbox                                                       |
+| `kubeconfig`      | `kas`                 | normal client lookup             | Optional kubeconfig path                                                                     |
+| `organization`    | `buildkite`           | required                         | Buildkite organization slug                                                                  |
+| `pipeline`        | `buildkite`           | required                         | Pipeline slug whose job runs the runner                                                      |
+| `controlPlaneUrl` | `buildkite`           | required                         | `DSH_YAWN_CONTROL_PLANE_URL` runners dial; agents are never local                            |
+| `readyTimeoutMs`  | `buildkite`           | top-level, or 10 min             | How long a build may wait for an agent                                                       |
+| `secretKey`       | `buildkite`           | `DSH_YAWN_REGISTRATION_TOKEN`    | Cluster secret holding the registration token; see [Registration token](#registration-token) |
+| `tokenCredential` | `buildkite`           | opaque on the page, else derived | Credential reference holding the API token; set in configuration, hidden on the page         |
 
 A Buildkite profile cannot hibernate, so it checkpoints on idle (see below).
 The API token, with `read_builds`, `write_builds`, `read_pipelines`,
@@ -330,9 +333,13 @@ restart:
 
 1. the credential stored for the profile, entered on **Settings → Sandboxes**
    through the write-only credential API. It lives in the host credential
-   document (`$DSH_HOME/.credentials.yaml`) under a name derived from the
-   profile — `DSH_YAWN_BUILDKITE_<PROFILE>_TOKEN` — so two Buildkite profiles
-   keep two tokens, and it never reaches a sandbox.
+   document (`$DSH_HOME/.credentials.yaml`) under the profile's
+   `tokenCredential`. A profile created on the page gets an opaque reference;
+   a profile from configuration without one uses a name derived from the
+   profile — `DSH_YAWN_BUILDKITE_<PROFILE>_TOKEN`. The token never reaches a
+   sandbox. Renaming a profile on the page pins the name it already used, so
+   the token keeps working without being copied; that field is set in
+   configuration and stays out of the page.
 2. `BUILDKITE_API_TOKEN` in the control plane's process environment, the
    deployment-managed fallback.
 

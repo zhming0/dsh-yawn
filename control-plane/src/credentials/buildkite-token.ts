@@ -6,9 +6,6 @@ import {
 import { defaultBuildkiteTokenCredential } from "./buildkite-credential.js";
 import type { BuildkiteProfile } from "../core/types.js";
 
-/** Environment variable a deployment can set instead of storing a token. */
-export const DEFAULT_BUILDKITE_TOKEN_ENV = "BUILDKITE_API_TOKEN";
-
 /**
  * The slice of the host credential service this package consumes. The real
  * provider is resolved per request through the process environment and the
@@ -19,12 +16,16 @@ export interface CredentialResolver {
   resolve(ref: CredentialRef): Promise<{ value: string } | undefined>;
 }
 
+/** Environment variable a deployment can set instead of storing a token. */
+export const DEFAULT_BUILDKITE_TOKEN_ENV = "BUILDKITE_API_TOKEN";
+
 /**
  * Resolve the API token for one Buildkite profile: the credential the profile
- * stores it under — entered on the Sandboxes page, and answered by the host
- * credential service from the process environment and the managed
- * `$DSH_HOME/.credentials.yaml` — then `BUILDKITE_API_TOKEN` in the process
- * environment as the deployment's fallback.
+ * names, else the one derived from its current name — entered on the Sandboxes
+ * page, and answered by the host credential service from the process
+ * environment and the managed `$DSH_HOME/.credentials.yaml` — then
+ * `BUILDKITE_API_TOKEN` in the process environment as the deployment's
+ * fallback.
  *
  * The token must never reach a runner. Both sources are host-side; the broker
  * store, which is pushed into sandboxes, is not involved.
@@ -34,9 +35,10 @@ export async function resolveBuildkiteToken(
   credentials: CredentialResolver | undefined,
 ): Promise<string> {
   if (credentials !== undefined) {
-    const resolved = await credentials.resolve(
-      credentialRef(defaultBuildkiteTokenCredential(profile.name)),
-    );
+    const tokenCredential =
+      profile.tokenCredential?.trim() ||
+      defaultBuildkiteTokenCredential(profile.name);
+    const resolved = await credentials.resolve(credentialRef(tokenCredential));
     if (resolved !== undefined) {
       return resolved.value;
     }

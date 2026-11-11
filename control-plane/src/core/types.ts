@@ -53,6 +53,11 @@ export interface BuildkiteProfile {
    * DSH_YAWN_REGISTRATION_TOKEN; profiles sharing a cluster must differ.
    */
   secretKey?: string;
+  /**
+   * Credential reference holding the API token. Unset uses the name derived
+   * from the profile, so a rename can keep pointing at the old reference.
+   */
+  tokenCredential?: string;
 }
 
 /**
