@@ -2,9 +2,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type {
+  AgentTerminalRequest,
   TerminalController,
   TerminalCreateRequest,
   TerminalFrame,
+  TerminalScreenRequest,
   WebTerminalId,
 } from "@deepseek-ai/dsh-api-terminal-controller";
 import { describe, expect, it } from "vitest";
@@ -14,7 +16,14 @@ import { scopeToSession } from "../../src/terminal/terminal-controller.js";
 const AGENT = { id: "session-one" } as unknown as Agent;
 
 /** Stock method names the wrapper replaces. */
-const WRAPPED = ["shells", "create", "attach"] as const;
+const WRAPPED = [
+  "shells",
+  "create",
+  "openForAgent",
+  "readScreen",
+  "inspectActivity",
+  "attach",
+] as const;
 
 /**
  * Enough of the stock controller to prove the wrapper's effect: `shells` and
@@ -39,6 +48,38 @@ class FakeTerminalController {
   ): Promise<unknown> {
     this.initiators.push(this.agents.requireInitiator());
     return { id: "terminal-one" };
+  }
+
+  async openForAgent(
+    _agent: Agent,
+    _request: AgentTerminalRequest,
+    _signal: AbortSignal,
+  ): Promise<unknown> {
+    this.initiators.push(this.agents.requireInitiator());
+    return { id: "agent-terminal" };
+  }
+
+  async readScreen(
+    _agent: Agent,
+    _id: WebTerminalId,
+    _request: TerminalScreenRequest,
+  ): Promise<unknown> {
+    this.initiators.push(this.agents.requireInitiator());
+    return {
+      text: "",
+      totalLines: 0,
+      lineBegin: 0,
+      lineEnd: 0,
+      truncated: false,
+    };
+  }
+
+  async inspectActivity(
+    _agent: Agent,
+    _id: WebTerminalId,
+  ): Promise<"idle" | "busy" | "unknown"> {
+    this.initiators.push(this.agents.requireInitiator());
+    return "idle";
   }
 
   /** The frames one attachment yields: a screen, output, and three acks. */
@@ -131,6 +172,26 @@ describe("scopeToSession for the terminal controller", () => {
     await expect(typed.shells(AGENT, signal())).rejects.toThrow(
       "no initiating Agent",
     );
+  });
+
+  it("runs agent-controlled terminal calls as the session agent", async () => {
+    const { controller, undo } = makeService();
+    const typed = controller as unknown as TerminalController;
+
+    await typed.openForAgent(AGENT, {} as AgentTerminalRequest, signal());
+    await typed.readScreen(
+      AGENT,
+      "terminal-one" as WebTerminalId,
+      {} as TerminalScreenRequest,
+    );
+    await typed.inspectActivity(AGENT, "terminal-one" as WebTerminalId);
+
+    expect(controller.initiators).toEqual([AGENT, AGENT, AGENT]);
+
+    undo();
+    await expect(
+      typed.openForAgent(AGENT, {} as AgentTerminalRequest, signal()),
+    ).rejects.toThrow("no initiating Agent");
   });
 
   it("notes accepted terminal input and resize as session activity", async () => {

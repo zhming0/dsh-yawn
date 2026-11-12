@@ -247,9 +247,9 @@ describe("turn finished notifications", () => {
       "utf8",
     );
 
-    expect(bundle).toContain('$on("api-session/status"');
+    expect(bundle).toMatch(/\$on\([`"]api-session\/status[`"]/);
     expect(bundle).toMatch(
-      /sessions\.handleSessionStatus\(sessionId, running\)/,
+      /sessions\.handleSessionStatus\(sessionId,\s*running\)/,
     );
   });
 });

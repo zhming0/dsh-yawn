@@ -59,9 +59,23 @@ echo "container address bind ($address)"
 echo "+++ :mag: Checking the passcode login"
 docker run -d --name dsh-yawn-check-passcode -e DSH_YAWN_PASSCODE=correct-horse-battery dsh-yawn-control-plane:dev >/dev/null
 wait_for_listener dsh-yawn-check-passcode
-docker exec dsh-yawn-check-passcode node -e \
+# dsh 0.2.2-rc.2 starts its listener before every row has registered its
+# routes, so the first request can still see 404. Retry until the passcode row
+# answers instead of racing the boot.
+require_passcode() {
+  for _ in $(seq 1 60); do
+    if docker exec dsh-yawn-check-passcode node -e "$1"; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "the passcode row never answered" >&2
+  docker logs dsh-yawn-check-passcode >&2
+  return 1
+}
+require_passcode \
   "fetch('http://127.0.0.1:3000/login').then((r) => process.exit(r.status === 200 ? 0 : 1), () => process.exit(1))"
-docker exec dsh-yawn-check-passcode node -e \
+require_passcode \
   "fetch('http://127.0.0.1:3000/', { redirect: 'manual' }).then((r) => process.exit(r.status === 303 && r.headers.get('location') === '/login' ? 0 : 1), () => process.exit(1))"
 if docker run --rm -e DSH_YAWN_PASSCODE=short dsh-yawn-control-plane:dev >/dev/null 2>&1; then
   echo "a short passcode started the control plane" >&2

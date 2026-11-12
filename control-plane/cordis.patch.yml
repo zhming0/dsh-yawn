@@ -39,7 +39,7 @@
 # DeepSeek account sign-in is not used: model access is API-key based, and a
 # signed-in account would store one shared grant in this control plane's
 # credential store. The provider, its model route, and the Web account UI and
-# Remote controller go together.
+# notifications go together.
 - id: deepseek-account
   disabled: true
 
@@ -51,7 +51,17 @@
 - id: ui-settings-account
   disabled: true
 
-- id: account-controller
+- id: ui-account-notifications
+  disabled: true
+
+# dsh 0.2.2-rc.2 ships a second, global MCP fleet: `mcp-manager` mounts servers
+# from its own Settings config and from plugins that register them. This
+# deployment already mounts one MCP fleet from its own store, with per-session
+# switches and OAuth renewal. Running both splits the server inventory, lets a
+# managed server bypass the session switches, and turns a shared server name
+# into a load failure for one side, so keep the stock row off until we decide
+# whether to converge on it.
+- id: mcp-manager
   disabled: true
 
 # dsh's sandbox policy describes the host's own file sandbox: a per-session

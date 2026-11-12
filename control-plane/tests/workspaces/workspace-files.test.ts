@@ -179,6 +179,13 @@ function makeService(files: Map<string, string>) {
     maxFileBytes: 1024,
     maxLines: 100,
     maxEntries: 50,
+    search: {
+      maxResults: 10,
+      maxEntries: 100,
+      graceMs: 1000,
+      timeoutMs: 1000,
+      stderrMaxBytes: 1024,
+    },
   });
   const undo = scopeToSession(service, agents, sessionController);
   const scope: WorkspaceFileScope = {
@@ -300,7 +307,7 @@ describe("scopeToSession", () => {
   it("leaves the stock prototype and its remote markers alone, and undoes cleanly", async () => {
     const { service, undo, scope } = makeService(new Map());
 
-    const wrapped = ["read", "readBytes", "stat", "list", "changes"];
+    const wrapped = ["read", "readBytes", "stat", "list", "search", "changes"];
     for (const method of wrapped) {
       expect(Object.hasOwn(service, method)).toBe(true);
     }

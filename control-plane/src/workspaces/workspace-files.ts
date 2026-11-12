@@ -43,7 +43,13 @@ import type {
 } from "@deepseek-ai/dsh-api-workspace-files";
 
 /** The stock request methods. Each takes the session scope first. */
-const REQUEST_METHODS = ["read", "readBytes", "stat", "list"] as const;
+const REQUEST_METHODS = [
+  "read",
+  "readBytes",
+  "stat",
+  "list",
+  "search",
+] as const;
 
 type RequestMethod = (typeof REQUEST_METHODS)[number];
 
