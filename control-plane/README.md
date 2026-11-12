@@ -158,10 +158,19 @@ On an image upgrade it merges the image's manifest fields — the
 the profile on the data volume and runs `pnpm update @zhming0/dsh-yawn`, so
 everything the user installed stays. `cordis.patch.yml` and
 `pnpm-workspace.yaml` are seeded once and then the user's; the workspace file
-is where pnpm records dependency build-script approvals. A refresh that fails
-reseeds the profile from the image and logs a warning, but keeps the manifest
-it was working from as `package.json.before-reseed` and leaves the version
-marker alone: the next boot merges that manifest back in and retries.
+is where pnpm records dependency build-script approvals.
+
+The seed also rewrites the workspace's `overrides` block from the installed
+dsh CLI, pinning every `@deepseek-ai` package to the version the image runs.
+The profile installs with pnpm's hoisted linker, so without the pins a
+plugin's transitive dsh dependency can stand in for the runtime's copy of the
+same package. An older copy fails dsh's compatibility check, the core row is
+disabled, and every service that injects it stays pending. The image owns
+`overrides`; other workspace keys, such as `allowBuilds`, are preserved. A
+refresh that fails reseeds the profile from the image and logs a warning, but
+keeps the manifest it was working from as `package.json.before-reseed` and
+leaves the version marker alone: the next boot merges that manifest back in
+and retries.
 
 ### Creator-installed plugins
 

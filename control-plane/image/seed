@@ -16,7 +16,9 @@
 #
 # `cordis.patch.yml` is seeded once and then the user's. `pnpm-workspace.yaml`
 # is left alone for the same reason: pnpm records dependency build-script
-# approvals there. Everything else under $HOME — dsh sessions and storages,
+# approvals there. Its `overrides` block is the exception: this script
+# regenerates it from the image's CLI so a plugin's dependency cannot replace
+# a runtime package. Everything else under $HOME — dsh sessions and storages,
 # the control plane's ~/.dsh-yawn state — is never touched.
 set -eu
 
@@ -27,13 +29,27 @@ profile="$HOME/.dsh/profiles/web"
 marker="$profile/.dsh-yawn-image-version"
 # The manifest a failed refresh kept; a retry merges it back in.
 carried="$profile/package.json.before-reseed"
+workspace="$profile/pnpm-workspace.yaml"
 version="$(cat "$image/version")"
+
+# Pin the runtime packages before pnpm resolves anything. The profile's
+# hoisted node_modules lets a plugin's transitive dependency stand in for a
+# dsh package the runtime also uses; a version mismatch then disables a core
+# row and leaves its services pending.
+pin_workspace() {
+  node "$image/profile-pins.mjs" "$image/cli" "$workspace"
+}
+
+if [ -f "$workspace" ]; then
+  pin_workspace
+fi
 
 if [ ! -e "$marker" ] || [ "$(cat "$marker")" != "$version" ]; then
   mkdir -p "$profile"
   if [ ! -f "$profile/package.json" ] && [ ! -f "$carried" ]; then
     # First boot: the image's own profile is the whole profile.
     cp -a "$image/profile/." "$profile/"
+    pin_workspace
     printf '%s\n' "$version" >"$marker"
   else
     # Keep the manifest a failed refresh replaces, once: a later boot must not
@@ -52,7 +68,8 @@ if [ ! -e "$marker" ] || [ "$(cat "$marker")" != "$version" ]; then
     fi
 
     if [ "$merged" = 1 ] \
-      && { [ -e "$profile/pnpm-workspace.yaml" ] || cp "$image/profile/pnpm-workspace.yaml" "$profile/"; } \
+      && { [ -e "$workspace" ] || cp "$image/profile/pnpm-workspace.yaml" "$workspace"; } \
+      && pin_workspace \
       && (cd "$profile" && pnpm update '@zhming0/dsh-yawn' --prefer-offline); then
       rm -f "$carried"
       printf '%s\n' "$version" >"$marker"
@@ -65,8 +82,9 @@ if [ ! -e "$marker" ] || [ "$(cat "$marker")" != "$version" ]; then
       fi
       rm -f "$profile/package.json.new"
       rm -rf "$profile/node_modules" "$profile/package.json" \
-        "$profile/pnpm-lock.yaml" "$profile/pnpm-workspace.yaml"
+        "$profile/pnpm-lock.yaml" "$workspace"
       cp -a "$image/profile/." "$profile/"
+      pin_workspace
       # No version marker: the next boot retries the refresh from $carried.
     fi
   fi

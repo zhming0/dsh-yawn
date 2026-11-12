@@ -17,6 +17,29 @@ import { afterEach, expect, it } from "vitest";
 const run = promisify(execFile);
 const seed = new URL("../../image/seed", import.meta.url).pathname;
 
+/** The dsh version the image's CLI tree reports, and the packages it pins. */
+const runtime = "0.2.2-rc.2";
+const runtimePackages: ReadonlyArray<readonly [string, string]> = [
+  ["@deepseek-ai/cordis", "4.1.0"],
+  ["@deepseek-ai/dsh-base", runtime],
+  ["@deepseek-ai/dsh-storage-domain", runtime],
+  ["@deepseek-ai/dsh-web-app", runtime],
+];
+
+/** The `overrides` block `profile-pins.mjs` writes for the packages above. */
+function pins(): string {
+  return [
+    "overrides:",
+    ...runtimePackages.map(([name, version]) => `  '${name}': ${version}`),
+    "",
+  ].join("\n");
+}
+
+/** A workspace file with the image's pins added after the caller's settings. */
+function pinned(settings: string): string {
+  return `${settings.replace(/\s*$/, "")}\n\n${pins()}`;
+}
+
 /** The profile manifest the image assembles; dsh-yawn is its only dependency. */
 function imageManifest(version: string) {
   return {
@@ -106,6 +129,15 @@ async function fakeBoot(options: {
     new URL("../../image/profile-refresh.mjs", import.meta.url),
     join(root, "profile-refresh.mjs"),
   );
+  await copyFile(
+    new URL("../../image/profile-pins.mjs", import.meta.url),
+    join(root, "profile-pins.mjs"),
+  );
+  for (const [name, version] of runtimePackages) {
+    const dir = join(root, "cli", "node_modules", name);
+    await mkdir(dir, { recursive: true });
+    await writeJson(join(dir, "package.json"), { name, version });
+  }
   await writeJson(
     join(root, "profile", "package.json"),
     imageManifest(options.imageVersion),
@@ -181,6 +213,9 @@ it("seeds the image profile on first boot", async () => {
   expect(await boot.manifest()).toEqual(imageManifest("1.0.0"));
   expect(await boot.marker()).toBe("1.0.0\n");
   expect(
+    await readFile(join(boot.profileDir, "pnpm-workspace.yaml"), "utf8"),
+  ).toBe(pinned("nodeLinker: hoisted\n"));
+  expect(
     await readFile(join(boot.profileDir, "cordis.patch.yml"), "utf8"),
   ).toBe("# starter settings\n");
 });
@@ -245,10 +280,34 @@ it("carries a user-installed plugin across an image upgrade", async () => {
   ).toBe("- id: plugin-manager\n  disabled: false\n");
   expect(
     await readFile(join(boot.profileDir, "pnpm-workspace.yaml"), "utf8"),
-  ).toBe("nodeLinker: hoisted\nallowBuilds:\n  sharp: true\n");
+  ).toBe(pinned("nodeLinker: hoisted\nallowBuilds:\n  sharp: true\n"));
   expect(await boot.pnpmLog()).toBe(
     `${boot.profileDir} update @zhming0/dsh-yawn --prefer-offline\n`,
   );
+});
+
+it("replaces stale runtime pins and keeps the rest of the workspace", async () => {
+  const settings = "nodeLinker: hoisted\nallowBuilds:\n  sharp: true\n\n";
+  const stale =
+    "overrides:\n  '@deepseek-ai/dsh-storage-domain': 0.2.2-rc.1\n  left-pad: 1.3.0\n";
+  const suffix = "\nminimumReleaseAgeExclude:\n  - left-pad@1.3.0\n";
+  const boot = await fakeBoot({
+    imageVersion: "2.0.0",
+    profile: userManifest("1.0.0", []),
+    workspace: `${settings}${stale}${suffix}`,
+  });
+
+  expect(await boot.runSeed()).not.toContain("could not refresh");
+  const expected = `${settings}${pins()}${suffix}`;
+  expect(
+    await readFile(join(boot.profileDir, "pnpm-workspace.yaml"), "utf8"),
+  ).toBe(expected);
+
+  // A boot on the same image still normalizes the block without churn.
+  expect(await boot.runSeed()).not.toContain("could not refresh");
+  expect(
+    await readFile(join(boot.profileDir, "pnpm-workspace.yaml"), "utf8"),
+  ).toBe(expected);
 });
 
 it("keeps the user's manifest and retries when the refresh fails", async () => {
