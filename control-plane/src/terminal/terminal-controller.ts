@@ -36,9 +36,13 @@
 import { symbols, type Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type {
+  AgentTerminal,
+  AgentTerminalRequest,
   TerminalController,
   TerminalCreateRequest,
   TerminalFrame,
+  TerminalScreenPage,
+  TerminalScreenRequest,
   WebTerminalId,
 } from "@deepseek-ai/dsh-api-terminal-controller";
 
@@ -92,6 +96,52 @@ export function scopeToSession(
     ) {
       return agents.withInitiator(agent, () =>
         stockCreate.call(this, agent, request, signal),
+      );
+    },
+  );
+
+  // Agent-controlled terminals are opened, read, and inspected on behalf of
+  // the model, so they reach the sandbox through the same boundary.
+  const stockOpenForAgent = Reflect.get(controller, "openForAgent");
+  replace(
+    "openForAgent",
+    function (
+      this: TerminalController,
+      agent: Agent,
+      request: AgentTerminalRequest,
+      signal: AbortSignal,
+    ): Promise<AgentTerminal> {
+      return agents.withInitiator(agent, () =>
+        stockOpenForAgent.call(this, agent, request, signal),
+      );
+    },
+  );
+
+  const stockReadScreen = Reflect.get(controller, "readScreen");
+  replace(
+    "readScreen",
+    function (
+      this: TerminalController,
+      agent: Agent,
+      id: WebTerminalId,
+      request: TerminalScreenRequest,
+    ): Promise<TerminalScreenPage> {
+      return agents.withInitiator(agent, () =>
+        stockReadScreen.call(this, agent, id, request),
+      );
+    },
+  );
+
+  const stockInspectActivity = Reflect.get(controller, "inspectActivity");
+  replace(
+    "inspectActivity",
+    function (
+      this: TerminalController,
+      agent: Agent,
+      id: WebTerminalId,
+    ): Promise<"idle" | "busy" | "unknown"> {
+      return agents.withInitiator(agent, () =>
+        stockInspectActivity.call(this, agent, id),
       );
     },
   );

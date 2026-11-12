@@ -137,6 +137,8 @@ describe("MCP pool", () => {
       url: "https://alpha.example/mcp",
       headers: { Authorization: "Bearer alpha-token" },
       toolCallTimeoutMs: 60_000,
+      closeTimeoutMs: 5_000,
+      expandTemplates: false,
       // A live mount rejects on a failed handshake so the row can say so.
       failOnStartupError: true,
       reconnect: {

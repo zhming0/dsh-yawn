@@ -409,6 +409,8 @@ function buildConfig(
     url,
     headers: token === undefined ? {} : { Authorization: `Bearer ${token}` },
     toolCallTimeoutMs: 60_000,
+    closeTimeoutMs: 5_000,
+    expandTemplates: false,
     failOnStartupError,
     reconnect: {
       enabled: true,
