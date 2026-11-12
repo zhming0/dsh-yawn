@@ -4,12 +4,12 @@ import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { CredentialInfo } from "@deepseek-ai/dsh-credentials/types";
 import type { JsonValue } from "@deepseek-ai/dsh-util-values";
 
-import { defaultBuildkiteTokenCredential } from "../../credentials/buildkite-credential.js";
 import {
   BACKEND_FIELDS,
   BACKEND_LABELS,
   MINUTE,
   cardStyle,
+  formTokenCredential,
   labelStyle,
   sectionHeadingStyle,
   type ProfileDraft,
@@ -34,8 +34,10 @@ const BACKENDS = ["docker", "kas", "buildkite"] as const;
 export interface ProfileFormProps {
   /** The profile to edit, or a blank draft for a new one. */
   initial: ProfileDraft;
-  /** Names already configured, so the heading knows whether this is an edit. */
-  profileNames: string[];
+  /** The name the profile was opened under; absent for a new profile. */
+  originalName?: string;
+  /** The backend it was opened under, so a rename keeps its token reference. */
+  originalBackend?: string;
   writable: boolean;
   pending: boolean;
   describeCredentials: SandboxesSettingsActions["describeCredentials"];
@@ -48,19 +50,21 @@ export interface ProfileFormProps {
     profile: Record<string, JsonValue>,
     token: string,
   ) => Promise<boolean>;
-  /** Clears the token stored for the profile; true when it was cleared. */
-  onClearToken: (name: string) => Promise<boolean>;
+  /** Clears the token stored at one credential reference. */
+  onClearToken: (ref: string) => Promise<boolean>;
   onCancel: () => void;
 }
 
 /**
  * The create-or-edit form for one sandbox profile, with the Buildkite token as
- * a write-only field. The token's credential name is derived from the profile
- * name on both sides, so nothing about credential naming reaches the form.
+ * a write-only field. A profile may name its credential explicitly; otherwise
+ * a Buildkite profile uses the name derived from the profile, and a rename
+ * keeps the reference it was opened with.
  */
 export function ProfileForm({
   initial,
-  profileNames,
+  originalName,
+  originalBackend,
   writable,
   pending,
   describeCredentials,
@@ -72,10 +76,17 @@ export function ProfileForm({
   /** The Buildkite token typed in this form; never read back from the host. */
   const [token, setToken] = useState("");
   const [tokenInfo, setTokenInfo] = useState<CredentialInfo>();
-  const tokenRef =
-    draft.backend === "buildkite"
-      ? defaultBuildkiteTokenCredential(draft.name)
-      : "";
+  const name = draft.name.trim();
+  const tokenOwner =
+    originalBackend === "buildkite" && originalName !== undefined
+      ? originalName
+      : name;
+  const tokenRef = formTokenCredential(
+    originalName,
+    tokenOwner,
+    draft.backend,
+    draft.fields.tokenCredential,
+  );
   const tokenStored =
     tokenInfo?.configured === true && tokenInfo.source !== "env";
 
@@ -104,6 +115,12 @@ export function ProfileForm({
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const profile: Record<string, JsonValue> = { backend: draft.backend };
+    const tokenCredential = draft.fields.tokenCredential?.trim();
+    if (tokenCredential !== undefined && tokenCredential !== "") {
+      // Keep the reference when the backend changes: switching away from
+      // Buildkite must not forget where its token lives.
+      profile.tokenCredential = tokenCredential;
+    }
     for (const field of BACKEND_FIELDS[draft.backend] ?? []) {
       const raw = draft.fields[field.key]?.trim();
       if (raw === undefined || raw === "") {
@@ -116,11 +133,11 @@ export function ProfileForm({
             ? Math.round(Number.parseFloat(raw) * MINUTE)
             : raw;
     }
-    void onSubmit(draft.name, profile, token);
+    void onSubmit(name, profile, token);
   };
 
   const clearToken = async () => {
-    if (tokenRef === "" || !(await onClearToken(draft.name))) {
+    if (tokenRef === "" || !(await onClearToken(tokenRef))) {
       return;
     }
     setTokenInfo((current) =>
@@ -134,9 +151,11 @@ export function ProfileForm({
       style={{ ...cardStyle, marginTop: 12, padding: 16 }}
     >
       <h3 style={sectionHeadingStyle}>
-        {profileNames.includes(draft.name) && draft.name !== ""
-          ? `Edit ${draft.name}`
-          : "New profile"}
+        {originalName === undefined
+          ? "New profile"
+          : name === originalName
+            ? `Edit ${originalName}`
+            : `Rename ${originalName}`}
       </h3>
       <label htmlFor="dsh-yawn-profile-name" style={labelStyle}>
         Name

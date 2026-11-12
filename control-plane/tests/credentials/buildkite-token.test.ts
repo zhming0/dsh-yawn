@@ -76,6 +76,35 @@ describe("resolveBuildkiteToken", () => {
     ).resolves.toBe("from-environment");
   });
 
+  it("prefers an explicit credential reference over the derived name", async () => {
+    vi.stubEnv("BUILDKITE_API_TOKEN", "from-environment");
+    const profile = {
+      ...profileOf("renamed"),
+      tokenCredential: "DSH_YAWN_BUILDKITE_HOSTED_TOKEN",
+    };
+    await expect(
+      resolveBuildkiteToken(
+        profile,
+        credentialsWith({
+          DSH_YAWN_BUILDKITE_HOSTED_TOKEN: "from-the-old-name",
+          DSH_YAWN_BUILDKITE_RENAMED_TOKEN: "from-the-derived-name",
+        }),
+      ),
+    ).resolves.toBe("from-the-old-name");
+  });
+
+  it("falls back to the derived name for a blank credential reference", async () => {
+    const profile = { ...profileOf("hosted"), tokenCredential: "  " };
+    await expect(
+      resolveBuildkiteToken(
+        profile,
+        credentialsWith({
+          DSH_YAWN_BUILDKITE_HOSTED_TOKEN: "from-the-derived-name",
+        }),
+      ),
+    ).resolves.toBe("from-the-derived-name");
+  });
+
   it("names the profile and the setting to fix when neither holds a token", async () => {
     vi.stubEnv("BUILDKITE_API_TOKEN", "");
     await expect(

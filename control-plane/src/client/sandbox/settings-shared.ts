@@ -7,7 +7,11 @@ import type {
 import type { CredentialInfo } from "@deepseek-ai/dsh-credentials/types";
 import type { JsonValue } from "@deepseek-ai/dsh-util-values";
 
-import type { SandboxSettingsView } from "../../sandbox/sandbox-settings-remote.js";
+import { defaultBuildkiteTokenCredential } from "../../credentials/buildkite-credential.js";
+import type {
+  SandboxProfileOptionView,
+  SandboxSettingsView,
+} from "../../sandbox/sandbox-settings-remote.js";
 
 /** What the Sandboxes page calls on the host: settings and write-only credentials. */
 export interface SandboxesSettingsActions {
@@ -43,6 +47,165 @@ export interface ProfileDraft {
   name: string;
   backend: string;
   fields: Record<string, string>;
+}
+
+/**
+ * The credential reference holding a profile's API token. A profile may name
+ * one explicitly, which is how a rename keeps the token it already has; a
+ * Buildkite profile without one uses the name derived from its current name.
+ */
+export function effectiveTokenCredential(
+  name: string,
+  backend: string,
+  tokenCredential: string | undefined,
+): string | undefined {
+  const explicit = tokenCredential?.trim();
+  if (explicit !== undefined && explicit !== "") {
+    return explicit;
+  }
+  return backend === "buildkite"
+    ? defaultBuildkiteTokenCredential(name)
+    : undefined;
+}
+
+/**
+ * The credential reference the form may show for an existing profile. A new
+ * profile has none yet: its opaque reference is assigned only when it is
+ * saved, so describing the derived name could show (or clear) another
+ * profile's token.
+ */
+export function formTokenCredential(
+  originalName: string | undefined,
+  tokenOwner: string,
+  backend: string,
+  tokenCredential: string | undefined,
+): string {
+  if (originalName === undefined || backend !== "buildkite") {
+    return "";
+  }
+  return effectiveTokenCredential(tokenOwner, backend, tokenCredential) ?? "";
+}
+
+/**
+ * Pin the credential name a legacy Buildkite profile already uses, so the
+ * stored token keeps working without moving it. Any explicit reference wins.
+ * A rename always pins; so does switching away from Buildkite, which keeps the
+ * reference available if the profile switches back or is deleted.
+ */
+export function profileWithStableTokenCredential(
+  profile: Record<string, JsonValue>,
+  name: string,
+  originalName: string | undefined,
+  originalBackend: string | undefined,
+): Record<string, JsonValue> {
+  if (
+    profile.tokenCredential !== undefined ||
+    originalName === undefined ||
+    originalBackend !== "buildkite" ||
+    (originalName === name && profile.backend === "buildkite")
+  ) {
+    return profile;
+  }
+  return {
+    ...profile,
+    tokenCredential: defaultBuildkiteTokenCredential(originalName),
+  };
+}
+
+/** A fresh, opaque credential reference for a page-created Buildkite profile. */
+export function newTokenCredential(): string {
+  // randomUUID needs a secure context; the control plane may be served over
+  // plain HTTP on a LAN, where getRandomValues still works.
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  const id = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+    .toUpperCase();
+  return `DSH_YAWN_BUILDKITE_${id}_TOKEN`;
+}
+
+/**
+ * The credential reference a save should use: an explicit one wins; a new
+ * Buildkite profile gets an opaque name that no profile name can collide with;
+ * a renamed legacy profile keeps the derived name it was already using.
+ */
+export function profileWithTokenCredential(
+  profile: Record<string, JsonValue>,
+  name: string,
+  originalName: string | undefined,
+  originalBackend: string | undefined,
+): Record<string, JsonValue> {
+  if (
+    profile.tokenCredential === undefined &&
+    originalName === undefined &&
+    profile.backend === "buildkite"
+  ) {
+    return { ...profile, tokenCredential: newTokenCredential() };
+  }
+  return profileWithStableTokenCredential(
+    profile,
+    name,
+    originalName,
+    originalBackend,
+  );
+}
+
+/**
+ * The other profile that already resolves to the same credential reference,
+ * if one exists. Derived names can collide (`a-b` and `a_b` both become
+ * `A_B`), so the page cannot let one profile silently take another's token.
+ */
+export function tokenCredentialOwner(
+  profiles: SandboxProfileOptionView[],
+  name: string,
+  tokenCredential: string | undefined,
+): string | undefined {
+  if (tokenCredential === undefined) {
+    return undefined;
+  }
+  return profiles.find(
+    (profile) =>
+      profile.name !== name &&
+      effectiveTokenCredential(
+        profile.name,
+        profile.backend,
+        profile.fields.tokenCredential,
+      ) === tokenCredential,
+  )?.name;
+}
+
+/**
+ * The settings writes that save one profile. A rename is one write: add the
+ * new name and remove the old one together, so the page never ends up with
+ * both. A default selection on the old name moves with the profile.
+ */
+export function profileSaveOps(
+  name: string,
+  profile: Record<string, JsonValue>,
+  originalName: string | undefined,
+  makeDefault: boolean,
+): SettingsPathOpView[] {
+  const ops: SettingsPathOpView[] = [
+    { op: "set", path: ["profiles", name], value: profile },
+  ];
+  if (originalName !== undefined && originalName !== name) {
+    ops.push({ op: "unset", path: ["profiles", originalName] });
+  }
+  if (makeDefault) {
+    ops.push({ op: "set", path: ["defaultProfile"], value: name });
+  }
+  return ops;
+}
+
+/** The settings writes that remove one profile, and its default selection. */
+export function profileRemoveOps(
+  name: string,
+  clearDefault: boolean,
+): SettingsPathOpView[] {
+  const ops: SettingsPathOpView[] = [{ op: "unset", path: ["profiles", name] }];
+  if (clearDefault) {
+    ops.push({ op: "unset", path: ["defaultProfile"] });
+  }
+  return ops;
 }
 
 export const MINUTE = 60_000;
@@ -105,6 +268,13 @@ export const BACKEND_FIELDS: Record<string, ProfileField[]> = {
     idleField,
   ],
 };
+
+/**
+ * Profile fields the page keeps but never shows. The API token credential is
+ * an internal pointer: the page pins it on rename, and a deployment that needs
+ * a custom reference sets it in the profile patch.
+ */
+export const INTERNAL_PROFILE_FIELDS = new Set(["tokenCredential"]);
 
 /** A duration in the largest unit that divides it evenly, such as "3 minutes". */
 export function formatDuration(ms: number): string {

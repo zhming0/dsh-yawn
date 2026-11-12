@@ -4,7 +4,6 @@ import { Button } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { SettingsSectionOwnerProps } from "@deepseek-ai/dsh-client-ui-settings/client";
 import type { JsonValue } from "@deepseek-ai/dsh-util-values";
 
-import { defaultBuildkiteTokenCredential } from "../../credentials/buildkite-credential.js";
 import type { SandboxSettingsView } from "../../sandbox/sandbox-settings-remote.js";
 import { DefaultsCard } from "./settings-defaults.js";
 import { ProfileForm } from "./settings-form.js";
@@ -12,10 +11,15 @@ import { ProfileCard } from "./settings-profile-card.js";
 import {
   cardStyle,
   describeError,
+  effectiveTokenCredential,
   type TimerKey,
   sectionHeadingStyle,
   type ProfileDraft,
   type SandboxesSettingsActions,
+  profileRemoveOps,
+  profileSaveOps,
+  profileWithTokenCredential,
+  tokenCredentialOwner,
 } from "./settings-shared.js";
 
 /** The `sandbox-manager` namespace this page edits. */
@@ -47,11 +51,28 @@ export function SandboxesSettings({
   /** The profile being created or edited; undefined closes the form. */
   const [editing, setEditing] = useState<{
     draft: ProfileDraft;
+    /** The name it was opened under, absent for a new profile. */
+    originalName?: string;
+    /** The backend it was opened under, so a rename keeps its token. */
+    originalBackend?: string;
     seq: number;
   }>();
+  /** The profile whose delete confirmation is open. */
+  const [confirming, setConfirming] = useState<string>();
   /** Open the form on one profile; the sequence remounts it if it is already open. */
-  const openEditor = (draft: ProfileDraft) =>
-    setEditing((current) => ({ draft, seq: (current?.seq ?? 0) + 1 }));
+  const openEditor = (
+    draft: ProfileDraft,
+    originalName?: string,
+    originalBackend?: string,
+  ) => {
+    setConfirming(undefined);
+    setEditing((current) => ({
+      draft,
+      ...(originalName === undefined ? {} : { originalName }),
+      ...(originalBackend === undefined ? {} : { originalBackend }),
+      seq: (current?.seq ?? 0) + 1,
+    }));
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -112,15 +133,20 @@ export function SandboxesSettings({
     .map((profile) => profile.name);
 
   /**
-   * Write the profile first, then the token under the name derived from it.
-   * The credential document is host-side, never pushed into a sandbox. A
-   * failed write keeps the form open with what the operator typed.
+   * Write the profile, then any token typed into the form. The credential
+   * document is host-side, never pushed into a sandbox. A rename is one write
+   * that removes the old name, so the page never shows both; it also pins the
+   * profile's existing credential reference, which keeps the stored token
+   * where it is.
    */
   const saveProfile = async (
     name: string,
     profile: Record<string, JsonValue>,
     token: string,
+    originalName?: string,
+    originalBackend?: string,
   ): Promise<boolean> => {
+    const renamed = originalName !== undefined && originalName !== name;
     // Deployment profile names are reserved: the host keeps the deployment's
     // definition for them, so a page entry under one would never apply.
     if (lockedNames.includes(name)) {
@@ -129,43 +155,105 @@ export function SandboxesSettings({
       );
       return false;
     }
+    if (name !== originalName && profileNames.includes(name)) {
+      setError(`profile ${name} already exists; pick another name`);
+      return false;
+    }
+    const savedProfile = profileWithTokenCredential(
+      profile,
+      name,
+      originalName,
+      originalBackend,
+    );
+    const savedBackend =
+      typeof savedProfile.backend === "string" ? savedProfile.backend : "";
+    const savedRef = effectiveTokenCredential(
+      name,
+      savedBackend,
+      typeof savedProfile.tokenCredential === "string"
+        ? savedProfile.tokenCredential
+        : undefined,
+    );
+    const originalRef =
+      originalName === undefined
+        ? undefined
+        : effectiveTokenCredential(
+            originalName,
+            originalBackend ?? "",
+            typeof editing?.draft.fields.tokenCredential === "string"
+              ? editing.draft.fields.tokenCredential
+              : undefined,
+          );
+    if (savedRef !== undefined && savedRef !== originalRef) {
+      const taken = tokenCredentialOwner(view?.profiles ?? [], name, savedRef);
+      if (taken !== undefined) {
+        setError(
+          `profile ${taken} already uses the API token credential ${savedRef}; pick another credential`,
+        );
+        return false;
+      }
+    }
     const saved = await write((revision) =>
       mutateSettings(
         NS,
-        [{ op: "set", path: ["profiles", name], value: profile }],
+        profileSaveOps(
+          name,
+          savedProfile,
+          originalName,
+          renamed && view?.defaultProfile === originalName,
+        ),
         revision,
       ),
     );
     if (!saved) {
       return false;
     }
-    if (profile.backend === "buildkite" && token !== "") {
+    // A rename is already written. Close the form before touching the
+    // credential, so a credential failure cannot leave it editing a name that
+    // now exists; the operator fixes the token on the renamed profile.
+    if (renamed && originalName !== undefined) {
+      setEditing(undefined);
+    }
+    let tokenError: string | undefined;
+    if (token !== "" && savedRef !== undefined) {
       setPending(true);
       try {
-        await setCredential(defaultBuildkiteTokenCredential(name), token);
+        await setCredential(savedRef, token);
       } catch (reason) {
-        // The profile itself is saved; keep the form open with the typed
-        // token so Save retries only the credential write.
-        setError(
-          `the profile was saved, but the token could not be stored: ${describeError(reason)}`,
-        );
-        return false;
+        const message = renamed
+          ? `the profile was renamed, but its token could not be stored: ${describeError(reason)}`
+          : `the profile was saved, but the token could not be stored: ${describeError(reason)}`;
+        if (!renamed) {
+          // The profile itself is saved; keep the form open with the typed
+          // token so Save retries only the credential write.
+          setError(message);
+          return false;
+        }
+        tokenError = message;
       } finally {
         setPending(false);
       }
+    }
+    if (renamed && originalName !== undefined) {
+      if (tokenError !== undefined) {
+        setError(tokenError);
+      } else {
+        setNotice(`renamed profile ${originalName} to ${name}`);
+      }
+      return true;
     }
     setNotice(`saved profile ${name}`);
     setEditing(undefined);
     return true;
   };
 
-  const clearStoredToken = async (name: string): Promise<boolean> => {
+  const clearStoredToken = async (ref: string): Promise<boolean> => {
     setPending(true);
     setError(undefined);
     setNotice(undefined);
     try {
-      await unsetCredential(defaultBuildkiteTokenCredential(name));
-      setNotice(`cleared the stored token for ${name}`);
+      await unsetCredential(ref);
+      setNotice("cleared the stored token");
       return true;
     } catch (reason) {
       setError(describeError(reason));
@@ -176,11 +264,50 @@ export function SandboxesSettings({
   };
 
   const removeProfile = (name: string) => {
+    const target = view?.profiles.find((profile) => profile.name === name);
+    const tokenRef =
+      target === undefined
+        ? undefined
+        : effectiveTokenCredential(
+            target.name,
+            target.backend,
+            target.fields.tokenCredential,
+          );
+    // Another profile may point at the same credential reference, either
+    // because an old profile named one explicitly or because two names derive
+    // the same string. Removing the shared token would break that profile.
+    const shared =
+      tokenRef !== undefined &&
+      tokenCredentialOwner(view?.profiles ?? [], name, tokenRef) !== undefined;
+    const clearDefault =
+      view?.overridden.defaultProfile === true && view.defaultProfile === name;
     void write((revision) =>
-      mutateSettings(NS, [{ op: "unset", path: ["profiles", name] }], revision),
-    ).then((removed) => {
-      if (removed) {
+      mutateSettings(NS, profileRemoveOps(name, clearDefault), revision),
+    ).then(async (removed) => {
+      if (!removed) {
+        return;
+      }
+      setConfirming(undefined);
+      if (tokenRef === undefined || shared) {
+        setNotice(
+          shared
+            ? `removed profile ${name}; kept the shared API token`
+            : `removed profile ${name}`,
+        );
+        return;
+      }
+      setPending(true);
+      try {
+        // A profile owns the credential named after it; removing the profile
+        // must not leave that secret behind for a future profile to inherit.
+        await unsetCredential(tokenRef);
         setNotice(`removed profile ${name}`);
+      } catch (reason) {
+        setError(
+          `the profile was removed, but its stored token could not be removed: ${describeError(reason)}`,
+        );
+      } finally {
+        setPending(false);
       }
     });
   };
@@ -236,8 +363,10 @@ export function SandboxesSettings({
       >
         Sandbox profiles and lifecycle timers. Changes apply on the host without
         a restart; sessions that already have a sandbox keep it. Profiles the
-        deployment configures are locked, and a reset returns every field to the
-        deployment's value.
+        deployment configures are locked; profiles added here can be edited,
+        renamed, or deleted. A rename keeps a Buildkite profile's stored token.
+        A reset on a timer or the default profile returns it to the deployment's
+        value.
       </p>
 
       {view === undefined && error === undefined ? (
@@ -291,15 +420,22 @@ export function SandboxesSettings({
                   key={profile.name}
                   profile={profile}
                   isDefault={view.defaultProfile === profile.name}
+                  confirming={confirming === profile.name}
                   disabled={pending || !writable}
                   onEdit={() =>
-                    openEditor({
-                      name: profile.name,
-                      backend: profile.backend,
-                      fields: { ...profile.fields },
-                    })
+                    openEditor(
+                      {
+                        name: profile.name,
+                        backend: profile.backend,
+                        fields: { ...profile.fields },
+                      },
+                      profile.name,
+                      profile.backend,
+                    )
                   }
-                  onReset={() => removeProfile(profile.name)}
+                  onDelete={() => setConfirming(profile.name)}
+                  onCancelDelete={() => setConfirming(undefined)}
+                  onConfirmDelete={() => removeProfile(profile.name)}
                 />
               ))}
             </div>
@@ -309,11 +445,24 @@ export function SandboxesSettings({
             <ProfileForm
               key={editing.seq}
               initial={editing.draft}
-              profileNames={profileNames}
+              {...(editing.originalName === undefined
+                ? {}
+                : { originalName: editing.originalName })}
+              {...(editing.originalBackend === undefined
+                ? {}
+                : { originalBackend: editing.originalBackend })}
               writable={writable}
               pending={pending}
               describeCredentials={describeCredentials}
-              onSubmit={saveProfile}
+              onSubmit={(name, profile, token) =>
+                saveProfile(
+                  name,
+                  profile,
+                  token,
+                  editing.originalName,
+                  editing.originalBackend,
+                )
+              }
               onClearToken={clearStoredToken}
               onCancel={() => setEditing(undefined)}
             />
@@ -396,8 +545,8 @@ export function SandboxesSettings({
       >
         Deployment profiles come from{" "}
         <code>/etc/dsh-yawn/sandbox-settings.yaml</code> and are locked here;
-        this page can add its own profiles and change the default and timers.
-        Edits persist into the profile patch,{" "}
+        this page can add, edit, rename, and delete its own profiles and change
+        the default and timers. Edits persist into the profile patch,{" "}
         <code>$DSH_HOME/profiles/web/cordis.patch.yml</code>, which is also
         editable by hand.
       </p>

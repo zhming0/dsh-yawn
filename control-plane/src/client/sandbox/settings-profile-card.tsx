@@ -7,6 +7,7 @@ import { BackendIcon } from "./backend-icons.js";
 import {
   BACKEND_FIELDS,
   BACKEND_LABELS,
+  INTERNAL_PROFILE_FIELDS,
   cardStyle,
   formatDuration,
 } from "./settings-shared.js";
@@ -14,22 +15,28 @@ import {
 export interface ProfileCardProps {
   profile: SandboxProfileOptionView;
   isDefault: boolean;
+  confirming: boolean;
   disabled: boolean;
   onEdit: () => void;
-  onReset: () => void;
+  onDelete: () => void;
+  onCancelDelete: () => void;
+  onConfirmDelete: () => void;
 }
 
 /**
  * One profile: a header naming it and its backend, then one row per setting.
  * The timers always show, with the inherited value marked as the default, so
- * the card says what the host applies.
+ * the card says what the host applies. Delete asks once before it removes.
  */
 export function ProfileCard({
   profile,
   isDefault,
+  confirming,
   disabled,
   onEdit,
-  onReset,
+  onDelete,
+  onCancelDelete,
+  onConfirmDelete,
 }: ProfileCardProps) {
   const rows: Array<{ label: string; value: ReactNode }> = [];
   const known = BACKEND_FIELDS[profile.backend] ?? [];
@@ -51,9 +58,13 @@ export function ProfileCard({
       rows.push({ label: field.label, value: <code>{raw}</code> });
     }
   }
-  // A hand-edited field the page does not know still shows, under its key.
+  // A hand-edited field the page does not know still shows, under its key;
+  // internal references stay out of the operator's view.
   for (const [key, raw] of Object.entries(profile.fields)) {
-    if (!known.some((field) => field.key === key)) {
+    if (
+      !INTERNAL_PROFILE_FIELDS.has(key) &&
+      !known.some((field) => field.key === key)
+    ) {
       rows.push({ label: key, value: <code>{raw}</code> });
     }
   }
@@ -103,24 +114,60 @@ export function ProfileCard({
         </div>
         {profile.locked ? null : (
           <div style={{ display: "flex", gap: 6, flex: "none" }}>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={disabled}
-              onClick={onEdit}
-            >
-              Edit
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              disabled={disabled}
-              onClick={onReset}
-            >
-              Reset
-            </Button>
+            {confirming ? (
+              <>
+                <span
+                  style={{
+                    color: "var(--dsw-alias-label-secondary)",
+                    alignSelf: "center",
+                    fontSize: 13,
+                  }}
+                >
+                  Delete this profile?
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={disabled}
+                  onClick={onCancelDelete}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="primary"
+                  disabled={disabled}
+                  onClick={onConfirmDelete}
+                  aria-label={`Confirm delete ${profile.name}`}
+                >
+                  Delete
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={disabled}
+                  onClick={onEdit}
+                  aria-label={`Edit ${profile.name}`}
+                >
+                  Edit
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={disabled}
+                  onClick={onDelete}
+                  aria-label={`Delete ${profile.name}`}
+                >
+                  Delete
+                </Button>
+              </>
+            )}
           </div>
         )}
       </div>

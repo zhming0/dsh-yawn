@@ -10,6 +10,24 @@ import {
 import { DEFAULT_RUNNER_IMAGE } from "../../src/sandbox/runner-image.js";
 
 describe("sandbox provider settings", () => {
+  it("keeps a Buildkite profile's explicit token credential", () => {
+    const config = resolveConfig({
+      profiles: {
+        hosted: {
+          backend: "buildkite",
+          organization: "acme",
+          pipeline: "dsh-yawn",
+          controlPlaneUrl: "wss://dsh.example.com/tunnel",
+          tokenCredential: "DSH_YAWN_BUILDKITE_ORIGINAL_TOKEN",
+        },
+      },
+    });
+    expect(config.profiles.hosted).toMatchObject({
+      backend: "buildkite",
+      tokenCredential: "DSH_YAWN_BUILDKITE_ORIGINAL_TOKEN",
+    });
+  });
+
   it("resolves each sandbox profile with its own backend settings", () => {
     const single = resolveConfig({
       profiles: { standard: { backend: "kas" } },

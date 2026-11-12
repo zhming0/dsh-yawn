@@ -119,10 +119,14 @@ Two credentials belong to the control plane and must never reach a sandbox:
   Secret you own and pass it to the control plane with
   `controlPlane.extraEnv`, or enter it on **Settings → Sandboxes** when you
   create a Buildkite profile. The page writes it, write-only, to
-  `$DSH_HOME/.credentials.yaml` on the control plane's data volume, under a
-  name derived from the profile:
-  `DSH_YAWN_BUILDKITE_<PROFILE>_TOKEN`. A stored token is used before the
-  environment fallback.
+  `$DSH_HOME/.credentials.yaml` on the control plane's data volume, under the
+  profile's `tokenCredential`. A profile created on the page gets an opaque
+  reference; a profile from configuration without one uses a name derived from
+  the profile: `DSH_YAWN_BUILDKITE_<PROFILE>_TOKEN`. Renaming the profile on
+  the page pins the name it already used, so the stored token keeps working.
+  The page hides that field; set it in configuration when a profile needs a
+  custom or shared reference. A stored token is used before the environment
+  fallback.
 
 [`runners/buildkite.md`](runners/buildkite.md#point-the-control-plane-at-the-pipeline)
 sets the Buildkite token up, and
