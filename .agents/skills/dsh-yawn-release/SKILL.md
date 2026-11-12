@@ -20,20 +20,26 @@ The release commits nothing, so `main` does not change. Do not tag or create the
 
 The pipeline writes the base note: the generated change list, images, the sandbox-pool pin, and the full-changelog link. Keep the generated list and full-changelog link.
 
-Add a highlight only when a merged PR changes something a user can see. Skip it for refactors, CI, docs, and dependency bumps. Keep it dry:
+Write highlights about the release, not its pull requests. Add a bullet when the release:
 
-- one fact per bullet, with no adjectives or "now you can"
-- an emoji, then the user-visible result (not the PR title)
-- at most three bullets; one is usually enough
+- upgrades dsh — name the version;
+- adds a capability or changes behavior users will reach for;
+- fixes several things in one area — name the area, not each fix.
+
+A breaking change always gets an `[!IMPORTANT]` block that says what to do.
+
+Skip highlights when the release only has refactors, CI, docs, or routine dependency bumps. A single small fix is not a highlight, however visible: it is already in `## What's Changed`.
+
+Each bullet is one line: an emoji and the user-visible result, with no adjectives, no "now you can", and no PR title. One or two bullets is normal; three is the maximum.
 
 Put the highlight at the top of the note, above `## What's Changed`, as a GitHub alert:
 
 > [!NOTE]
 > **✨ Highlights**
-> - 🧩 Creator plugins persist across sandboxes.
-> - ⚡ Sandboxes start when the first prompt is sent.
+> - ⬆️ Upgraded dsh to 0.2.2-rc.2.
+> - 🛠️ Stability fixes for sandbox startup, setup errors, and sandbox profiles.
 
-Use `[!IMPORTANT]` for a breaking change and say what to do in one line:
+Use `[!IMPORTANT]` instead for a breaking change:
 
 > [!IMPORTANT]
 > **⚠️ Breaking**
