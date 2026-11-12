@@ -3,10 +3,13 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"connectrpc.com/connect"
@@ -18,13 +21,26 @@ import (
 // cap trades wake speed for volume space.
 const aptCacheLimitBytes = 2 << 30
 
+// setupErrorTailBytes bounds how much of a failed command's output a setup
+// error quotes. The command's streams still reach the runner's own logs in
+// full; this is only what a caller sees, and a failing install can print more
+// than an error needs.
+const setupErrorTailBytes = 4 << 10
+
 func (s *Service) run(ctx context.Context, dir string, argv ...string) error {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir, cmd.Env = dir, s.environment(nil)
 	cmd.SysProcAttr = processGroup()
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	stdout := &tailBuffer{limit: setupErrorTailBytes}
+	stderr := &tailBuffer{limit: setupErrorTailBytes}
+	// Writers make os/exec copy through pipes, and Wait drains those pipes
+	// before returning. A process the setup command left behind can hold them
+	// open, so bound that drain: the command itself has already exited.
+	cmd.Stdout = io.MultiWriter(os.Stdout, stdout)
+	cmd.Stderr = io.MultiWriter(os.Stderr, stderr)
+	cmd.WaitDelay = execPipeDrainGrace
 	if err := cmd.Start(); err != nil {
-		return err
+		return fmt.Errorf("%s: %w", commandLabel(argv), err)
 	}
 	var commandError error
 	done := make(chan struct{})
@@ -34,11 +50,89 @@ func (s *Service) run(ctx context.Context, dir string, argv ...string) error {
 	}()
 	select {
 	case <-done:
-		return commandError
+		// ErrWaitDelay means the command exited successfully and only a
+		// process it left behind kept a pipe open past the grace.
+		if commandError == nil || errors.Is(commandError, exec.ErrWaitDelay) {
+			return nil
+		}
+		return commandFailure(argv, commandError, stdout.String(), stderr.String())
 	case <-ctx.Done():
 		terminateProcessGroup(cmd.Process.Pid, done)
 		return ctx.Err()
 	}
+}
+
+// commandLabel names a setup command in an error without repeating its
+// arguments, which can carry a repository URL or a credential.
+func commandLabel(argv []string) string {
+	if argv[0] == "git" && len(argv) > 1 {
+		return "git " + argv[1]
+	}
+	base := filepath.Base(argv[0])
+	parent := filepath.Base(filepath.Dir(argv[0]))
+	if parent == "." || parent == string(filepath.Separator) {
+		return base
+	}
+	return parent + "/" + base
+}
+
+// commandFailure reports a setup command that exited unsuccessfully, naming
+// the command and quoting the end of what it printed. Without the output the
+// caller sees only "exit status 1" and cannot tell a stale lockfile from an
+// unreachable host.
+func commandFailure(argv []string, err error, stdout, stderr string) error {
+	sections := make([]string, 0, 2)
+	for _, section := range []struct{ name, text string }{
+		{"stdout", strings.TrimSpace(stdout)},
+		{"stderr", strings.TrimSpace(stderr)},
+	} {
+		if section.text != "" {
+			sections = append(sections, section.name+":\n"+section.text)
+		}
+	}
+	if len(sections) == 0 {
+		return fmt.Errorf("%s: %w", commandLabel(argv), err)
+	}
+	return fmt.Errorf("%s: %w\n%s", commandLabel(argv), err, strings.Join(sections, "\n"))
+}
+
+// tailBuffer keeps the last limit bytes written to it. limit must be positive.
+type tailBuffer struct {
+	limit         int
+	data          []byte
+	startsMidLine bool
+}
+
+func (b *tailBuffer) Write(chunk []byte) (int, error) {
+	if len(chunk) > b.limit {
+		// The whole window now comes from this chunk, so the byte before it
+		// decides whether the window begins at a line boundary.
+		b.startsMidLine = b.limit > 0 && chunk[len(chunk)-b.limit-1] != '\n'
+		b.data = append(b.data[:0], chunk[len(chunk)-b.limit:]...)
+		return len(chunk), nil
+	}
+	b.data = append(b.data, chunk...)
+	if excess := len(b.data) - b.limit; excess > 0 {
+		// The window now begins after the dropped bytes, so the byte just
+		// dropped decides whether it begins mid-line.
+		b.startsMidLine = b.data[excess-1] != '\n'
+		copy(b.data, b.data[excess:])
+		b.data = b.data[:b.limit]
+	}
+	return len(chunk), nil
+}
+
+// String returns the kept bytes. When the cut left a partial first line, it is
+// dropped so the text starts at a line boundary; a window with no line
+// boundary left is returned whole, since dropping it would lose everything.
+func (b *tailBuffer) String() string {
+	text := string(b.data)
+	if b.startsMidLine {
+		if cut := strings.IndexByte(text, '\n'); cut >= 0 {
+			text = text[cut+1:]
+		}
+	}
+	return text
 }
 
 // markerPath is the durable record that this machine ran the repository's
