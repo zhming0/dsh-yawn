@@ -28,6 +28,8 @@ import {
   collectFileAttachments,
   type FileAttachmentRef,
 } from "./attachment-copies.js";
+import type { RunnerClient } from "../core/runner-client.js";
+import { SandboxNotStartedError } from "../core/types.js";
 import { FileType } from "../gen/dsh/yawn/v1/runner_pb.js";
 import { pathInSandbox } from "./sandbox-path.js";
 
@@ -63,11 +65,11 @@ export class SandboxFileSystem extends FileSystem {
     if (path.trim().length === 0) {
       throw new FsError("file path must not be empty", "FS_NOT_FOUND");
     }
+    const sessionWorkspace =
+      this.ctx.agents.requireInitiator().session.header.cwd;
+    const sandboxWorkspace = this.ctx.sandboxManager.workspace;
+    const client = await this.runner(options?.signal);
     try {
-      const sessionWorkspace =
-        this.ctx.agents.requireInitiator().session.header.cwd;
-      const sandboxWorkspace = this.ctx.sandboxManager.workspace;
-      const client = await this.ctx.sandboxManager.clientForCurrentAgent();
       const result = await client.resolvePath(
         {
           path: pathInSandbox(path, sessionWorkspace, sandboxWorkspace),
@@ -123,8 +125,8 @@ export class SandboxFileSystem extends FileSystem {
     target: FsTarget,
     signal?: AbortSignal,
   ): Promise<FsInfo | undefined> {
+    const client = await this.runner(signal);
     try {
-      const client = await this.ctx.sandboxManager.clientForCurrentAgent();
       const result = await client.stat(
         { path: this.processPath(target), followSymlinks: true },
         signalOptions(signal),
@@ -153,8 +155,8 @@ export class SandboxFileSystem extends FileSystem {
       ...options,
       ...(signal === undefined ? {} : { signal }),
     });
+    const client = await this.runner(signal);
     try {
-      const client = await this.ctx.sandboxManager.clientForCurrentAgent();
       const result = await client.stat(
         { path: target.displayPath, followSymlinks: false },
         signalOptions(signal),
@@ -196,8 +198,8 @@ export class SandboxFileSystem extends FileSystem {
     signal: AbortSignal | undefined,
     maxBytes: number,
   ): Promise<Uint8Array> {
+    const client = await this.runner(signal);
     try {
-      const client = await this.ctx.sandboxManager.clientForCurrentAgent();
       const result = await client.readFile(
         { path: this.processPath(target), maxBytes: BigInt(maxBytes) },
         signalOptions(signal),
@@ -213,8 +215,8 @@ export class SandboxFileSystem extends FileSystem {
     range: { offset: number; length: number },
     signal?: AbortSignal,
   ): Promise<Uint8Array> {
+    const client = await this.runner(signal);
     try {
-      const client = await this.ctx.sandboxManager.clientForCurrentAgent();
       const result = await client.readFileRange(
         {
           path: this.processPath(target),
@@ -230,8 +232,8 @@ export class SandboxFileSystem extends FileSystem {
   }
 
   async listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]> {
+    const client = await this.runner(signal);
     try {
-      const client = await this.ctx.sandboxManager.clientForCurrentAgent();
       const result = await client.list(
         this.processPath(target),
         signalOptions(signal),
@@ -269,8 +271,8 @@ export class SandboxFileSystem extends FileSystem {
     signal?: AbortSignal,
     mode?: number,
   ): Promise<FsWriteOutcome> {
+    const client = await this.runner(signal);
     try {
-      const client = await this.ctx.sandboxManager.clientForCurrentAgent();
       const result = await client.writeFile(
         {
           path: this.processPath(target),
@@ -307,8 +309,8 @@ export class SandboxFileSystem extends FileSystem {
     if (edit.oldString.length === 0) {
       throw new FsError("old_string must not be empty", "FS_EDIT_NOT_FOUND");
     }
+    const client = await this.runner(signal);
     try {
-      const client = await this.ctx.sandboxManager.clientForCurrentAgent();
       const result = await client.editFile(
         {
           path: this.processPath(target),
@@ -365,8 +367,8 @@ export class SandboxFileSystem extends FileSystem {
     signal?: AbortSignal,
   ): Promise<FsDeleteOutcome> {
     const before = await this.readTextForDiff(target, signal);
+    const client = await this.runner(signal);
     try {
-      const client = await this.ctx.sandboxManager.clientForCurrentAgent();
       await client.deleteFile(
         {
           path: this.processPath(target),
@@ -458,13 +460,42 @@ export class SandboxFileSystem extends FileSystem {
     };
   }
 
+  /**
+   * The session's runner. Resolving it provisions, wakes, or reattaches the
+   * sandbox and runs the repository's setup, so it can fail for reasons about
+   * the sandbox rather than the path a caller asked for. Every method acquires
+   * the runner before it starts mapping a file RPC's error, so a sandbox
+   * failure keeps its own message instead of becoming "cannot read <path>".
+   * The failure is still a typed `FsError`: tools and transport validators
+   * key their behavior off that type and its code.
+   */
+  private async runner(signal?: AbortSignal): Promise<RunnerClient> {
+    try {
+      return await this.ctx.sandboxManager.clientForCurrentAgent();
+    } catch (error) {
+      if (signal?.aborted === true) {
+        throw new FsError("sandbox access aborted", "FS_ABORTED", {
+          cause: error,
+        });
+      }
+      if (error instanceof SandboxNotStartedError) {
+        // A session that has not started a sandbox is a normal state with an
+        // instruction for the user, not an outage.
+        throw new FsError(error.message, "FS_IO_ERROR", { cause: error });
+      }
+      throw new FsError("the session's sandbox is unavailable", "FS_IO_ERROR", {
+        cause: error,
+      });
+    }
+  }
+
   /** Stat a target directly, including the permission bits a move carries. */
   private async runnerStat(
     target: FsTarget,
     signal?: AbortSignal,
   ): Promise<{ version: string; mode: number } | undefined> {
+    const client = await this.runner(signal);
     try {
-      const client = await this.ctx.sandboxManager.clientForCurrentAgent();
       const result = await client.stat(
         { path: this.processPath(target), followSymlinks: true },
         signalOptions(signal),

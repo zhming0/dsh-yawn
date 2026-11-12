@@ -74,6 +74,7 @@ import { SessionStore } from "../../core/state-store.js";
 import { TunnelServer, type RunnerGateway } from "../../core/tunnel.js";
 import {
   hasRepository,
+  SandboxNotStartedError,
   type BackendCapabilities,
   type BuildkiteProfile,
   type SandboxBackend,
@@ -664,7 +665,7 @@ export class SandboxManager extends TypertRemoteService {
       this.engine.record(sessionId) === undefined &&
       !this.idle.isTurnLive(sessionId)
     ) {
-      throw new Error(
+      throw new SandboxNotStartedError(
         "This session has no sandbox yet. Send a prompt to start one.",
       );
     }
