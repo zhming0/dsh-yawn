@@ -31,6 +31,10 @@
       "types": "./dist/sandbox/subprocess.d.ts",
       "default": "./dist/sandbox/subprocess.js"
     },
+    "./persistent-bash-recovery": {
+      "types": "./dist/persistent-bash-recovery.d.ts",
+      "default": "./dist/persistent-bash-recovery.js"
+    },
     "./file-reference": {
       "types": "./dist/workspaces/file-reference.d.ts",
       "default": "./dist/workspaces/file-reference.js"
